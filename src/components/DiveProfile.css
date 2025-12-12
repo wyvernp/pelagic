@@ -1,0 +1,98 @@
+.dive-profile {
+  background: var(--bg-darker);
+  border-bottom: 1px solid var(--border-color);
+  padding: 16px;
+  --pressure-color: #4caf50;
+  --temp-color: #ff9800;
+  --ndl-color: #22c55e;
+}
+
+.dive-profile-stats {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 12px;
+  padding: 0 16px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dive-profile-legend {
+  display: flex;
+  gap: 20px;
+  padding: 0 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.legend-line {
+  display: inline-block;
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.legend-depth .legend-line {
+  background: var(--depth-primary);
+}
+
+.legend-pressure .legend-line {
+  background: var(--pressure-color);
+}
+
+.legend-temp .legend-line {
+  background: var(--temp-color);
+  height: 2px;
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    to right,
+    var(--temp-color),
+    var(--temp-color) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.legend-ndl .legend-line {
+  background: var(--ndl-color);
+  height: 2px;
+  background: repeating-linear-gradient(
+    to right,
+    var(--ndl-color),
+    var(--ndl-color) 2px,
+    transparent 2px,
+    transparent 4px
+  );
+}
+
+.dive-profile-chart-container {
+  width: 100%;
+  min-height: 180px;
+}
+
+.dive-profile-chart {
+  display: block;
+  width: 100%;
+}

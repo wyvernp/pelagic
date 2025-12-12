@@ -1,0 +1,148 @@
+.batch-modal {
+  width: 450px;
+  max-width: 90vw;
+}
+
+.batch-selection-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  background: var(--bg-dark);
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.batch-count {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--accent-primary);
+}
+
+.batch-operations {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.batch-operation {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  background: var(--bg-dark);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.batch-operation:hover {
+  border-color: var(--text-muted);
+}
+
+.batch-operation.selected {
+  border-color: var(--accent-primary);
+  background: rgba(99, 179, 237, 0.1);
+}
+
+.batch-operation input[type="radio"] {
+  display: none;
+}
+
+.operation-icon {
+  font-size: 24px;
+}
+
+.operation-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.batch-options {
+  padding: 16px;
+  background: var(--bg-dark);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.batch-option-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.batch-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.batch-rating {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rating-btn {
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.rating-btn:hover {
+  border-color: var(--text-muted);
+}
+
+.rating-btn.selected {
+  border-color: var(--accent-primary);
+  background: rgba(99, 179, 237, 0.2);
+  color: var(--text-primary);
+}
+
+.batch-warning {
+  color: var(--color-warning, #f6ad55);
+  font-size: 14px;
+  margin: 0;
+}
+
+.batch-result {
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  margin-top: 16px;
+}
+
+.batch-result.success {
+  background: rgba(72, 187, 120, 0.2);
+  color: #68d391;
+}
+
+.batch-result.error {
+  background: rgba(245, 101, 101, 0.2);
+  color: #fc8181;
+}
+
+.btn-danger {
+  background: #e53e3e;
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #c53030;
+}

@@ -1,0 +1,155 @@
+.sidebar-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.sidebar-add-btn:hover {
+  background: var(--bg-medium);
+  color: var(--text-primary);
+}
+
+.sidebar-empty {
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.sidebar-empty p {
+  font-size: 13px;
+}
+
+.sidebar-empty p:first-child {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* Trip list */
+.trip-list {
+  list-style: none;
+}
+
+.trip-item {
+  margin-bottom: 2px;
+}
+
+.trip-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.trip-button:hover {
+  background: var(--bg-dark);
+}
+
+.trip-button.selected {
+  background: var(--bg-medium);
+}
+
+.trip-chevron {
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.trip-chevron.rotated {
+  transform: rotate(90deg);
+}
+
+.trip-icon {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+.trip-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.trip-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trip-date {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Dive list */
+.dive-list {
+  list-style: none;
+  padding-left: 32px;
+  margin-top: 2px;
+}
+
+.dive-list-empty {
+  padding: 8px 12px 8px 56px;
+  font-size: 12px;
+}
+
+.dive-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  text-align: left;
+  border-radius: 4px;
+  transition: all var(--transition-fast);
+}
+
+.dive-button:hover {
+  background: var(--bg-dark);
+}
+
+.dive-button.selected {
+  background: var(--bg-medium);
+}
+
+.dive-icon {
+  color: var(--depth-primary);
+  flex-shrink: 0;
+}
+
+.dive-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.dive-number {
+  font-size: 13px;
+  color: var(--text-primary);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dive-location {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.dive-depth {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+}

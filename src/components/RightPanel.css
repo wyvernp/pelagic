@@ -1,0 +1,375 @@
+.panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.panel-section {
+  margin-bottom: 24px;
+}
+
+.panel-section:last-child {
+  margin-bottom: 0;
+}
+
+.panel-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.panel-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.panel-section-header .panel-section-title {
+  margin-bottom: 0;
+}
+
+.btn-icon-small {
+  background: none;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: all 0.15s;
+}
+
+.btn-icon-small:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--bg-medium);
+}
+
+.btn-icon-small:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* AI Identify button */
+.btn-identify {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.2), rgba(147, 51, 234, 0.2));
+  border: 1px solid rgba(147, 51, 234, 0.4);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #c4b5fd;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-identify:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.3), rgba(147, 51, 234, 0.3));
+  border-color: rgba(147, 51, 234, 0.6);
+  color: #e0d7ff;
+}
+
+.btn-identify:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.identify-error {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
+  color: #f87171;
+}
+
+/* Context input for re-identification */
+.context-input-container {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.context-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 8px 0;
+}
+
+.context-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.context-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.context-input::placeholder {
+  color: var(--text-muted);
+}
+
+.context-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Info list */
+.info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.info-item dt {
+  color: var(--text-secondary);
+}
+
+.info-item dd {
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-all;
+  max-width: 60%;
+}
+
+.info-item dd.filename-value {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+/* EXIF grid */
+.exif-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.exif-item {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-dark);
+  padding: 10px;
+  border-radius: 6px;
+}
+
+.exif-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.exif-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+/* Tags */
+.tags-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tag-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-list.empty {
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-medium);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.tag-species {
+  background: rgba(0, 153, 204, 0.2);
+  color: var(--accent-primary);
+}
+
+/* Tag chips */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(0, 153, 204, 0.15);
+  border: 1px solid rgba(0, 153, 204, 0.3);
+  border-radius: 16px;
+  font-size: 12px;
+  color: var(--accent-primary);
+}
+
+.tag-chip-icon {
+  font-size: 11px;
+}
+
+.tag-chip-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-chip-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  margin-left: 2px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.15s;
+}
+
+.tag-chip-remove:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent-coral);
+  opacity: 1;
+}
+
+/* Rating stars */
+.rating-stars {
+  display: flex;
+  gap: 4px;
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  font-size: 20px;
+  color: var(--border-light);
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.star-btn:hover {
+  transform: scale(1.2);
+}
+
+.star-btn.active {
+  color: #f5a623;
+}
+
+.star-btn:hover,
+.rating-stars:hover .star-btn {
+  color: var(--border-light);
+}
+
+.rating-stars:hover .star-btn:hover,
+.rating-stars:hover .star-btn:hover ~ .star-btn {
+  color: var(--border-light);
+}
+
+.rating-stars .star-btn:hover,
+.rating-stars .star-btn:hover ~ .star-btn {
+  color: var(--border-light);
+}
+
+.rating-stars:hover .star-btn.active,
+.rating-stars .star-btn:hover ~ .star-btn.active {
+  color: var(--border-light);
+}
+
+.rating-stars .star-btn:hover,
+.rating-stars .star-btn.hovered {
+  color: #f5a623;
+}
+
+/* Simpler approach: just highlight active stars */
+.star-btn.active {
+  color: #f5a623;
+}
+
+/* General tag chips */
+.tag-chip.general {
+  background: rgba(153, 102, 204, 0.15);
+  border-color: rgba(153, 102, 204, 0.3);
+  color: #b794f6;
+}
+
+/* Dive type tags */
+.dive-type-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dive-type-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--bg-medium);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Dive notes */
+.dive-notes {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}

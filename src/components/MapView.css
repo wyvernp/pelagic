@@ -1,0 +1,246 @@
+/* Map View Overlay */
+.map-view-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+}
+
+/* Map View Modal */
+.map-view-modal {
+  background: var(--bg-secondary);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 1200px;
+  height: 80vh;
+  max-height: 800px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+}
+
+/* Header */
+.map-view-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-dark);
+}
+
+.map-view-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.map-view-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.map-view-header .modal-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 24px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.map-view-header .modal-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Body */
+.map-view-body {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+/* Map Container */
+.map-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Loading State */
+.map-view-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg-secondary);
+}
+
+.map-view-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.map-view-loading p {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Error State */
+.map-view-error {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg-secondary);
+}
+
+.map-view-error p {
+  color: var(--text-error);
+  font-size: 14px;
+}
+
+.map-view-error button {
+  padding: 8px 16px;
+  background: var(--accent-primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/* Empty State */
+.map-view-empty {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--bg-secondary);
+  text-align: center;
+  padding: 48px;
+}
+
+.map-view-empty p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.map-view-empty-hint {
+  color: var(--text-muted) !important;
+  font-size: 14px !important;
+  max-width: 300px;
+}
+
+/* Custom Dive Marker */
+.dive-marker {
+  background: transparent;
+  border: none;
+}
+
+.dive-marker-icon {
+  font-size: 24px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+/* Popup Styles */
+.dive-popup {
+  min-width: 200px;
+}
+
+.dive-popup h4 {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.dive-popup-trip {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: #666;
+}
+
+.dive-popup-details {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #444;
+}
+
+.dive-popup-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.dive-popup-btn:hover {
+  background: #0052a3;
+}
+
+/* Override Leaflet default popup styles */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+}
+
+.leaflet-popup-content {
+  margin: 12px !important;
+}
+
+.leaflet-popup-tip {
+  box-shadow: none !important;
+}

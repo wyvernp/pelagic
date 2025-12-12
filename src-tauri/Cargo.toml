@@ -1,0 +1,62 @@
+[package]
+name = "pelagic"
+version = "0.2.0"
+description = "Dive photo manager for organizing underwater photography"
+authors = ["you"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "pelagic_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.0", features = [] }
+tauri-plugin-log = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-fs = "2.0"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# XML parsing for .ssrf files
+quick-xml = { version = "0.36", features = ["serialize"] }
+
+# FIT file parsing (Garmin, Suunto, etc.)
+fitparser = "0.10"
+
+# Image processing
+image = "0.25"
+
+# RAW image processing (DNG, CR2, NEF, etc.)
+rawloader = "0.37"
+imagepipe = "0.5"
+
+# EXIF metadata
+kamadak-exif = "0.5"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Directory paths
+dirs = "5"
+
+# Base64 encoding
+base64 = "0.22"
+rexif = "0.7.5"
+
+# HTTP client for AI API
+reqwest = { version = "0.12", features = ["json"] }
