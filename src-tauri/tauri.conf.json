@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Pelagic",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "identifier": "com.pelagic.app",
   "build": {
     "frontendDist": "../dist",
@@ -37,6 +37,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "../divesites_filtered.csv"
+    ],
     "category": "Photography",
     "shortDescription": "Dive photo manager for underwater photographers",
     "longDescription": "Pelagic helps underwater photographers organize dive photos by trip and dive, import from dive logs, tag marine species, and manage RAW+processed image pairs.",
@@ -58,7 +61,25 @@
       }
     },
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "frameworks": [],
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null,
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      }
     },
     "windows": {
       "wix": null,

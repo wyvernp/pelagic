@@ -25,6 +25,93 @@ Pelagic is a desktop application for underwater photographers to organize dive p
 - **Database**: SQLite
 - **Visualization**: Visx (Charts), Leaflet (Maps)
 
+## Building & Development
+
+### Prerequisites
+
+- **Node.js** (v18 or later)
+- **Rust** (latest stable)
+- **For Windows builds**: Visual Studio Build Tools or Windows SDK
+- **For macOS builds**: Xcode Command Line Tools
+
+### Development Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd PelagicDesktopV2
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Start development server**
+   ```bash
+   npm run dev
+   ```
+
+4. **Build for development**
+   ```bash
+   npm run build
+   npm run tauri dev
+   ```
+
+### Building Release Installers
+
+#### Windows (.msi installer)
+
+Run the automated build script:
+```bash
+# Build with automatic version bump (patch version)
+.\build-release.ps1
+
+# Build with minor version bump
+.\build-release.ps1 -Minor
+
+# Build with major version bump
+.\build-release.ps1 -Major
+
+# Build without version bump
+.\build-release.ps1 -SkipBump
+```
+
+The script will:
+- Update version numbers in all config files
+- Build the application
+- Create a Windows MSI installer
+- Output installers to `src-tauri\target\release\bundle\`
+
+#### macOS (.dmg installer)
+
+**Note**: Must be built on a Mac with Xcode installed.
+
+1. **Make the build script executable**
+   ```bash
+   chmod +x build-release-macos.sh
+   ```
+
+2. **Run the build**
+   ```bash
+   ./build-release-macos.sh
+   ```
+
+The script will:
+- Check for required dependencies (Node.js, Rust, Xcode)
+- Install macOS Rust targets
+- Build a universal binary (Intel + Apple Silicon)
+- Create a macOS DMG installer
+- Output installers to `src-tauri/target/universal-apple-darwin/release/bundle/`
+
+### Database Setup
+
+The application includes an embedded SQLite database that is automatically initialized on first run. The database includes:
+
+- Pre-populated dive sites (1,934+ locations worldwide)
+- Schema for trips, dives, photos, and species tagging
+- Automatic migrations for schema updates
+
 ## Credits & Acknowledgements
 
 This project makes use of several open-source libraries and resources. We gratefully acknowledge the following:

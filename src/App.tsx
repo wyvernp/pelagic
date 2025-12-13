@@ -60,14 +60,19 @@ function App() {
   // Computed values - defined early so handlers can use them
   const selectedTrip = trips.find((t) => t.id === state.selectedTripId) ?? null;
   const selectedDive = dives.find((d) => d.id === state.selectedDiveId) ?? null;
-  const selectedPhoto = photos.find((p) => p.id === state.selectedPhotoId) ?? null;
-  const tripDives = dives.filter((d) => d.trip_id === state.selectedTripId);
-  const currentPhotos = useMemo(() => 
-    state.selectedDiveId
+  
+  // Handle search results photos
+  const currentPhotos = useMemo(() => {
+    if (state.viewMode === 'search' && searchResults) {
+      return searchResults.photos;
+    }
+    return state.selectedDiveId
       ? photos.filter((p) => p.dive_id === state.selectedDiveId)
-      : photos.filter((p) => p.trip_id === state.selectedTripId),
-    [photos, state.selectedDiveId, state.selectedTripId]
-  );
+      : photos.filter((p) => p.trip_id === state.selectedTripId);
+  }, [photos, state.selectedDiveId, state.selectedTripId, state.viewMode, searchResults]);
+  
+  const selectedPhoto = currentPhotos.find((p) => p.id === state.selectedPhotoId) ?? null;
+  const tripDives = dives.filter((d) => d.trip_id === state.selectedTripId);
   const viewerPhoto = viewerPhotoId ? currentPhotos.find(p => p.id === viewerPhotoId) ?? null : null;
 
   // Load trips on mount

@@ -6,6 +6,7 @@ mod ai;
 
 use db::Database;
 use std::sync::Mutex;
+use tauri::Manager;
 
 pub struct AppState {
     pub db: Mutex<Database>,
@@ -29,6 +30,23 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            
+            // Auto-import dive sites on first run
+            let app_state: tauri::State<AppState> = app.state();
+            if let Ok(db) = app_state.db.lock() {
+                if let Ok(true) = db.dive_sites_empty() {
+                    // Try to load bundled dive sites CSV
+                    if let Ok(resource_path) = app.path().resolve("divesites_filtered.csv", tauri::path::BaseDirectory::Resource) {
+                        if let Ok(csv_content) = std::fs::read_to_string(&resource_path) {
+                            match db.import_dive_sites_from_csv(&csv_content) {
+                                Ok(count) => println!("Auto-imported {} dive sites", count),
+                                Err(e) => eprintln!("Failed to auto-import dive sites: {}", e),
+                            }
+                        }
+                    }
+                }
+            }
+            
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

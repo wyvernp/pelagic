@@ -1853,6 +1853,40 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
     
+    /// Check if dive sites table is empty
+    pub fn dive_sites_empty(&self) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM dive_sites",
+            [],
+            |row| row.get(0)
+        )?;
+        Ok(count == 0)
+    }
+    
+    /// Import dive sites from CSV data
+    pub fn import_dive_sites_from_csv(&self, csv_content: &str) -> Result<usize> {
+        let mut count = 0;
+        let mut lines = csv_content.lines();
+        
+        // Skip header line
+        if let Some(_header) = lines.next() {
+            // Process each line
+            for line in lines {
+                let parts: Vec<&str> = line.split(',').collect();
+                
+                if parts.len() >= 3 {
+                    let name = parts[0].trim();
+                    if let (Ok(lat), Ok(lon)) = (parts[1].trim().parse::<f64>(), parts[2].trim().parse::<f64>()) {
+                        self.insert_dive_site(name, lat, lon)?;
+                        count += 1;
+                    }
+                }
+            }
+        }
+        
+        Ok(count)
+    }
+    
     pub fn search_dive_sites(&self, query: &str) -> Result<Vec<DiveSite>> {
         let search_pattern = format!("%{}%", query.to_lowercase());
         let mut stmt = self.conn.prepare(

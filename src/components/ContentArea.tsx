@@ -332,7 +332,7 @@ export function ContentArea({
                 Photos ({searchResults.photos.length})
               </h3>
               <ContentGrid
-                viewMode="trip"
+                viewMode="search"
                 dives={[]}
                 photos={searchResults.photos}
                 selectedPhotoIds={selectedPhotoIds}
