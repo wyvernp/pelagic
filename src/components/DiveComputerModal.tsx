@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import {
   getVendors,
   getProducts,
@@ -167,7 +168,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
             });
             importedDiveIds.push(diveId);
           } catch (fileError) {
-            console.error(`Failed to import file ${filePath}:`, fileError);
+            logger.error(`Failed to import file ${filePath}:`, fileError);
             // Continue with other files even if one fails
           }
         }
@@ -187,7 +188,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
         onClose();
       }
     } catch (error) {
-      console.error('Failed to import dives:', error);
+      logger.error('Failed to import dives:', error);
       setErrorMessage(`Failed to import dives: ${error}`);
       setStep('error');
     }
@@ -323,7 +324,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     if (isOpen && tripId) {
       invoke<Dive[]>('get_dives_for_trip', { tripId })
         .then(dives => setExistingDives(dives))
-        .catch(err => console.error('Failed to fetch existing dives:', err));
+        .catch(err => logger.error('Failed to fetch existing dives:', err));
     }
   }, [isOpen, tripId]);
 
@@ -553,7 +554,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
 
     try {
       // Connect - this will prompt the user to select the device
-      console.log('🔌 Starting Suunto USB connection...');
+      logger.debug('🔌 Starting Suunto USB connection...');
       const connected = await suunto.connect();
       if (!connected) {
         setErrorMessage('Failed to connect to Suunto device. Make sure it is connected via USB and not in USB storage mode.');
@@ -563,12 +564,12 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
 
       // Get device info
       const info = suunto.getDeviceInfo();
-      console.log('📊 Device info:', info);
+      logger.debug('📊 Device info:', info);
 
       // List dives
-      console.log('📂 Listing dives...');
+      logger.debug('📂 Listing dives...');
       const diveList = await suunto.listDives();
-      console.log(`📋 Found ${diveList.length} dives:`, diveList.slice(0, 10));
+      logger.debug(`📋 Found ${diveList.length} dives:`, diveList.slice(0, 10));
 
       if (diveList.length === 0) {
         // Try to get more info about why no dives were found
@@ -585,13 +586,13 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       setProgress({ current: 0, maximum: diveList.length });
 
       // Download all dives
-      console.log('📥 Starting dive downloads...');
+      logger.debug('📥 Starting dive downloads...');
       const diveFiles = await suunto.downloadAllDives((dive, index, total) => {
         setProgress({ current: index + 1, maximum: total });
-        console.log(`Downloaded dive ${index + 1}/${total}: ${dive.name} (${dive.data.length} bytes)`);
+        logger.debug(`Downloaded dive ${index + 1}/${total}: ${dive.name} (${dive.data.length} bytes)`);
       });
 
-      console.log(`✅ Downloaded ${diveFiles.length} dive files`);
+      logger.debug(`✅ Downloaded ${diveFiles.length} dive files`);
       await suunto.disconnect();
 
       // Store raw files for debugging/saving
@@ -612,12 +613,12 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
         };
       });
 
-      console.log(`✅ Converted ${convertedDives.length} dives for display`);
+      logger.debug(`✅ Converted ${convertedDives.length} dives for display`);
       setDownloadedDives(convertedDives);
       setStep('complete');
 
     } catch (error) {
-      console.error('Suunto download error:', error);
+      logger.error('Suunto download error:', error);
       setErrorMessage(`Download failed: ${(error as Error).message}`);
       setStep('error');
       await suunto.disconnect();
@@ -643,7 +644,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     const timestamp = diveFile.timestamp;
     const data = diveFile.data;
     
-    console.log(`📄 Parsing Suunto LOG file: ${diveFile.name}, ${data.length} bytes`);
+    logger.debug(`📄 Parsing Suunto LOG file: ${diveFile.name}, ${data.length} bytes`);
     
     // Default values
     let maxDepthCm = 0;
@@ -656,7 +657,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       String.fromCharCode(data[0], data[1], data[2], data[3]) === 'SBEM';
     
     if (!hasSBEM) {
-      console.warn('   No SBEM header found');
+      logger.warn('   No SBEM header found');
       return createDefaultDive(timestamp, diveFile.name);
     }
     
@@ -760,7 +761,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       }
     }
     
-    console.log(`   Found ${typeDescs.size} descriptors, ${groups.size} groups`);
+    logger.debug(`   Found ${typeDescs.size} descriptors, ${groups.size} groups`);
     
     // Find sample-related type IDs
     let timeTypeId = -1;
@@ -804,8 +805,8 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
         const tempIdx = members.indexOf(tempTypeId);
         if (tempIdx >= 0) tempOffsetInGroup = tempIdx * 2;
         
-        console.log(`   Sample group ID: ${sampleGroupId}, members: [${members.join(',')}]`);
-        console.log(`   Offsets - time: ${timeOffsetInGroup}, depth: ${depthOffsetInGroup}, temp: ${tempOffsetInGroup}`);
+        logger.debug(`   Sample group ID: ${sampleGroupId}, members: [${members.join(',')}]`);
+        logger.debug(`   Offsets - time: ${timeOffsetInGroup}, depth: ${depthOffsetInGroup}, temp: ${tempOffsetInGroup}`);
       }
       
       // Check for cylinder group (contains pressure)
@@ -815,7 +816,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
         // Gas number is 1 byte (uint8), pressure is 2 bytes (uint16)
         // Members are [gasNumber, pressure], so offset for pressure is 1 byte
         pressureOffsetInGroup = 1; // After the 1-byte gas number
-        console.log(`   Cylinder group ID: ${cylinderGroupId}, members: [${members.join(',')}], pressure offset: ${pressureOffsetInGroup}`);
+        logger.debug(`   Cylinder group ID: ${cylinderGroupId}, members: [${members.join(',')}], pressure offset: ${pressureOffsetInGroup}`);
       }
     }
     
@@ -915,7 +916,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     
     // Merge pressure data into samples (they should be 1:1)
     if (pressures.length > 0) {
-      console.log(`   Found ${pressures.length} pressure readings`);
+      logger.debug(`   Found ${pressures.length} pressure readings`);
       for (let i = 0; i < Math.min(samples.length, pressures.length); i++) {
         if (pressures[i] >= 0) {
           // Convert centibar to mbar (centibar * 10 = mbar, or centibar / 100 = bar)
@@ -932,7 +933,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     
     const when = new Date(timestamp * 1000);
     
-    console.log(`   ✅ ${sampleCount} samples: depth=${maxDepthM.toFixed(1)}m, duration=${durationSeconds}s (${Math.round(durationSeconds/60)} min), temp=${waterTempC?.toFixed(1) ?? 'unknown'}°C`);
+    logger.debug(`   ✅ ${sampleCount} samples: depth=${maxDepthM.toFixed(1)}m, duration=${durationSeconds}s (${Math.round(durationSeconds/60)} min), temp=${waterTempC?.toFixed(1) ?? 'unknown'}°C`);
     
     return {
       id: timestamp,
@@ -1060,10 +1061,10 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
             
             totalImportedDives += importedCount;
             successCount++;
-            console.log(`✅ Imported ${importedCount} dives from ${file.name}`);
+            logger.info(`✅ Imported ${importedCount} dives from ${file.name}`);
 
           } catch (fileError) {
-            console.error(`Failed to process file ${fileHandle.name}:`, fileError);
+            logger.error(`Failed to process file ${fileHandle.name}:`, fileError);
             // Continue with other files - don't fail the entire import
             setErrorMessage(`Warning: Failed to import ${fileHandle.name}: ${fileError}. Continuing with other files...`);
           }
@@ -1147,9 +1148,9 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
 
   // Save raw dive files to disk for debugging
   const saveRawDiveFiles = useCallback(async () => {
-    console.log('saveRawDiveFiles called, rawDiveFiles.length:', rawDiveFiles.length);
+    logger.debug('saveRawDiveFiles called, rawDiveFiles.length:', rawDiveFiles.length);
     if (rawDiveFiles.length === 0) {
-      console.log('No raw dive files to save');
+      logger.debug('No raw dive files to save');
       return;
     }
     
@@ -1178,10 +1179,10 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       
       if (filePath) {
         await writeTextFile(filePath, json);
-        console.log('Saved raw dive files to:', filePath);
+        logger.info('Saved raw dive files to:', filePath);
       }
     } catch (error) {
-      console.error('Error saving raw dive files:', error);
+      logger.error('Error saving raw dive files:', error);
       // Fallback to browser download method
       try {
         const exportData = {
@@ -1208,7 +1209,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
           URL.revokeObjectURL(url);
         }, 100);
       } catch (fallbackError) {
-        console.error('Fallback save also failed:', fallbackError);
+        logger.error('Fallback save also failed:', fallbackError);
       }
     }
   }, [rawDiveFiles, selectedProduct]);
@@ -1286,7 +1287,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
             diveId,
             samples,
           });
-          console.log(`✅ Inserted ${count} samples for dive ${diveId}`);
+          logger.info(`✅ Inserted ${count} samples for dive ${diveId}`);
         }
         
         importedDives.push({ ...diveData, id: diveId } as Dive);
@@ -1295,7 +1296,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       onDivesImported(importedDives);
       onClose();
     } catch (error) {
-      console.error('Failed to import dives:', error);
+      logger.error('Failed to import dives:', error);
       setErrorMessage(`Failed to import dives: ${error}`);
       setStep('error');
     }

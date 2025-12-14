@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { GeneralTag } from '../types';
 import './AddTripModal.css';
 import './SpeciesTagModal.css';
@@ -48,7 +49,7 @@ export function GeneralTagModal({
       setAllTags(tags);
       setSearchResults(tags);
     } catch (error) {
-      console.error('Failed to load general tags:', error);
+      logger.error('Failed to load general tags:', error);
     }
   };
 
@@ -62,7 +63,7 @@ export function GeneralTagModal({
       );
       setShowCreateNew(!exactMatch && query.length > 1);
     } catch (error) {
-      console.error('Failed to search general tags:', error);
+      logger.error('Failed to search general tags:', error);
     }
   };
 
@@ -77,7 +78,7 @@ export function GeneralTagModal({
       });
       onTagsAdded();
     } catch (error) {
-      console.error('Failed to add general tag:', error);
+      logger.error('Failed to add general tag:', error);
       alert('Failed to add tag: ' + error);
     } finally {
       setIsLoading(false);
@@ -103,7 +104,7 @@ export function GeneralTagModal({
       setSearchQuery('');
       onTagsAdded();
     } catch (error) {
-      console.error('Failed to create and add tag:', error);
+      logger.error('Failed to create and add tag:', error);
       alert('Failed to create tag: ' + error);
     } finally {
       setIsLoading(false);

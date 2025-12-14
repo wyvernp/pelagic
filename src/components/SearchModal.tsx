@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { SearchResults, PhotoFilter } from '../types';
 import './SearchModal.css';
 
@@ -60,7 +61,7 @@ export function SearchModal({
       onSearchResults(searchResults, searchQuery);
       onClose();
     } catch (error) {
-      console.error('Search failed:', error);
+      logger.error('Search failed:', error);
     } finally {
       setLoading(false);
     }
@@ -176,7 +177,13 @@ export function SearchModal({
 
   return (
     <div className="modal-overlay search-overlay" onClick={onClose}>
-      <div className={`search-modal ${showAdvanced ? 'expanded' : 'compact'}`} onClick={(e) => e.stopPropagation()}>
+      <div 
+        className={`search-modal ${showAdvanced ? 'expanded' : 'compact'}`} 
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search"
+      >
         {/* Text Search Section */}
         <form onSubmit={handleSubmit}>
           <div className="search-input-container">
@@ -213,7 +220,7 @@ export function SearchModal({
                 <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/>
               </svg>
               Advanced Filters
-              {hasActiveFilters && <span className="filter-badge">{Object.keys({dateFrom, dateTo, ratingMin, ratingMax, cameraModel, widthMin, widthMax, heightMin, heightMax}).filter(k => eval(k)).length}</span>}
+              {hasActiveFilters && <span className="filter-badge">{[dateFrom, dateTo, ratingMin !== '' ? ratingMin : null, ratingMax !== '' ? ratingMax : null, cameraModel, lensModel, isoMin, isoMax, apertureMin, apertureMax, focalLengthMin, focalLengthMax, widthMin, widthMax, heightMin, heightMax, hasRaw !== 'all' ? hasRaw : null, isProcessed !== 'all' ? isProcessed : null, exposureCompMin, exposureCompMax, whiteBalance, flashFired !== 'all' ? flashFired : null, meteringMode].filter(v => v !== null && v !== '' && v !== undefined).length}</span>}
               <svg 
                 className={`toggle-icon ${showAdvanced ? 'expanded' : ''}`}
                 viewBox="0 0 24 24" 

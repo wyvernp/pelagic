@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { Statistics, SpeciesCount, CameraStat, YearlyStat } from '../types';
 import './StatisticsModal.css';
 
@@ -38,7 +39,7 @@ export function StatisticsModal({ isOpen, onClose }: StatisticsModalProps) {
       setCameraStats(cameraData);
       setYearlyStats(yearlyData);
     } catch (error) {
-      console.error('Failed to load statistics:', error);
+      logger.error('Failed to load statistics:', error);
     } finally {
       setLoading(false);
     }
@@ -67,10 +68,16 @@ export function StatisticsModal({ isOpen, onClose }: StatisticsModalProps) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal statistics-modal" onClick={(e) => e.stopPropagation()}>
+      <div 
+        className="modal statistics-modal" 
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="statistics-modal-title"
+      >
         <div className="modal-header">
-          <h2>Statistics</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <h2 id="statistics-modal-title">Statistics</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         <div className="stats-tabs">

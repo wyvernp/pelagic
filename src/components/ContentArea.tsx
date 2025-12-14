@@ -1,34 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirection, SearchResults } from '../types';
+import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirection, SearchResults, IdentificationResult } from '../types';
 import { DiveProfile } from './DiveProfile';
 import { ContentGrid } from './ContentGrid';
 import { StatsBar } from './StatsBar';
 import { useSettings } from './SettingsModal';
+import { logger } from '../utils/logger';
+import { confirmDialog } from '../utils/dialogs';
 import './ContentArea.css';
-
-// Types for AI identification
-interface SpeciesInfo {
-  common_name: string;
-  scientific_name?: string;
-  category?: string;
-  confidence?: string;
-}
-
-interface SpeciesIdentification {
-  common_name?: string;
-  scientific_name?: string;
-  category?: string;
-  confidence?: string;
-  description?: string;
-  multiple_species: SpeciesInfo[];
-}
-
-interface IdentificationResult {
-  photo_id: number;
-  identification?: SpeciesIdentification;
-  error?: string;
-}
 
 interface ContentAreaProps {
   viewMode: ViewMode;
@@ -141,7 +120,11 @@ export function ContentArea({
       return;
     }
     
-    if (!confirm(`Identify species in ${photoIds.length} photo${photoIds.length !== 1 ? 's' : ''}? This may take some time.`)) {
+    const confirmed = await confirmDialog(
+      'AI Species Identification',
+      `Identify species in ${photoIds.length} photo${photoIds.length !== 1 ? 's' : ''}? This may take some time.`
+    );
+    if (!confirmed) {
       return;
     }
     
@@ -174,7 +157,7 @@ export function ContentArea({
         setBatchProgress({ current: results.indexOf(result) + 1, total: photoIds.length });
         
         if (result.error) {
-          console.error(`Error identifying photo ${result.photo_id}:`, result.error);
+          logger.error(`Error identifying photo ${result.photo_id}:`, result.error);
           errorCount++;
           continue;
         }
@@ -234,7 +217,7 @@ export function ContentArea({
             
             successCount++;
           } catch (e) {
-            console.error(`Failed to create tag for photo ${result.photo_id}:`, e);
+            logger.error(`Failed to create tag for photo ${result.photo_id}:`, e);
             errorCount++;
           }
         }
@@ -244,7 +227,7 @@ export function ContentArea({
       onPhotosUpdated?.();
       
     } catch (error) {
-      console.error('Batch identification failed:', error);
+      logger.error('Batch identification failed:', error);
       alert(`Batch identification failed: ${error}`);
     } finally {
       setBatchIdentifying(false);
@@ -259,7 +242,7 @@ export function ContentArea({
           const diveSamples = await invoke<DiveSample[]>('get_dive_samples', { diveId: dive.id });
           setSamples(diveSamples);
         } catch (error) {
-          console.error('Failed to load dive samples:', error);
+          logger.error('Failed to load dive samples:', error);
           setSamples([]);
         }
       } else {

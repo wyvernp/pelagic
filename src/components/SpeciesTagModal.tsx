@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { SpeciesTag } from '../types';
 import './AddTripModal.css';
 import './SpeciesTagModal.css';
@@ -53,7 +54,7 @@ export function SpeciesTagModal({
       setAllTags(tags);
       setSearchResults(tags);
     } catch (error) {
-      console.error('Failed to load species tags:', error);
+      logger.error('Failed to load species tags:', error);
     }
   };
 
@@ -67,7 +68,7 @@ export function SpeciesTagModal({
       );
       setShowCreateNew(!exactMatch && query.length > 1);
     } catch (error) {
-      console.error('Failed to search species tags:', error);
+      logger.error('Failed to search species tags:', error);
     }
   };
 
@@ -82,7 +83,7 @@ export function SpeciesTagModal({
       });
       onTagsAdded();
     } catch (error) {
-      console.error('Failed to add species tag:', error);
+      logger.error('Failed to add species tag:', error);
       alert('Failed to add species tag: ' + error);
     } finally {
       setIsLoading(false);
@@ -108,7 +109,7 @@ export function SpeciesTagModal({
       onTagsAdded();
       onClose();
     } catch (error) {
-      console.error('Failed to create and add species tag:', error);
+      logger.error('Failed to create and add species tag:', error);
       alert('Failed to create species tag: ' + error);
     } finally {
       setIsLoading(false);
@@ -134,7 +135,7 @@ export function SpeciesTagModal({
       onTagsAdded();
       onClose();
     } catch (error) {
-      console.error('Failed to create and add species tag:', error);
+      logger.error('Failed to create and add species tag:', error);
       alert('Failed to create species tag: ' + error);
     } finally {
       setIsLoading(false);

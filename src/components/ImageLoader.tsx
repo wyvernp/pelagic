@@ -1,5 +1,6 @@
 import { useState, useEffect, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 
 interface ImageLoaderProps {
   filePath: string | null | undefined;
@@ -42,7 +43,7 @@ export const ImageLoader = memo(function ImageLoader({
       })
       .catch((err) => {
         if (!cancelled) {
-          console.error('Failed to load image:', filePath, err);
+          logger.error('Failed to load image:', filePath, err);
           setError(true);
           setDataUrl(null);
           setLoading(false);

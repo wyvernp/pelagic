@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { Trip, Dive, Statistics } from '../types';
 import './StatsBar.css';
 
@@ -64,7 +65,7 @@ export function StatsBar({ trip, dives = [], photos }: StatsBarProps) {
           }
         }
       } catch (error) {
-        console.error('Failed to load stats:', error);
+        logger.error('Failed to load stats:', error);
         if (!cancelled) setError(true);
       } finally {
         if (!cancelled) setLoading(false);

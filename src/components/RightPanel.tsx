@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
-import type { Photo, Dive, SpeciesTag, GeneralTag, Trip } from '../types';
+import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult } from '../types';
 import { useSettings } from './SettingsModal';
+import { logger } from '../utils/logger';
 import './RightPanel.css';
 
 interface RightPanelProps {
@@ -19,29 +20,6 @@ function formatFileSize(bytes?: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-// Types for AI identification
-interface SpeciesInfo {
-  common_name: string;
-  scientific_name?: string;
-  category?: string;
-  confidence?: string;
-}
-
-interface SpeciesIdentification {
-  common_name?: string;
-  scientific_name?: string;
-  category?: string;
-  confidence?: string;
-  description?: string;
-  multiple_species: SpeciesInfo[];
-}
-
-interface IdentificationResult {
-  photo_id: number;
-  identification?: SpeciesIdentification;
-  error?: string;
 }
 
 export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProps) {
@@ -72,7 +50,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       const tags = await invoke<SpeciesTag[]>('get_species_tags_for_photo', { photoId });
       setSpeciesTags(tags);
     } catch (error) {
-      console.error('Failed to load species tags:', error);
+      logger.error('Failed to load species tags:', error);
       setSpeciesTags([]);
     }
   };
@@ -82,7 +60,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       const tags = await invoke<GeneralTag[]>('get_general_tags_for_photo', { photoId });
       setGeneralTags(tags);
     } catch (error) {
-      console.error('Failed to load general tags:', error);
+      logger.error('Failed to load general tags:', error);
       setGeneralTags([]);
     }
   };
@@ -96,7 +74,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       });
       loadSpeciesTags(photo.id);
     } catch (error) {
-      console.error('Failed to remove species tag:', error);
+      logger.error('Failed to remove species tag:', error);
     }
   };
 
@@ -109,7 +87,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       });
       loadGeneralTags(photo.id);
     } catch (error) {
-      console.error('Failed to remove general tag:', error);
+      logger.error('Failed to remove general tag:', error);
     }
   };
 
@@ -127,7 +105,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       });
       onPhotoUpdated?.();
     } catch (error) {
-      console.error('Failed to update rating:', error);
+      logger.error('Failed to update rating:', error);
       setRating(photo.rating || 0);
     }
   };
@@ -137,11 +115,11 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     setRescanning(true);
     try {
       const result = await invoke('rescan_photo_exif', { photoId: photo.id });
-      console.log('Rescan result:', result);
+      logger.debug('Rescan result:', result);
       alert('EXIF rescanned! Refreshing photo data...');
       onPhotoUpdated?.();
     } catch (error) {
-      console.error('Failed to rescan EXIF:', error);
+      logger.error('Failed to rescan EXIF:', error);
       alert('Failed to rescan EXIF: ' + error);
     } finally {
       setRescanning(false);
@@ -152,11 +130,11 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     if (!photo) return;
     try {
       const tags = await invoke<string[]>('debug_dump_exif', { photoId: photo.id });
-      console.log('=== EXIF DUMP for', photo.filename, '===');
-      tags.forEach(tag => console.log(tag));
+      logger.debug('=== EXIF DUMP for', photo.filename, '===');
+      tags.forEach(tag => logger.debug(tag));
       alert(`EXIF dump logged to console. Found ${tags.length} entries.`);
     } catch (error) {
-      console.error('Failed to dump EXIF:', error);
+      logger.error('Failed to dump EXIF:', error);
       alert('Failed to dump EXIF: ' + error);
     }
   };
@@ -288,15 +266,15 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
         
         // Show confidence info
         const confidence = result.identification.confidence || 'unknown';
-        console.log(`Identified as ${result.identification.common_name} (${confidence} confidence)`);
+        logger.info(`Identified as ${result.identification.common_name} (${confidence} confidence)`);
         if (result.identification.description) {
-          console.log(`Description: ${result.identification.description}`);
+          logger.debug(`Description: ${result.identification.description}`);
         }
       } else {
         setIdentifyError('No species identified in this photo');
       }
     } catch (error) {
-      console.error('Failed to identify species:', error);
+      logger.error('Failed to identify species:', error);
       setIdentifyError(`Failed: ${error}`);
     } finally {
       setIdentifying(false);

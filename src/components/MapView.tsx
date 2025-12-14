@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { DiveMapPoint } from '../types';
 import './MapView.css';
 
@@ -43,7 +44,7 @@ export function MapView({ isOpen, onClose, onSelectDive }: MapViewProps) {
       const points = await invoke<DiveMapPoint[]>('get_dive_map_points');
       setDivePoints(points);
     } catch (err) {
-      console.error('Failed to load dive points:', err);
+      logger.error('Failed to load dive points:', err);
       setError('Failed to load dive locations');
     } finally {
       setLoading(false);

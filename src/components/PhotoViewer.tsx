@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { Photo } from '../types';
 import { ImageLoader } from './ImageLoader';
 import './PhotoViewer.css';
@@ -46,23 +47,23 @@ export function PhotoViewer({
   useEffect(() => {
     const loadVersions = async () => {
       try {
-        console.log('Loading versions for photo:', photo.id, photo.filename);
+        logger.debug('Loading versions for photo:', photo.id, photo.filename);
         
         // Get the best version for display (processed if exists)
         const display = await invoke<Photo>('get_display_version', { photoId: photo.id });
-        console.log('Display version:', display.id, display.filename, 'is_processed:', display.is_processed);
+        logger.debug('Display version:', display.id, display.filename, 'is_processed:', display.is_processed);
         setDisplayPhoto(display);
         
         // Try to get the processed version (if photo is RAW and has one)
         const processed = await invoke<Photo | null>('get_processed_version', { photoId: photo.id });
-        console.log('Processed version:', processed ? `${processed.id} ${processed.filename}` : 'none');
+        logger.debug('Processed version:', processed ? `${processed.id} ${processed.filename}` : 'none');
         setProcessedPhoto(processed);
         setHasProcessedVersion(!!processed);
         
         // The RAW is always the passed-in photo (since we filter processed from the grid)
         setRawPhoto(photo);
       } catch (error) {
-        console.error('Failed to load photo versions:', error);
+        logger.error('Failed to load photo versions:', error);
         setDisplayPhoto(photo);
         setRawPhoto(photo);
         setHasProcessedVersion(false);

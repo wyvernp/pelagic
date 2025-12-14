@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { confirmDialog } from '../utils/dialogs';
+import { logger } from '../utils/logger';
 import type { Dive } from '../types';
 import './BatchOperationsModal.css';
 
@@ -54,7 +56,7 @@ export function BatchOperationsModal({
       setResult(`Successfully moved ${count} photo${count !== 1 ? 's' : ''}`);
       onOperationComplete();
     } catch (error) {
-      console.error('Failed to move photos:', error);
+      logger.error('Failed to move photos:', error);
       setResult(`Error: ${error}`);
     } finally {
       setIsProcessing(false);
@@ -73,7 +75,7 @@ export function BatchOperationsModal({
       setResult(`Successfully rated ${selectedPhotoIds.length} photo${selectedPhotoIds.length !== 1 ? 's' : ''}`);
       onOperationComplete();
     } catch (error) {
-      console.error('Failed to rate photos:', error);
+      logger.error('Failed to rate photos:', error);
       setResult(`Error: ${error}`);
     } finally {
       setIsProcessing(false);
@@ -81,8 +83,10 @@ export function BatchOperationsModal({
   };
 
   const handleBulkDelete = async () => {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${selectedPhotoIds.length} photo${selectedPhotoIds.length !== 1 ? 's' : ''}?\n\nThis will remove them from the database but NOT delete the original files.`
+    const confirmed = await confirmDialog(
+      'Delete Photos',
+      `Are you sure you want to delete ${selectedPhotoIds.length} photo${selectedPhotoIds.length !== 1 ? 's' : ''}?\n\nThis will remove them from the database but NOT delete the original files.`,
+      { okLabel: 'Delete', kind: 'warning' }
     );
 
     if (!confirmed) return;
@@ -96,7 +100,7 @@ export function BatchOperationsModal({
       onOperationComplete();
       onClose();
     } catch (error) {
-      console.error('Failed to delete photos:', error);
+      logger.error('Failed to delete photos:', error);
       setResult(`Error: ${error}`);
     } finally {
       setIsProcessing(false);
@@ -121,10 +125,16 @@ export function BatchOperationsModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal batch-modal" onClick={(e) => e.stopPropagation()}>
+      <div 
+        className="modal batch-modal" 
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="batch-modal-title"
+      >
         <div className="modal-header">
-          <h2>Batch Operations</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <h2 id="batch-modal-title">Batch Operations</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         <div className="modal-body">

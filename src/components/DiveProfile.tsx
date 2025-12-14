@@ -6,6 +6,7 @@ import { LinearGradient } from '@visx/gradient';
 import { AxisBottom, AxisLeft, AxisRight } from '@visx/axis';
 import { GridRows } from '@visx/grid';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { Dive, TankPressure } from '../types';
 import './DiveProfile.css';
 
@@ -69,7 +70,7 @@ export function DiveProfile({
         const pressures = await invoke<TankPressure[]>('get_tank_pressures', { diveId: dive.id });
         setTankPressures(pressures);
       } catch (e) {
-        console.error('Failed to fetch tank pressures:', e);
+        logger.error('Failed to fetch tank pressures:', e);
       }
     }
     fetchTankPressures();

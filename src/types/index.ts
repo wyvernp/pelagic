@@ -379,3 +379,26 @@ export interface DiveMapPoint {
   max_depth_m: number;
   trip_name: string;
 }
+
+// AI Species Identification types
+export interface SpeciesInfo {
+  common_name: string;
+  scientific_name?: string;
+  category?: string;
+  confidence?: string;
+}
+
+export interface SpeciesIdentification {
+  common_name?: string;
+  scientific_name?: string;
+  category?: string;
+  confidence?: string;
+  description?: string;
+  multiple_species: SpeciesInfo[];
+}
+
+export interface IdentificationResult {
+  photo_id: number;
+  identification?: SpeciesIdentification;
+  error?: string;
+}

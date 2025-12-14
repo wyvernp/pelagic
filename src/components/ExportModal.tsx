@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
+import { logger } from '../utils/logger';
 import type { Trip, TripExport, SpeciesExport } from '../types';
 import './ExportModal.css';
 
@@ -49,7 +50,7 @@ export function ExportModal({ isOpen, onClose, selectedTrip, selectedPhotoIds = 
 
       setExportResult(`Successfully exported ${exported.length} photo${exported.length !== 1 ? 's' : ''}`);
     } catch (error) {
-      console.error('Failed to export photos:', error);
+      logger.error('Failed to export photos:', error);
       setExportResult(`Error: ${error}`);
     } finally {
       setIsExporting(false);
@@ -120,7 +121,7 @@ export function ExportModal({ isOpen, onClose, selectedTrip, selectedPhotoIds = 
 
       setExportResult(`Trip report saved to ${filePath}`);
     } catch (error) {
-      console.error('Failed to export trip report:', error);
+      logger.error('Failed to export trip report:', error);
       setExportResult(`Error: ${error}`);
     } finally {
       setIsExporting(false);
@@ -163,7 +164,7 @@ export function ExportModal({ isOpen, onClose, selectedTrip, selectedPhotoIds = 
 
       setExportResult(`Species list saved to ${filePath}`);
     } catch (error) {
-      console.error('Failed to export species list:', error);
+      logger.error('Failed to export species list:', error);
       setExportResult(`Error: ${error}`);
     } finally {
       setIsExporting(false);
@@ -186,10 +187,16 @@ export function ExportModal({ isOpen, onClose, selectedTrip, selectedPhotoIds = 
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal export-modal" onClick={e => e.stopPropagation()}>
+      <div 
+        className="modal export-modal" 
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-modal-title"
+      >
         <div className="modal-header">
-          <h2>Export</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <h2 id="export-modal-title">Export</h2>
+          <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         <div className="modal-body">

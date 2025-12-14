@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
+import { logger } from '../utils/logger';
 import type { Dive, EquipmentSet } from '../types';
 import './AddTripModal.css'; // Reuse modal styles
 
@@ -84,7 +85,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
           setDiveSites(filtered);
           setShowSuggestions(filtered.length > 0);
         } catch (error) {
-          console.error('Failed to search dive sites:', error);
+          logger.error('Failed to search dive sites:', error);
         }
       }, 300);
       setSearchTimeout(timeout);
@@ -153,7 +154,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       setSelectedDiveSetIds(assignedSets.filter(s => s.set_type === 'dive').map(s => s.id));
       setSelectedCameraSetIds(assignedSets.filter(s => s.set_type === 'camera').map(s => s.id));
     } catch (error) {
-      console.error('Failed to load equipment data:', error);
+      logger.error('Failed to load equipment data:', error);
     }
   };
 
@@ -170,7 +171,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
         setIds: allSelectedSets,
       });
     } catch (error) {
-      console.error('Failed to save equipment sets:', error);
+      logger.error('Failed to save equipment sets:', error);
     }
     
     onSubmit(dive.id, {

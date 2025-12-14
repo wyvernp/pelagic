@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import './AddTripModal.css'; // Reuse modal styles
 
 interface DiveSite {
@@ -134,7 +135,7 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
           setDiveSites(filtered);
           setShowSuggestions(filtered.length > 0);
         } catch (error) {
-          console.error('Failed to search dive sites:', error);
+          logger.error('Failed to search dive sites:', error);
         }
       }, 300);
       setSearchTimeout(timeout);

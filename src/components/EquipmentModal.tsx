@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
+import { logger } from '../utils/logger';
 import type { EquipmentCategory, EquipmentWithCategory, EquipmentSet, EquipmentSetWithItems } from '../types';
 import './EquipmentModal.css';
 
@@ -68,7 +69,7 @@ export function EquipmentModal({ isOpen, onClose }: EquipmentModalProps) {
         setEquipmentForm(prev => ({ ...prev, category_id: cats[0].id }));
       }
     } catch (error) {
-      console.error('Failed to load equipment data:', error);
+      logger.error('Failed to load equipment data:', error);
     }
   };
 
@@ -102,7 +103,7 @@ export function EquipmentModal({ isOpen, onClose }: EquipmentModalProps) {
       resetEquipmentForm();
       loadData();
     } catch (error) {
-      console.error('Failed to save equipment:', error);
+      logger.error('Failed to save equipment:', error);
     }
   };
 
@@ -132,7 +133,7 @@ export function EquipmentModal({ isOpen, onClose }: EquipmentModalProps) {
         await invoke('delete_equipment', { id: item.id });
         loadData();
       } catch (error) {
-        console.error('Failed to delete equipment:', error);
+        logger.error('Failed to delete equipment:', error);
       }
     }
   };
@@ -185,7 +186,7 @@ export function EquipmentModal({ isOpen, onClose }: EquipmentModalProps) {
       resetSetForm();
       loadData();
     } catch (error) {
-      console.error('Failed to save equipment set:', error);
+      logger.error('Failed to save equipment set:', error);
     }
   };
 
@@ -204,7 +205,7 @@ export function EquipmentModal({ isOpen, onClose }: EquipmentModalProps) {
         setShowSetForm(true);
       }
     } catch (error) {
-      console.error('Failed to load equipment set:', error);
+      logger.error('Failed to load equipment set:', error);
     }
   };
 
@@ -219,7 +220,7 @@ export function EquipmentModal({ isOpen, onClose }: EquipmentModalProps) {
         await invoke('delete_equipment_set', { id: set.id });
         loadData();
       } catch (error) {
-        console.error('Failed to delete equipment set:', error);
+        logger.error('Failed to delete equipment set:', error);
       }
     }
   };

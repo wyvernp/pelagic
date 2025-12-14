@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { logger } from '../utils/logger';
 import type { Dive, Photo, ViewMode, DiveStats } from '../types';
 import { ImageLoader } from './ImageLoader';
+import { useSettings } from './SettingsModal';
 import './ContentGrid.css';
 
 interface DiveThumbnails {
@@ -40,8 +42,21 @@ export function ContentGrid({
 }: ContentGridProps) {
   const [diveThumbnails, setDiveThumbnails] = useState<DiveThumbnails>({});
   const [diveStats, setDiveStats] = useState<DiveStatsMap>({});
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
   const loadingRef = useRef<boolean>(false);
   const abortRef = useRef<boolean>(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const settings = useSettings();
+  
+  // Map thumbnail size setting to actual pixel values
+  const thumbnailSize = useMemo(() => {
+    switch (settings.thumbnailSize) {
+      case 'small': return 120;
+      case 'large': return 240;
+      case 'medium':
+      default: return 180;
+    }
+  }, [settings.thumbnailSize]);
   
   // Load thumbnails and stats for dives progressively (non-blocking)
   useEffect(() => {
@@ -79,7 +94,7 @@ export function ContentGrid({
               // Small yield to let UI update
               await new Promise(resolve => setTimeout(resolve, 10));
             } catch (error) {
-              console.error(`Failed to load data for dive ${dive.id}:`, error);
+              logger.error(`Failed to load data for dive ${dive.id}:`, error);
             }
           }
           
@@ -101,7 +116,93 @@ export function ContentGrid({
 
   const hasDives = viewMode === 'trip' && dives.length > 0;
   const hasPhotos = photos.length > 0;
-  
+
+  // Calculate grid columns for keyboard navigation
+  const getGridColumns = useCallback(() => {
+    if (!gridRef.current) return 4;
+    const gridStyle = window.getComputedStyle(gridRef.current);
+    const columns = gridStyle.gridTemplateColumns.split(' ').length;
+    return columns || 4;
+  }, []);
+
+  // Keyboard navigation for photo grid
+  useEffect(() => {
+    if (!hasPhotos || photos.length === 0) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle if the grid or its children are focused
+      if (!gridRef.current?.contains(document.activeElement) && document.activeElement !== gridRef.current) {
+        return;
+      }
+
+      const columns = getGridColumns();
+      let newIndex = focusedIndex;
+
+      switch (e.key) {
+        case 'ArrowRight':
+          e.preventDefault();
+          newIndex = Math.min(focusedIndex + 1, photos.length - 1);
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          newIndex = Math.max(focusedIndex - 1, 0);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          newIndex = Math.min(focusedIndex + columns, photos.length - 1);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          newIndex = Math.max(focusedIndex - columns, 0);
+          break;
+        case 'Enter':
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < photos.length) {
+            onOpenPhoto(photos[focusedIndex].id);
+          }
+          break;
+        case ' ':
+          e.preventDefault();
+          if (focusedIndex >= 0 && focusedIndex < photos.length) {
+            onSelectPhoto(photos[focusedIndex].id, e.ctrlKey || e.metaKey || e.shiftKey);
+          }
+          break;
+        case 'Home':
+          e.preventDefault();
+          newIndex = 0;
+          break;
+        case 'End':
+          e.preventDefault();
+          newIndex = photos.length - 1;
+          break;
+        default:
+          return;
+      }
+
+      if (newIndex !== focusedIndex && newIndex >= 0) {
+        setFocusedIndex(newIndex);
+        // Focus the photo button
+        const photoButtons = gridRef.current?.querySelectorAll('.photo-card');
+        if (photoButtons && photoButtons[newIndex]) {
+          (photoButtons[newIndex] as HTMLElement).focus();
+        }
+        // Also select the photo (without multi-select unless modifier held)
+        if (e.key !== 'Enter' && e.key !== ' ') {
+          onSelectPhoto(photos[newIndex].id, false);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasPhotos, photos, focusedIndex, getGridColumns, onSelectPhoto, onOpenPhoto]);
+
+  // Reset focused index when photos change
+  useEffect(() => {
+    setFocusedIndex(-1);
+  }, [photos]);
+
+  // Early return for empty state - AFTER all hooks
   if (!hasDives && !hasPhotos) {
     return (
       <div className="empty-state">
@@ -133,7 +234,14 @@ export function ContentGrid({
   };
 
   return (
-    <div className="content-grid">
+    <div 
+      ref={gridRef}
+      className="content-grid"
+      style={{ '--thumbnail-size': `${thumbnailSize}px` } as React.CSSProperties}
+      tabIndex={hasPhotos ? 0 : undefined}
+      role={hasPhotos ? 'grid' : undefined}
+      aria-label={hasPhotos ? 'Photo gallery' : undefined}
+    >
       {/* Dive cards when viewing a trip */}
       {hasDives && (
         <>
@@ -248,12 +356,20 @@ export function ContentGrid({
       )}
       
       {/* Photo thumbnails */}
-      {photos.map((photo) => (
+      {photos.map((photo, index) => (
         <button
           key={photo.id}
-          className={`grid-item photo-card ${selectedPhotoIds.has(photo.id) ? 'selected' : ''}`}
-          onClick={(e) => handlePhotoClick(photo.id, e)}
+          className={`grid-item photo-card ${selectedPhotoIds.has(photo.id) ? 'selected' : ''} ${focusedIndex === index ? 'focused' : ''}`}
+          onClick={(e) => {
+            handlePhotoClick(photo.id, e);
+            setFocusedIndex(index);
+          }}
           onDoubleClick={() => onOpenPhoto(photo.id)}
+          onFocus={() => setFocusedIndex(index)}
+          tabIndex={0}
+          role="gridcell"
+          aria-selected={selectedPhotoIds.has(photo.id)}
+          aria-label={`Photo ${photo.filename}${selectedPhotoIds.has(photo.id) ? ', selected' : ''}`}
         >
           <ImageLoader
             filePath={photo.thumbnail_path}

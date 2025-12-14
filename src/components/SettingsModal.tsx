@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { logger } from '../utils/logger';
 import './SettingsModal.css';
 
 interface SettingsModalProps {
@@ -32,7 +33,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     try {
       await invoke('open_url', { url });
     } catch (error) {
-      console.error('Failed to open URL:', error);
+      logger.error('Failed to open URL:', error);
     }
   };
 
@@ -55,7 +56,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       const count = await invoke<number>('rescan_all_exif');
       setRescanResult(`✓ Rescanned EXIF data for ${count} photos`);
     } catch (error) {
-      console.error('Failed to rescan EXIF:', error);
+      logger.error('Failed to rescan EXIF:', error);
       setRescanResult(`✗ Error: ${error}`);
     } finally {
       setRescanning(false);
@@ -79,14 +80,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           const count = await invoke<number>('import_dive_sites_csv', { csvPath: selected });
           setRescanResult(`✓ Imported ${count} dive sites`);
         } catch (error) {
-          console.error('Failed to import dive sites:', error);
+          logger.error('Failed to import dive sites:', error);
           setRescanResult(`✗ Error: ${error}`);
         } finally {
           setRescanning(false);
         }
       }
     } catch (error) {
-      console.error('Failed to select CSV file:', error);
+      logger.error('Failed to select CSV file:', error);
       setRescanResult(`✗ Error: ${error}`);
     }
   };
@@ -227,7 +228,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <h3 className="settings-section-title">About</h3>
             <div className="about-info">
               <p><strong>Pelagic</strong> - Dive Photo Manager</p>
-              <p className="version">Version 0.1.0</p>
+              <p className="version">Version 0.2.10</p>
               <p className="credits">Built with Tauri + React</p>
             </div>
           </div>

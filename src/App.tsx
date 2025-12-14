@@ -1,6 +1,8 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { confirmDialog } from './utils/dialogs';
+import { logger } from './utils/logger';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ContentArea } from './components/ContentArea';
@@ -42,7 +44,7 @@ function App() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [dives, setDives] = useState<Dive[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
-  const [_isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [tripModalOpen, setTripModalOpen] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [diveModalOpen, setDiveModalOpen] = useState(false);
@@ -67,6 +69,10 @@ function App() {
   // Search results state
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Refs to track current state for background effects (avoids stale closures)
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   // Computed values - defined early so handlers can use them
   const selectedTrip = trips.find((t) => t.id === state.selectedTripId) ?? null;
@@ -94,10 +100,10 @@ function App() {
     invoke<number>('link_orphan_processed_photos')
       .then((count) => {
         if (count > 0) {
-          console.log(`Linked ${count} orphan processed photos to their RAW files`);
+          logger.info(`Linked ${count} orphan processed photos to their RAW files`);
         }
       })
-      .catch((err) => console.error('Failed to link orphan photos:', err));
+      .catch((err) => logger.error('Failed to link orphan photos:', err));
   }, []);
   
   // Regenerate thumbnails in background ONE AT A TIME (non-blocking)
@@ -114,7 +120,7 @@ function App() {
         const photoIds = await invoke<number[]>('get_photos_needing_thumbnails');
         if (photoIds.length === 0 || cancelled) return;
         
-        console.log(`Starting background thumbnail generation for ${photoIds.length} photos`);
+        logger.info(`Starting background thumbnail generation for ${photoIds.length} photos`);
         setThumbnailProgress({ current: 0, total: photoIds.length });
         
         // Process one at a time
@@ -127,32 +133,34 @@ function App() {
             
             // Every 10 thumbnails, reload current photo view to show progress
             if ((i + 1) % 10 === 0) {
-              if (state.selectedDiveId) {
-                const newPhotos = await invoke<Photo[]>('get_photos_for_dive', { diveId: state.selectedDiveId });
+              const currentState = stateRef.current;
+              if (currentState.selectedDiveId) {
+                const newPhotos = await invoke<Photo[]>('get_photos_for_dive', { diveId: currentState.selectedDiveId });
                 setPhotos(newPhotos);
-              } else if (state.selectedTripId) {
-                const newPhotos = await invoke<Photo[]>('get_photos_for_trip', { tripId: state.selectedTripId });
+              } else if (currentState.selectedTripId) {
+                const newPhotos = await invoke<Photo[]>('get_photos_for_trip', { tripId: currentState.selectedTripId });
                 setPhotos(newPhotos);
               }
             }
           } catch (err) {
-            console.warn(`Failed to generate thumbnail for photo ${photoIds[i]}:`, err);
+            logger.warn(`Failed to generate thumbnail for photo ${photoIds[i]}:`, err);
           }
         }
         
-        console.log('Background thumbnail generation complete');
+        logger.info('Background thumbnail generation complete');
         setThumbnailProgress(null);
         
-        // Final reload of photos
-        if (state.selectedDiveId) {
-          const newPhotos = await invoke<Photo[]>('get_photos_for_dive', { diveId: state.selectedDiveId });
+        // Final reload of photos using current state
+        const finalState = stateRef.current;
+        if (finalState.selectedDiveId) {
+          const newPhotos = await invoke<Photo[]>('get_photos_for_dive', { diveId: finalState.selectedDiveId });
           setPhotos(newPhotos);
-        } else if (state.selectedTripId) {
-          const newPhotos = await invoke<Photo[]>('get_photos_for_trip', { tripId: state.selectedTripId });
+        } else if (finalState.selectedTripId) {
+          const newPhotos = await invoke<Photo[]>('get_photos_for_trip', { tripId: finalState.selectedTripId });
           setPhotos(newPhotos);
         }
       } catch (error) {
-        console.error('Failed to regenerate thumbnails:', error);
+        logger.error('Failed to regenerate thumbnails:', error);
         setThumbnailProgress(null);
       }
     };
@@ -202,7 +210,7 @@ function App() {
       const result = await invoke<Trip[]>('get_trips');
       setTrips(result);
     } catch (error) {
-      console.error('Failed to load trips:', error);
+      logger.error('Failed to load trips:', error);
     } finally {
       setIsLoading(false);
     }
@@ -213,7 +221,7 @@ function App() {
       const result = await invoke<Dive[]>('get_dives_for_trip', { tripId });
       setDives(result);
     } catch (error) {
-      console.error('Failed to load dives:', error);
+      logger.error('Failed to load dives:', error);
     }
   };
 
@@ -222,7 +230,7 @@ function App() {
       const result = await invoke<Photo[]>('get_photos_for_dive', { diveId });
       setPhotos(result);
     } catch (error) {
-      console.error('Failed to load photos:', error);
+      logger.error('Failed to load photos:', error);
     }
   };
 
@@ -231,7 +239,7 @@ function App() {
       const result = await invoke<Photo[]>('get_photos_for_trip', { tripId });
       setPhotos(result);
     } catch (error) {
-      console.error('Failed to load photos:', error);
+      logger.error('Failed to load photos:', error);
     }
   };
 
@@ -258,7 +266,7 @@ function App() {
         setPhotoImportOpen(true);
       }
     } catch (error) {
-      console.error('Failed to select photos:', error);
+      logger.error('Failed to select photos:', error);
       alert('Failed to select photos: ' + error);
     }
   };
@@ -357,8 +365,10 @@ function App() {
     if (selectedPhotoIds.size === 0) return;
     
     const count = selectedPhotoIds.size;
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${count} photo${count !== 1 ? 's' : ''}?\n\nThis will remove the photos from the database but will NOT delete the original files from disk.`
+    const confirmed = await confirmDialog(
+      'Delete Photos',
+      `Are you sure you want to delete ${count} photo${count !== 1 ? 's' : ''}?\n\nThis will remove the photos from the database but will NOT delete the original files from disk.`,
+      { okLabel: 'Delete', kind: 'warning' }
     );
     
     if (confirmed) {
@@ -374,7 +384,7 @@ function App() {
           await loadPhotosForTrip(state.selectedTripId);
         }
       } catch (error) {
-        console.error('Failed to delete photos:', error);
+        logger.error('Failed to delete photos:', error);
         alert('Failed to delete photos: ' + error);
       }
     }
@@ -442,7 +452,7 @@ function App() {
         handleSelectTrip(tripId);
       }
     } catch (error) {
-      console.error('Failed to save trip:', error);
+      logger.error('Failed to save trip:', error);
       alert('Failed to save trip: ' + error);
     }
   };
@@ -456,7 +466,7 @@ function App() {
         handleSelectTrip(null);
       }
     } catch (error) {
-      console.error('Failed to delete trip:', error);
+      logger.error('Failed to delete trip:', error);
       alert('Failed to delete trip: ' + error);
     }
   };
@@ -511,7 +521,7 @@ function App() {
       await loadDivesForTrip(addDiveTripId);
       handleSelectDive(diveId);
     } catch (error) {
-      console.error('Failed to create dive:', error);
+      logger.error('Failed to create dive:', error);
       alert('Failed to create dive: ' + error);
     }
   };
@@ -542,7 +552,7 @@ function App() {
         await loadDivesForTrip(state.selectedTripId);
       }
     } catch (error) {
-      console.error('Failed to update dive:', error);
+      logger.error('Failed to update dive:', error);
       alert('Failed to update dive: ' + error);
     }
   };
@@ -557,7 +567,7 @@ function App() {
         await loadDivesForTrip(state.selectedTripId);
       }
     } catch (error) {
-      console.error('Failed to delete dive:', error);
+      logger.error('Failed to delete dive:', error);
       alert('Failed to delete dive: ' + error);
     }
   };
@@ -614,7 +624,7 @@ function App() {
         await loadDivesForTrip(state.selectedTripId);
       }
     } catch (error) {
-      console.error('Failed to bulk update dives:', error);
+      logger.error('Failed to bulk update dives:', error);
       alert('Failed to bulk update dives: ' + error);
     }
   };
@@ -634,6 +644,12 @@ function App() {
       {thumbnailProgress && (
         <div className="thumbnail-progress">
           Generating thumbnails: {thumbnailProgress.current} / {thumbnailProgress.total}
+        </div>
+      )}
+      {isLoading && (
+        <div className="loading-overlay">
+          <div className="loading-spinner"></div>
+          <span>Loading trips...</span>
         </div>
       )}
       <main className="app-main">
@@ -755,8 +771,7 @@ function App() {
         selectedPhotoIds={Array.from(selectedPhotoIds)}
         onClose={() => setSpeciesModalOpen(false)}
         onTagsAdded={() => {
-          // Optionally refresh photos or show feedback
-          console.log('Tags added successfully');
+          logger.debug('Tags added successfully');
         }}
       />
       <GeneralTagModal
@@ -764,7 +779,7 @@ function App() {
         selectedPhotoIds={Array.from(selectedPhotoIds)}
         onClose={() => setGeneralTagModalOpen(false)}
         onTagsAdded={() => {
-          console.log('General tags added successfully');
+          logger.debug('General tags added successfully');
         }}
       />
       <StatisticsModal
@@ -801,7 +816,7 @@ function App() {
             setPhotos(filteredPhotos);
             // Stay in current view mode
           } catch (error) {
-            console.error('Failed to apply filter:', error);
+            logger.error('Failed to apply filter:', error);
           }
         }}
       />
