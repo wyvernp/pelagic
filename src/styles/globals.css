@@ -107,7 +107,7 @@ button:disabled {
 }
 
 /* Input reset */
-input, textarea, select {
+input, textarea {
   font-family: inherit;
   font-size: inherit;
   color: var(--text-primary);
@@ -117,7 +117,27 @@ input, textarea, select {
   padding: 8px 12px;
 }
 
-input:focus, textarea:focus, select:focus {
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: #b0b0b0;
+  background: #000000;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 8px 12px;
+}
+
+select option {
+  background: #000000;
+  color: #b0b0b0;
+}
+
+input:focus, textarea:focus {
+  border-color: var(--accent-primary);
+  outline: none;
+}
+
+select:focus {
   border-color: var(--accent-primary);
   outline: none;
 }

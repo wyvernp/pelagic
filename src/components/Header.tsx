@@ -8,9 +8,10 @@ interface HeaderProps {
   onOpenSettings?: () => void;
   onOpenMap?: () => void;
   onOpenDiveComputer?: () => void;
+  onOpenEquipment?: () => void;
 }
 
-export function Header({ onImportPhotos, onOpenStatistics, onOpenExport, onOpenSearch, onOpenSettings, onOpenMap, onOpenDiveComputer }: HeaderProps) {
+export function Header({ onImportPhotos, onOpenStatistics, onOpenExport, onOpenSearch, onOpenSettings, onOpenMap, onOpenDiveComputer, onOpenEquipment }: HeaderProps) {
   return (
     <header className="app-header">
       <div className="header-brand">
@@ -51,6 +52,12 @@ export function Header({ onImportPhotos, onOpenStatistics, onOpenExport, onOpenS
             <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
           </svg>
           <span>Statistics</span>
+        </button>
+        <button className="header-btn" title="Equipment" onClick={onOpenEquipment}>
+          <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+            <path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+          </svg>
+          <span>Equipment</span>
         </button>
         <button className="header-btn" title="Export" onClick={onOpenExport}>
           <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">

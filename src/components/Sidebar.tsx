@@ -12,6 +12,10 @@ interface SidebarProps {
   onAddTrip: () => void;
   onEditTrip: (trip: Trip) => void;
   onAddDive: (tripId: number) => void;
+  // Bulk edit mode props
+  bulkEditMode?: boolean;
+  selectedDiveIds?: Set<number>;
+  onToggleDiveSelection?: (diveId: number) => void;
 }
 
 export function Sidebar({
@@ -24,8 +28,21 @@ export function Sidebar({
   onAddTrip,
   onEditTrip,
   onAddDive,
+  bulkEditMode,
+  selectedDiveIds,
+  onToggleDiveSelection,
 }: SidebarProps) {
   const getTripDives = (tripId: number) => dives.filter((d) => d.trip_id === tripId);
+
+  const handleDiveClick = (diveId: number, e: React.MouseEvent) => {
+    if (bulkEditMode && onToggleDiveSelection) {
+      e.preventDefault();
+      e.stopPropagation();
+      onToggleDiveSelection(diveId);
+    } else {
+      onSelectDive(diveId);
+    }
+  };
 
   return (
     <aside className="sidebar">
@@ -80,25 +97,39 @@ export function Sidebar({
                   
                   {isExpanded && tripDives.length > 0 && (
                     <ul className="dive-list">
-                      {tripDives.map((dive) => (
-                        <li key={dive.id}>
-                          <button
-                            className={`dive-button ${selectedDiveId === dive.id ? 'selected' : ''}`}
-                            onClick={() => onSelectDive(dive.id)}
-                          >
-                            <svg className="dive-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                              <path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2l2-2h4l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-7H6V6h5v4zm2 0V6h5v4h-5zm3.5 7c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
-                            </svg>
-                            <div className="dive-text">
-                              <span className="dive-number">
-                                Dive {dive.dive_number}
-                                {dive.location && <span className="dive-location"> ({dive.location})</span>}
-                              </span>
-                            </div>
-                            <span className="dive-depth">{dive.max_depth_m.toFixed(1)}m</span>
-                          </button>
-                        </li>
-                      ))}
+                      {tripDives.map((dive) => {
+                        const isSelected = selectedDiveIds?.has(dive.id) ?? false;
+                        return (
+                          <li key={dive.id}>
+                            <button
+                              className={`dive-button ${selectedDiveId === dive.id ? 'selected' : ''} ${bulkEditMode ? 'bulk-edit-mode' : ''} ${isSelected ? 'bulk-selected' : ''}`}
+                              onClick={(e) => handleDiveClick(dive.id, e)}
+                            >
+                              {bulkEditMode && (
+                                <input 
+                                  type="checkbox" 
+                                  className="dive-checkbox"
+                                  checked={isSelected}
+                                  onChange={() => onToggleDiveSelection?.(dive.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
+                              {!bulkEditMode && (
+                                <svg className="dive-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                                  <path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2l2-2h4l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-7H6V6h5v4zm2 0V6h5v4h-5zm3.5 7c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+                                </svg>
+                              )}
+                              <div className="dive-text">
+                                <span className="dive-number">
+                                  Dive {dive.dive_number}
+                                  {dive.location && <span className="dive-location"> ({dive.location})</span>}
+                                </span>
+                              </div>
+                              <span className="dive-depth">{dive.max_depth_m.toFixed(1)}m</span>
+                            </button>
+                          </li>
+                        );
+                      })}
                       <li>
                         <button
                           className="dive-button add-dive-button"

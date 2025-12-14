@@ -81,10 +81,15 @@
 .gap-control select {
   padding: 4px 8px;
   font-size: 13px;
-  background: var(--bg-primary);
+  background: #000000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: var(--text-primary);
+  color: #b0b0b0;
+}
+
+.gap-control select option {
+  background: #000000;
+  color: #b0b0b0;
 }
 
 .overwrite-control {
@@ -192,11 +197,16 @@
 .group-assignment select {
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--bg-secondary);
+  background: #000000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: var(--text-primary);
+  color: #b0b0b0;
   min-width: 180px;
+}
+
+.group-assignment select option {
+  background: #000000;
+  color: #b0b0b0;
 }
 
 .assignment-label {

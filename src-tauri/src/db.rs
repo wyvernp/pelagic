@@ -141,6 +141,70 @@ pub struct DiveSite {
     pub lon: f64,
 }
 
+// Equipment catalogue types
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EquipmentCategory {
+    pub id: i64,
+    pub name: String,
+    pub icon: Option<String>,
+    pub sort_order: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Equipment {
+    pub id: i64,
+    pub category_id: i64,
+    pub name: String,
+    pub brand: Option<String>,
+    pub model: Option<String>,
+    pub serial_number: Option<String>,
+    pub purchase_date: Option<String>,
+    pub notes: Option<String>,
+    pub is_retired: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EquipmentWithCategory {
+    pub id: i64,
+    pub category_id: i64,
+    pub category_name: String,
+    pub name: String,
+    pub brand: Option<String>,
+    pub model: Option<String>,
+    pub serial_number: Option<String>,
+    pub purchase_date: Option<String>,
+    pub notes: Option<String>,
+    pub is_retired: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EquipmentSet {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub set_type: String,  // 'dive' or 'camera'
+    pub is_default: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EquipmentSetWithItems {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub set_type: String,
+    pub is_default: bool,
+    pub items: Vec<EquipmentWithCategory>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // Search results
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SearchResults {
@@ -364,11 +428,58 @@ impl Database {
                 lon REAL NOT NULL
             );
             
+            -- Equipment catalogue tables
+            CREATE TABLE IF NOT EXISTS equipment_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                icon TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            );
+            
+            CREATE TABLE IF NOT EXISTS equipment (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL REFERENCES equipment_categories(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                brand TEXT,
+                model TEXT,
+                serial_number TEXT,
+                purchase_date TEXT,
+                notes TEXT,
+                is_retired INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            
+            CREATE TABLE IF NOT EXISTS equipment_sets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                set_type TEXT NOT NULL DEFAULT 'dive',
+                is_default INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            
+            CREATE TABLE IF NOT EXISTS equipment_set_items (
+                equipment_set_id INTEGER NOT NULL REFERENCES equipment_sets(id) ON DELETE CASCADE,
+                equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+                PRIMARY KEY (equipment_set_id, equipment_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS dive_equipment_sets (
+                dive_id INTEGER NOT NULL REFERENCES dives(id) ON DELETE CASCADE,
+                equipment_set_id INTEGER NOT NULL REFERENCES equipment_sets(id) ON DELETE CASCADE,
+                PRIMARY KEY (dive_id, equipment_set_id)
+            );
+            
             CREATE INDEX IF NOT EXISTS idx_dives_trip_id ON dives(trip_id);
             CREATE INDEX IF NOT EXISTS idx_dive_samples_dive_id ON dive_samples(dive_id);
             CREATE INDEX IF NOT EXISTS idx_dive_events_dive_id ON dive_events(dive_id);
             CREATE INDEX IF NOT EXISTS idx_photos_trip_id ON photos(trip_id);
             CREATE INDEX IF NOT EXISTS idx_photos_dive_id ON photos(dive_id);
+            CREATE INDEX IF NOT EXISTS idx_equipment_category_id ON equipment(category_id);
+            CREATE INDEX IF NOT EXISTS idx_equipment_set_items_set ON equipment_set_items(equipment_set_id);
+            CREATE INDEX IF NOT EXISTS idx_dive_equipment_sets_dive ON dive_equipment_sets(dive_id);
         "#)?;
         
         Ok(())
@@ -434,6 +545,95 @@ impl Database {
         
         if !has_guide {
             self.conn.execute("ALTER TABLE dives ADD COLUMN guide TEXT", [])?;
+        }
+        
+        // Migration: Add equipment tables if they don't exist (for existing installations)
+        let has_equipment_categories: bool = self.conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='equipment_categories'",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(false);
+        
+        if !has_equipment_categories {
+            self.conn.execute_batch(r#"
+                CREATE TABLE IF NOT EXISTS equipment_categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    icon TEXT,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                );
+                
+                CREATE TABLE IF NOT EXISTS equipment (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category_id INTEGER NOT NULL REFERENCES equipment_categories(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    brand TEXT,
+                    model TEXT,
+                    serial_number TEXT,
+                    purchase_date TEXT,
+                    notes TEXT,
+                    is_retired INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                
+                CREATE TABLE IF NOT EXISTS equipment_sets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    set_type TEXT NOT NULL DEFAULT 'dive',
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                
+                CREATE TABLE IF NOT EXISTS equipment_set_items (
+                    equipment_set_id INTEGER NOT NULL REFERENCES equipment_sets(id) ON DELETE CASCADE,
+                    equipment_id INTEGER NOT NULL REFERENCES equipment(id) ON DELETE CASCADE,
+                    PRIMARY KEY (equipment_set_id, equipment_id)
+                );
+                
+                CREATE TABLE IF NOT EXISTS dive_equipment_sets (
+                    dive_id INTEGER NOT NULL REFERENCES dives(id) ON DELETE CASCADE,
+                    equipment_set_id INTEGER NOT NULL REFERENCES equipment_sets(id) ON DELETE CASCADE,
+                    PRIMARY KEY (dive_id, equipment_set_id)
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_equipment_category_id ON equipment(category_id);
+                CREATE INDEX IF NOT EXISTS idx_equipment_set_items_set ON equipment_set_items(equipment_set_id);
+                CREATE INDEX IF NOT EXISTS idx_dive_equipment_sets_dive ON dive_equipment_sets(dive_id);
+            "#)?;
+        }
+        
+        // Seed default equipment categories if table is empty
+        let categories_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM equipment_categories",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(0);
+        
+        if categories_count == 0 {
+            self.conn.execute_batch(r#"
+                INSERT INTO equipment_categories (name, icon, sort_order) VALUES 
+                    ('Mask', '🥽', 1),
+                    ('Snorkel', '🤿', 2),
+                    ('Fins', '🦶', 3),
+                    ('Exposure Protection', '🧥', 4),
+                    ('BCD', '🎒', 5),
+                    ('Regulator', '💨', 6),
+                    ('Cylinder', '🔋', 7),
+                    ('Weights', '⚖️', 8),
+                    ('Computer & Gauges', '⌚', 9),
+                    ('Lighting', '🔦', 10),
+                    ('Camera Body', '📷', 11),
+                    ('Camera Housing', '📦', 12),
+                    ('Camera Lens', '🔍', 13),
+                    ('Wet Lens', '🔎', 14),
+                    ('Camera Port', '⭕', 15),
+                    ('Strobe & Video Light', '💡', 16),
+                    ('Arms & Clamps', '🦾', 17),
+                    ('Accessories', '🎒', 18);
+            "#)?;
         }
         
         Ok(())
@@ -560,6 +760,102 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+    
+    /// Bulk update multiple dives with only the fields that are Some
+    /// Each Option<Option<T>> means: None = don't update, Some(None) = set to NULL, Some(Some(v)) = set to value
+    pub fn bulk_update_dives(
+        &self,
+        dive_ids: &[i64],
+        location: Option<Option<&str>>,
+        ocean: Option<Option<&str>>,
+        buddy: Option<Option<&str>>,
+        divemaster: Option<Option<&str>>,
+        guide: Option<Option<&str>>,
+        instructor: Option<Option<&str>>,
+        is_boat_dive: Option<bool>,
+        is_night_dive: Option<bool>,
+        is_drift_dive: Option<bool>,
+        is_fresh_water: Option<bool>,
+        is_training_dive: Option<bool>,
+    ) -> Result<usize> {
+        if dive_ids.is_empty() {
+            return Ok(0);
+        }
+        
+        // Build dynamic UPDATE query based on which fields are provided
+        let mut set_clauses = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        
+        if let Some(val) = location {
+            set_clauses.push("location = ?");
+            params.push(Box::new(val.map(|s| s.to_string())));
+        }
+        if let Some(val) = ocean {
+            set_clauses.push("ocean = ?");
+            params.push(Box::new(val.map(|s| s.to_string())));
+        }
+        if let Some(val) = buddy {
+            set_clauses.push("buddy = ?");
+            params.push(Box::new(val.map(|s| s.to_string())));
+        }
+        if let Some(val) = divemaster {
+            set_clauses.push("divemaster = ?");
+            params.push(Box::new(val.map(|s| s.to_string())));
+        }
+        if let Some(val) = guide {
+            set_clauses.push("guide = ?");
+            params.push(Box::new(val.map(|s| s.to_string())));
+        }
+        if let Some(val) = instructor {
+            set_clauses.push("instructor = ?");
+            params.push(Box::new(val.map(|s| s.to_string())));
+        }
+        if let Some(val) = is_boat_dive {
+            set_clauses.push("is_boat_dive = ?");
+            params.push(Box::new(val as i32));
+        }
+        if let Some(val) = is_night_dive {
+            set_clauses.push("is_night_dive = ?");
+            params.push(Box::new(val as i32));
+        }
+        if let Some(val) = is_drift_dive {
+            set_clauses.push("is_drift_dive = ?");
+            params.push(Box::new(val as i32));
+        }
+        if let Some(val) = is_fresh_water {
+            set_clauses.push("is_fresh_water = ?");
+            params.push(Box::new(val as i32));
+        }
+        if let Some(val) = is_training_dive {
+            set_clauses.push("is_training_dive = ?");
+            params.push(Box::new(val as i32));
+        }
+        
+        if set_clauses.is_empty() {
+            return Ok(0);
+        }
+        
+        // Add updated_at
+        set_clauses.push("updated_at = datetime('now')");
+        
+        // Build placeholders for dive IDs
+        let placeholders: Vec<_> = dive_ids.iter().map(|_| "?").collect();
+        let sql = format!(
+            "UPDATE dives SET {} WHERE id IN ({})",
+            set_clauses.join(", "),
+            placeholders.join(", ")
+        );
+        
+        // Add dive IDs to params
+        for id in dive_ids {
+            params.push(Box::new(*id));
+        }
+        
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let affected = self.conn.execute(&sql, params_refs.as_slice())?;
+        
+        Ok(affected)
     }
     
     // Dive operations
@@ -2283,6 +2579,479 @@ impl Database {
         
         let count = self.conn.execute(&query, rusqlite::params_from_iter(params.iter()))?;
         Ok(count)
+    }
+    
+    // ==================== Equipment Catalogue Operations ====================
+    
+    /// Get all equipment categories
+    pub fn get_equipment_categories(&self) -> Result<Vec<EquipmentCategory>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, icon, sort_order FROM equipment_categories ORDER BY sort_order, name"
+        )?;
+        
+        let categories = stmt.query_map([], |row| {
+            Ok(EquipmentCategory {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                icon: row.get(2)?,
+                sort_order: row.get(3)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        
+        Ok(categories)
+    }
+    
+    /// Create a new equipment category
+    pub fn create_equipment_category(&self, name: &str, icon: Option<&str>, sort_order: i32) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO equipment_categories (name, icon, sort_order) VALUES (?, ?, ?)",
+            params![name, icon, sort_order],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+    
+    /// Update an equipment category
+    pub fn update_equipment_category(&self, id: i64, name: &str, icon: Option<&str>, sort_order: i32) -> Result<()> {
+        self.conn.execute(
+            "UPDATE equipment_categories SET name = ?, icon = ?, sort_order = ? WHERE id = ?",
+            params![name, icon, sort_order, id],
+        )?;
+        Ok(())
+    }
+    
+    /// Delete an equipment category (cascade deletes equipment in that category)
+    pub fn delete_equipment_category(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM equipment_categories WHERE id = ?", [id])?;
+        Ok(())
+    }
+    
+    /// Get all equipment items
+    pub fn get_all_equipment(&self) -> Result<Vec<EquipmentWithCategory>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.category_id, c.name as category_name, e.name, e.brand, e.model,
+                    e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at
+             FROM equipment e
+             JOIN equipment_categories c ON e.category_id = c.id
+             ORDER BY c.sort_order, c.name, e.name"
+        )?;
+        
+        let equipment = stmt.query_map([], |row| {
+            Ok(EquipmentWithCategory {
+                id: row.get(0)?,
+                category_id: row.get(1)?,
+                category_name: row.get(2)?,
+                name: row.get(3)?,
+                brand: row.get(4)?,
+                model: row.get(5)?,
+                serial_number: row.get(6)?,
+                purchase_date: row.get(7)?,
+                notes: row.get(8)?,
+                is_retired: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        
+        Ok(equipment)
+    }
+    
+    /// Get equipment items by category
+    pub fn get_equipment_by_category(&self, category_id: i64) -> Result<Vec<Equipment>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, category_id, name, brand, model, serial_number, purchase_date, notes, 
+                    is_retired, created_at, updated_at
+             FROM equipment 
+             WHERE category_id = ?
+             ORDER BY name"
+        )?;
+        
+        let equipment = stmt.query_map([category_id], |row| {
+            Ok(Equipment {
+                id: row.get(0)?,
+                category_id: row.get(1)?,
+                name: row.get(2)?,
+                brand: row.get(3)?,
+                model: row.get(4)?,
+                serial_number: row.get(5)?,
+                purchase_date: row.get(6)?,
+                notes: row.get(7)?,
+                is_retired: row.get::<_, i32>(8)? != 0,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        
+        Ok(equipment)
+    }
+    
+    /// Get a single equipment item
+    pub fn get_equipment(&self, id: i64) -> Result<Option<EquipmentWithCategory>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.category_id, c.name as category_name, e.name, e.brand, e.model,
+                    e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at
+             FROM equipment e
+             JOIN equipment_categories c ON e.category_id = c.id
+             WHERE e.id = ?"
+        )?;
+        
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(EquipmentWithCategory {
+                id: row.get(0)?,
+                category_id: row.get(1)?,
+                category_name: row.get(2)?,
+                name: row.get(3)?,
+                brand: row.get(4)?,
+                model: row.get(5)?,
+                serial_number: row.get(6)?,
+                purchase_date: row.get(7)?,
+                notes: row.get(8)?,
+                is_retired: row.get::<_, i32>(9)? != 0,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Create new equipment
+    pub fn create_equipment(
+        &self,
+        category_id: i64,
+        name: &str,
+        brand: Option<&str>,
+        model: Option<&str>,
+        serial_number: Option<&str>,
+        purchase_date: Option<&str>,
+        notes: Option<&str>,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO equipment (category_id, name, brand, model, serial_number, purchase_date, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![category_id, name, brand, model, serial_number, purchase_date, notes],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+    
+    /// Update equipment
+    pub fn update_equipment(
+        &self,
+        id: i64,
+        category_id: i64,
+        name: &str,
+        brand: Option<&str>,
+        model: Option<&str>,
+        serial_number: Option<&str>,
+        purchase_date: Option<&str>,
+        notes: Option<&str>,
+        is_retired: bool,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE equipment SET 
+                category_id = ?, name = ?, brand = ?, model = ?, serial_number = ?,
+                purchase_date = ?, notes = ?, is_retired = ?, updated_at = datetime('now')
+             WHERE id = ?",
+            params![category_id, name, brand, model, serial_number, purchase_date, notes, is_retired as i32, id],
+        )?;
+        Ok(())
+    }
+    
+    /// Delete equipment
+    pub fn delete_equipment(&self, id: i64) -> Result<()> {
+        // Remove from any sets first
+        self.conn.execute("DELETE FROM equipment_set_items WHERE equipment_id = ?", [id])?;
+        // Delete the equipment
+        self.conn.execute("DELETE FROM equipment WHERE id = ?", [id])?;
+        Ok(())
+    }
+    
+    // ==================== Equipment Set Operations ====================
+    
+    /// Get all equipment sets
+    pub fn get_equipment_sets(&self) -> Result<Vec<EquipmentSet>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, set_type, is_default, created_at, updated_at
+             FROM equipment_sets
+             ORDER BY set_type, name"
+        )?;
+        
+        let sets = stmt.query_map([], |row| {
+            Ok(EquipmentSet {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                set_type: row.get(3)?,
+                is_default: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        
+        Ok(sets)
+    }
+    
+    /// Get equipment sets by type ('dive' or 'camera')
+    pub fn get_equipment_sets_by_type(&self, set_type: &str) -> Result<Vec<EquipmentSet>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, set_type, is_default, created_at, updated_at
+             FROM equipment_sets
+             WHERE set_type = ?
+             ORDER BY is_default DESC, name"
+        )?;
+        
+        let sets = stmt.query_map([set_type], |row| {
+            Ok(EquipmentSet {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                set_type: row.get(3)?,
+                is_default: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        
+        Ok(sets)
+    }
+    
+    /// Get equipment set with its items
+    pub fn get_equipment_set_with_items(&self, id: i64) -> Result<Option<EquipmentSetWithItems>> {
+        // Get the set
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, set_type, is_default, created_at, updated_at
+             FROM equipment_sets WHERE id = ?"
+        )?;
+        
+        let set: Option<EquipmentSet> = stmt.query_row([id], |row| {
+            Ok(EquipmentSet {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                set_type: row.get(3)?,
+                is_default: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        }).ok();
+        
+        if let Some(set) = set {
+            // Get items in this set
+            let mut stmt = self.conn.prepare(
+                "SELECT e.id, e.category_id, c.name as category_name, e.name, e.brand, e.model,
+                        e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at
+                 FROM equipment e
+                 JOIN equipment_categories c ON e.category_id = c.id
+                 JOIN equipment_set_items esi ON esi.equipment_id = e.id
+                 WHERE esi.equipment_set_id = ?
+                 ORDER BY c.sort_order, c.name, e.name"
+            )?;
+            
+            let items = stmt.query_map([id], |row| {
+                Ok(EquipmentWithCategory {
+                    id: row.get(0)?,
+                    category_id: row.get(1)?,
+                    category_name: row.get(2)?,
+                    name: row.get(3)?,
+                    brand: row.get(4)?,
+                    model: row.get(5)?,
+                    serial_number: row.get(6)?,
+                    purchase_date: row.get(7)?,
+                    notes: row.get(8)?,
+                    is_retired: row.get::<_, i32>(9)? != 0,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                })
+            })?.collect::<Result<Vec<_>>>()?;
+            
+            Ok(Some(EquipmentSetWithItems {
+                id: set.id,
+                name: set.name,
+                description: set.description,
+                set_type: set.set_type,
+                is_default: set.is_default,
+                items,
+                created_at: set.created_at,
+                updated_at: set.updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Create a new equipment set
+    pub fn create_equipment_set(&self, name: &str, description: Option<&str>, set_type: &str, is_default: bool) -> Result<i64> {
+        // If this is set as default, unset any existing default for this type
+        if is_default {
+            self.conn.execute(
+                "UPDATE equipment_sets SET is_default = 0 WHERE set_type = ?",
+                [set_type],
+            )?;
+        }
+        
+        self.conn.execute(
+            "INSERT INTO equipment_sets (name, description, set_type, is_default) VALUES (?, ?, ?, ?)",
+            params![name, description, set_type, is_default as i32],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+    
+    /// Update an equipment set
+    pub fn update_equipment_set(&self, id: i64, name: &str, description: Option<&str>, set_type: &str, is_default: bool) -> Result<()> {
+        // If this is set as default, unset any existing default for this type
+        if is_default {
+            self.conn.execute(
+                "UPDATE equipment_sets SET is_default = 0 WHERE set_type = ? AND id != ?",
+                params![set_type, id],
+            )?;
+        }
+        
+        self.conn.execute(
+            "UPDATE equipment_sets SET name = ?, description = ?, set_type = ?, is_default = ?, updated_at = datetime('now') WHERE id = ?",
+            params![name, description, set_type, is_default as i32, id],
+        )?;
+        Ok(())
+    }
+    
+    /// Delete an equipment set
+    pub fn delete_equipment_set(&self, id: i64) -> Result<()> {
+        // Remove from dive associations
+        self.conn.execute("DELETE FROM dive_equipment_sets WHERE equipment_set_id = ?", [id])?;
+        // Remove items from set
+        self.conn.execute("DELETE FROM equipment_set_items WHERE equipment_set_id = ?", [id])?;
+        // Delete the set
+        self.conn.execute("DELETE FROM equipment_sets WHERE id = ?", [id])?;
+        Ok(())
+    }
+    
+    /// Add equipment to a set
+    pub fn add_equipment_to_set(&self, set_id: i64, equipment_id: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO equipment_set_items (equipment_set_id, equipment_id) VALUES (?, ?)",
+            params![set_id, equipment_id],
+        )?;
+        self.conn.execute(
+            "UPDATE equipment_sets SET updated_at = datetime('now') WHERE id = ?",
+            [set_id],
+        )?;
+        Ok(())
+    }
+    
+    /// Remove equipment from a set
+    pub fn remove_equipment_from_set(&self, set_id: i64, equipment_id: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM equipment_set_items WHERE equipment_set_id = ? AND equipment_id = ?",
+            params![set_id, equipment_id],
+        )?;
+        self.conn.execute(
+            "UPDATE equipment_sets SET updated_at = datetime('now') WHERE id = ?",
+            [set_id],
+        )?;
+        Ok(())
+    }
+    
+    /// Set all equipment items in a set (replaces existing items)
+    pub fn set_equipment_set_items(&self, set_id: i64, equipment_ids: &[i64]) -> Result<()> {
+        // Remove all existing items
+        self.conn.execute("DELETE FROM equipment_set_items WHERE equipment_set_id = ?", [set_id])?;
+        
+        // Add new items
+        for &equip_id in equipment_ids {
+            self.conn.execute(
+                "INSERT INTO equipment_set_items (equipment_set_id, equipment_id) VALUES (?, ?)",
+                params![set_id, equip_id],
+            )?;
+        }
+        
+        self.conn.execute(
+            "UPDATE equipment_sets SET updated_at = datetime('now') WHERE id = ?",
+            [set_id],
+        )?;
+        Ok(())
+    }
+    
+    // ==================== Dive Equipment Assignment Operations ====================
+    
+    /// Get equipment sets for a dive
+    pub fn get_equipment_sets_for_dive(&self, dive_id: i64) -> Result<Vec<EquipmentSet>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT es.id, es.name, es.description, es.set_type, es.is_default, es.created_at, es.updated_at
+             FROM equipment_sets es
+             JOIN dive_equipment_sets des ON des.equipment_set_id = es.id
+             WHERE des.dive_id = ?
+             ORDER BY es.set_type, es.name"
+        )?;
+        
+        let sets = stmt.query_map([dive_id], |row| {
+            Ok(EquipmentSet {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                set_type: row.get(3)?,
+                is_default: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        
+        Ok(sets)
+    }
+    
+    /// Assign an equipment set to a dive
+    pub fn add_equipment_set_to_dive(&self, dive_id: i64, set_id: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO dive_equipment_sets (dive_id, equipment_set_id) VALUES (?, ?)",
+            params![dive_id, set_id],
+        )?;
+        Ok(())
+    }
+    
+    /// Remove an equipment set from a dive
+    pub fn remove_equipment_set_from_dive(&self, dive_id: i64, set_id: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM dive_equipment_sets WHERE dive_id = ? AND equipment_set_id = ?",
+            params![dive_id, set_id],
+        )?;
+        Ok(())
+    }
+    
+    /// Set all equipment sets for a dive (replaces existing)
+    pub fn set_dive_equipment_sets(&self, dive_id: i64, set_ids: &[i64]) -> Result<()> {
+        // Remove all existing assignments
+        self.conn.execute("DELETE FROM dive_equipment_sets WHERE dive_id = ?", [dive_id])?;
+        
+        // Add new assignments
+        for &set_id in set_ids {
+            self.conn.execute(
+                "INSERT INTO dive_equipment_sets (dive_id, equipment_set_id) VALUES (?, ?)",
+                params![dive_id, set_id],
+            )?;
+        }
+        Ok(())
+    }
+    
+    /// Get default equipment set for a type
+    pub fn get_default_equipment_set(&self, set_type: &str) -> Result<Option<EquipmentSet>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, description, set_type, is_default, created_at, updated_at
+             FROM equipment_sets
+             WHERE set_type = ? AND is_default = 1
+             LIMIT 1"
+        )?;
+        
+        let set = stmt.query_row([set_type], |row| {
+            Ok(EquipmentSet {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                set_type: row.get(3)?,
+                is_default: row.get::<_, i32>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        }).ok();
+        
+        Ok(set)
     }
 }
 

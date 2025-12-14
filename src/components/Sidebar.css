@@ -122,6 +122,25 @@
   background: var(--bg-medium);
 }
 
+/* Bulk edit mode styles */
+.dive-button.bulk-edit-mode {
+  cursor: pointer;
+}
+
+.dive-button.bulk-edit-mode.bulk-selected {
+  background: var(--bg-medium);
+  border-left: 3px solid var(--accent-primary);
+  padding-left: 9px;
+}
+
+.dive-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
 .dive-icon {
   color: var(--depth-primary);
   flex-shrink: 0;

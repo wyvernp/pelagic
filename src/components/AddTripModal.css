@@ -324,3 +324,21 @@
   color: var(--text-muted);
   font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
 }
+
+/* Equipment set selection */
+.equipment-set-group {
+  background: var(--bg-primary);
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.default-indicator {
+  color: var(--accent-color);
+  font-size: 12px;
+}
+
+/* Extra large modal for equipment */
+.modal.modal-xl {
+  max-width: 900px;
+}

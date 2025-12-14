@@ -144,8 +144,8 @@
   font-size: 14px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+  background: #000000;
+  color: #b0b0b0;
   cursor: pointer;
   transition: border-color 0.15s;
   appearance: none;
@@ -157,7 +157,7 @@
 
 .device-selection .form-select option {
   background: #000000;
-  color: #ffffff;
+  color: #b0b0b0;
 }
 
 .device-selection .form-select:hover {

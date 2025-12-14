@@ -19,6 +19,8 @@ import { BatchOperationsModal } from './components/BatchOperationsModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MapView } from './components/MapView';
 import { DiveComputerModal } from './components/DiveComputerModal';
+import { EquipmentModal } from './components/EquipmentModal';
+import { BulkEditDiveModal, type BulkDiveFormData } from './components/BulkEditDiveModal';
 import type { Trip, Dive, Photo, AppState, SearchResults } from './types';
 
 function App() {
@@ -31,6 +33,11 @@ function App() {
   
   // Multi-select state for photos
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<number>>(new Set());
+  
+  // Bulk edit mode for dives
+  const [bulkEditMode, setBulkEditMode] = useState(false);
+  const [selectedDiveIds, setSelectedDiveIds] = useState<Set<number>>(new Set());
+  const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
 
   const [trips, setTrips] = useState<Trip[]>([]);
   const [dives, setDives] = useState<Dive[]>([]);
@@ -55,6 +62,7 @@ function App() {
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [mapViewOpen, setMapViewOpen] = useState(false);
   const [diveComputerModalOpen, setDiveComputerModalOpen] = useState(false);
+  const [equipmentModalOpen, setEquipmentModalOpen] = useState(false);
   
   // Search results state
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
@@ -554,6 +562,63 @@ function App() {
     }
   };
 
+  // Bulk edit mode handlers
+  const handleEnterBulkEditMode = useCallback(() => {
+    setBulkEditMode(true);
+    setSelectedDiveIds(new Set());
+  }, []);
+
+  const handleExitBulkEditMode = useCallback(() => {
+    setBulkEditMode(false);
+    setSelectedDiveIds(new Set());
+  }, []);
+
+  const handleToggleDiveSelection = useCallback((diveId: number) => {
+    setSelectedDiveIds(prev => {
+      const next = new Set(prev);
+      if (next.has(diveId)) {
+        next.delete(diveId);
+      } else {
+        next.add(diveId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAllDives = useCallback(() => {
+    setSelectedDiveIds(new Set(tripDives.map(d => d.id)));
+  }, [tripDives]);
+
+  const handleBulkEditSubmit = async (diveIds: number[], data: BulkDiveFormData) => {
+    try {
+      await invoke('bulk_update_dives', {
+        diveIds,
+        location: data.location !== null ? (data.location || null) : undefined,
+        ocean: data.ocean !== null ? (data.ocean || null) : undefined,
+        buddy: data.buddy !== null ? (data.buddy || null) : undefined,
+        divemaster: data.divemaster !== null ? (data.divemaster || null) : undefined,
+        guide: data.guide !== null ? (data.guide || null) : undefined,
+        instructor: data.instructor !== null ? (data.instructor || null) : undefined,
+        isBoatDive: data.is_boat_dive,
+        isNightDive: data.is_night_dive,
+        isDriftDive: data.is_drift_dive,
+        isFreshWater: data.is_fresh_water,
+        isTrainingDive: data.is_training_dive,
+      });
+      
+      setBulkEditModalOpen(false);
+      handleExitBulkEditMode();
+      
+      // Reload dives to reflect changes
+      if (state.selectedTripId) {
+        await loadDivesForTrip(state.selectedTripId);
+      }
+    } catch (error) {
+      console.error('Failed to bulk update dives:', error);
+      alert('Failed to bulk update dives: ' + error);
+    }
+  };
+
   return (
     <div className="app">
       <Header 
@@ -564,6 +629,7 @@ function App() {
         onOpenSettings={() => setSettingsModalOpen(true)}
         onOpenMap={() => setMapViewOpen(true)}
         onOpenDiveComputer={() => setDiveComputerModalOpen(true)}
+        onOpenEquipment={() => setEquipmentModalOpen(true)}
       />
       {thumbnailProgress && (
         <div className="thumbnail-progress">
@@ -581,6 +647,9 @@ function App() {
           onAddTrip={handleAddTrip}
           onEditTrip={handleEditTrip}
           onAddDive={handleAddDive}
+          bulkEditMode={bulkEditMode}
+          selectedDiveIds={selectedDiveIds}
+          onToggleDiveSelection={handleToggleDiveSelection}
         />
         <ContentArea
           viewMode={state.viewMode}
@@ -614,6 +683,13 @@ function App() {
             setSearchQuery('');
             setState(prev => ({ ...prev, viewMode: 'trips' }));
           }}
+          bulkEditMode={bulkEditMode}
+          selectedDiveIds={selectedDiveIds}
+          onEnterBulkEditMode={handleEnterBulkEditMode}
+          onExitBulkEditMode={handleExitBulkEditMode}
+          onToggleDiveSelection={handleToggleDiveSelection}
+          onSelectAllDives={handleSelectAllDives}
+          onOpenBulkEditModal={() => setBulkEditModalOpen(true)}
         />
         <RightPanel
           photo={selectedPhoto}
@@ -759,6 +835,16 @@ function App() {
             await loadDivesForTrip(state.selectedTripId);
           }
         }}
+      />
+      <EquipmentModal
+        isOpen={equipmentModalOpen}
+        onClose={() => setEquipmentModalOpen(false)}
+      />
+      <BulkEditDiveModal
+        isOpen={bulkEditModalOpen}
+        selectedDiveIds={Array.from(selectedDiveIds)}
+        onClose={() => setBulkEditModalOpen(false)}
+        onSubmit={handleBulkEditSubmit}
       />
     </div>
   );

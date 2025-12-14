@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import type { Dive } from '../types';
+import type { Dive, EquipmentSet } from '../types';
 import './AddTripModal.css'; // Reuse modal styles
 
 interface DiveSite {
@@ -57,6 +57,12 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
   const locationContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Equipment state
+  const [availableDiveSets, setAvailableDiveSets] = useState<EquipmentSet[]>([]);
+  const [availableCameraSets, setAvailableCameraSets] = useState<EquipmentSet[]>([]);
+  const [selectedDiveSetIds, setSelectedDiveSetIds] = useState<number[]>([]);
+  const [selectedCameraSetIds, setSelectedCameraSetIds] = useState<number[]>([]);
 
   // Search dive sites when location changes
   const handleLocationChange = (value: string) => {
@@ -127,13 +133,45 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       setIsDriftDive(dive.is_drift_dive);
       setIsNightDive(dive.is_night_dive);
       setIsTrainingDive(dive.is_training_dive);
+      
+      // Load equipment sets
+      loadEquipmentData(dive.id);
     }
   }, [isOpen, dive]);
+  
+  // Load available equipment sets and current dive's assignments
+  const loadEquipmentData = async (diveId: number) => {
+    try {
+      const [diveSets, cameraSets, assignedSets] = await Promise.all([
+        invoke<EquipmentSet[]>('get_equipment_sets_by_type', { setType: 'dive' }),
+        invoke<EquipmentSet[]>('get_equipment_sets_by_type', { setType: 'camera' }),
+        invoke<EquipmentSet[]>('get_equipment_sets_for_dive', { diveId }),
+      ]);
+      
+      setAvailableDiveSets(diveSets);
+      setAvailableCameraSets(cameraSets);
+      setSelectedDiveSetIds(assignedSets.filter(s => s.set_type === 'dive').map(s => s.id));
+      setSelectedCameraSetIds(assignedSets.filter(s => s.set_type === 'camera').map(s => s.id));
+    } catch (error) {
+      console.error('Failed to load equipment data:', error);
+    }
+  };
 
   if (!isOpen || !dive) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Save equipment sets
+    try {
+      const allSelectedSets = [...selectedDiveSetIds, ...selectedCameraSetIds];
+      await invoke('set_dive_equipment_sets', {
+        diveId: dive.id,
+        setIds: allSelectedSets,
+      });
+    } catch (error) {
+      console.error('Failed to save equipment sets:', error);
+    }
     
     onSubmit(dive.id, {
       location: location.trim(),
@@ -413,6 +451,67 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
                 </label>
               </div>
             </div>
+            
+            {/* Equipment Sets Section */}
+            {(availableDiveSets.length > 0 || availableCameraSets.length > 0) && (
+              <>
+                <hr className="modal-divider" />
+                
+                {availableDiveSets.length > 0 && (
+                  <div className="form-group">
+                    <label>🤿 Dive Gear</label>
+                    <div className="checkbox-group equipment-set-group">
+                      {availableDiveSets.map(set => (
+                        <label key={set.id} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={selectedDiveSetIds.includes(set.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedDiveSetIds(prev => [...prev, set.id]);
+                              } else {
+                                setSelectedDiveSetIds(prev => prev.filter(id => id !== set.id));
+                              }
+                            }}
+                          />
+                          <span>
+                            {set.name}
+                            {set.is_default && <span className="default-indicator"> ★</span>}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {availableCameraSets.length > 0 && (
+                  <div className="form-group">
+                    <label>📷 Camera Gear</label>
+                    <div className="checkbox-group equipment-set-group">
+                      {availableCameraSets.map(set => (
+                        <label key={set.id} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={selectedCameraSetIds.includes(set.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedCameraSetIds(prev => [...prev, set.id]);
+                              } else {
+                                setSelectedCameraSetIds(prev => prev.filter(id => id !== set.id));
+                              }
+                            }}
+                          />
+                          <span>
+                            {set.name}
+                            {set.is_default && <span className="default-indicator"> ★</span>}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
             
             <div className="form-group">
               <label htmlFor="dive-comments">Notes</label>

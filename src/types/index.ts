@@ -102,6 +102,47 @@ export interface GearProfile {
   updated_at: string;
 }
 
+// Equipment Catalogue types
+
+export interface EquipmentCategory {
+  id: number;
+  name: string;
+  icon?: string;
+  sort_order: number;
+}
+
+export interface Equipment {
+  id: number;
+  category_id: number;
+  name: string;
+  brand?: string;
+  model?: string;
+  serial_number?: string;
+  purchase_date?: string;
+  notes?: string;
+  is_retired: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EquipmentWithCategory extends Equipment {
+  category_name: string;
+}
+
+export interface EquipmentSet {
+  id: number;
+  name: string;
+  description?: string;
+  set_type: 'dive' | 'camera';
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EquipmentSetWithItems extends EquipmentSet {
+  items: EquipmentWithCategory[];
+}
+
 export interface Photo {
   id: number;
   trip_id: number;

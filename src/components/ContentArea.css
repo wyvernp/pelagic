@@ -4,6 +4,11 @@
   gap: 12px;
 }
 
+/* Edit dropdown */
+.edit-dropdown-container {
+  position: relative;
+}
+
 .edit-dive-btn {
   display: flex;
   align-items: center;
@@ -29,14 +34,61 @@
   opacity: 0.8;
 }
 
+.dropdown-arrow {
+  margin-left: 2px;
+  opacity: 0.6;
+}
+
+.edit-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: var(--bg-medium);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.edit-dropdown-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.edit-dropdown-menu button:hover {
+  background: var(--bg-hover);
+}
+
+.edit-dropdown-menu button svg {
+  opacity: 0.7;
+}
+
 .sort-select {
   padding: 6px 10px;
   font-size: 13px;
-  background: var(--bg-dark);
+  background: #000000;
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: var(--text-secondary);
+  color: #b0b0b0;
   cursor: pointer;
+}
+
+.sort-select option {
+  background: #000000;
+  color: #b0b0b0;
 }
 
 .sort-select:hover {
@@ -57,6 +109,10 @@
   background: var(--accent-primary);
   border-radius: 8px;
   margin-bottom: 12px;
+}
+
+.selection-toolbar.bulk-edit-toolbar {
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
 }
 
 .selection-count {
@@ -87,6 +143,24 @@
 
 .toolbar-btn:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toolbar-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.toolbar-btn.primary {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.toolbar-btn.primary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 .toolbar-btn.secondary {

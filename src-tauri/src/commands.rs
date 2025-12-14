@@ -96,6 +96,40 @@ pub fn delete_dive(state: State<AppState>, id: i64) -> Result<(), String> {
     db.delete_dive(id).map_err(|e| e.to_string())
 }
 
+/// Bulk update multiple dives with only specified fields
+#[tauri::command]
+pub fn bulk_update_dives(
+    state: State<AppState>,
+    dive_ids: Vec<i64>,
+    location: Option<Option<String>>,
+    ocean: Option<Option<String>>,
+    buddy: Option<Option<String>>,
+    divemaster: Option<Option<String>>,
+    guide: Option<Option<String>>,
+    instructor: Option<Option<String>>,
+    is_boat_dive: Option<bool>,
+    is_night_dive: Option<bool>,
+    is_drift_dive: Option<bool>,
+    is_fresh_water: Option<bool>,
+    is_training_dive: Option<bool>,
+) -> Result<usize, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.bulk_update_dives(
+        &dive_ids,
+        location.as_ref().map(|o| o.as_deref()),
+        ocean.as_ref().map(|o| o.as_deref()),
+        buddy.as_ref().map(|o| o.as_deref()),
+        divemaster.as_ref().map(|o| o.as_deref()),
+        guide.as_ref().map(|o| o.as_deref()),
+        instructor.as_ref().map(|o| o.as_deref()),
+        is_boat_dive,
+        is_night_dive,
+        is_drift_dive,
+        is_fresh_water,
+        is_training_dive,
+    ).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_dives_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Dive>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
@@ -1148,4 +1182,226 @@ pub fn open_url(url: String) -> Result<(), String> {
     }
     
     Ok(())
+}
+
+// ==================== Equipment Commands ====================
+
+use crate::db::{EquipmentCategory, Equipment, EquipmentWithCategory, EquipmentSet, EquipmentSetWithItems};
+
+// Equipment Category commands
+
+#[tauri::command]
+pub fn get_equipment_categories(state: State<AppState>) -> Result<Vec<EquipmentCategory>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment_categories().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_equipment_category(
+    state: State<AppState>,
+    name: String,
+    icon: Option<String>,
+    sort_order: i32,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.create_equipment_category(&name, icon.as_deref(), sort_order)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_equipment_category(
+    state: State<AppState>,
+    id: i64,
+    name: String,
+    icon: Option<String>,
+    sort_order: i32,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_equipment_category(id, &name, icon.as_deref(), sort_order)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_equipment_category(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_equipment_category(id).map_err(|e| e.to_string())
+}
+
+// Equipment commands
+
+#[tauri::command]
+pub fn get_all_equipment(state: State<AppState>) -> Result<Vec<EquipmentWithCategory>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_all_equipment().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_equipment_by_category(state: State<AppState>, category_id: i64) -> Result<Vec<Equipment>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment_by_category(category_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_equipment(state: State<AppState>, id: i64) -> Result<Option<EquipmentWithCategory>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_equipment(
+    state: State<AppState>,
+    category_id: i64,
+    name: String,
+    brand: Option<String>,
+    model: Option<String>,
+    serial_number: Option<String>,
+    purchase_date: Option<String>,
+    notes: Option<String>,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.create_equipment(
+        category_id,
+        &name,
+        brand.as_deref(),
+        model.as_deref(),
+        serial_number.as_deref(),
+        purchase_date.as_deref(),
+        notes.as_deref(),
+    ).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_equipment(
+    state: State<AppState>,
+    id: i64,
+    category_id: i64,
+    name: String,
+    brand: Option<String>,
+    model: Option<String>,
+    serial_number: Option<String>,
+    purchase_date: Option<String>,
+    notes: Option<String>,
+    is_retired: bool,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_equipment(
+        id,
+        category_id,
+        &name,
+        brand.as_deref(),
+        model.as_deref(),
+        serial_number.as_deref(),
+        purchase_date.as_deref(),
+        notes.as_deref(),
+        is_retired,
+    ).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_equipment(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_equipment(id).map_err(|e| e.to_string())
+}
+
+// Equipment Set commands
+
+#[tauri::command]
+pub fn get_equipment_sets(state: State<AppState>) -> Result<Vec<EquipmentSet>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment_sets().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_equipment_sets_by_type(state: State<AppState>, set_type: String) -> Result<Vec<EquipmentSet>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment_sets_by_type(&set_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_equipment_set_with_items(state: State<AppState>, id: i64) -> Result<Option<EquipmentSetWithItems>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment_set_with_items(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_equipment_set(
+    state: State<AppState>,
+    name: String,
+    description: Option<String>,
+    set_type: String,
+    is_default: bool,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.create_equipment_set(&name, description.as_deref(), &set_type, is_default)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_equipment_set(
+    state: State<AppState>,
+    id: i64,
+    name: String,
+    description: Option<String>,
+    set_type: String,
+    is_default: bool,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_equipment_set(id, &name, description.as_deref(), &set_type, is_default)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_equipment_set(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_equipment_set(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_equipment_to_set(state: State<AppState>, set_id: i64, equipment_id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.add_equipment_to_set(set_id, equipment_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_equipment_from_set(state: State<AppState>, set_id: i64, equipment_id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.remove_equipment_from_set(set_id, equipment_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_equipment_set_items(state: State<AppState>, set_id: i64, equipment_ids: Vec<i64>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_equipment_set_items(set_id, &equipment_ids).map_err(|e| e.to_string())
+}
+
+// Dive Equipment commands
+
+#[tauri::command]
+pub fn get_equipment_sets_for_dive(state: State<AppState>, dive_id: i64) -> Result<Vec<EquipmentSet>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_equipment_sets_for_dive(dive_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_equipment_set_to_dive(state: State<AppState>, dive_id: i64, set_id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.add_equipment_set_to_dive(dive_id, set_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_equipment_set_from_dive(state: State<AppState>, dive_id: i64, set_id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.remove_equipment_set_from_dive(dive_id, set_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_dive_equipment_sets(state: State<AppState>, dive_id: i64, set_ids: Vec<i64>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_dive_equipment_sets(dive_id, &set_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_default_equipment_set(state: State<AppState>, set_type: String) -> Result<Option<EquipmentSet>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_default_equipment_set(&set_type).map_err(|e| e.to_string())
 }

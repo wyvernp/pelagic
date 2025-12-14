@@ -81,11 +81,16 @@
 .batch-select {
   width: 100%;
   padding: 10px 12px;
-  background: var(--bg-primary);
+  background: #000000;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: var(--text-primary);
+  color: #b0b0b0;
   font-size: 14px;
+}
+
+.batch-select option {
+  background: #000000;
+  color: #b0b0b0;
 }
 
 .batch-rating {

@@ -20,6 +20,10 @@ interface ContentGridProps {
   onSelectDive: (diveId: number) => void;
   onSelectPhoto: (photoId: number, multiSelect: boolean) => void;
   onOpenPhoto: (photoId: number) => void;
+  // Bulk edit mode props
+  bulkEditMode?: boolean;
+  selectedDiveIds?: Set<number>;
+  onToggleDiveSelection?: (diveId: number) => void;
 }
 
 export function ContentGrid({
@@ -30,6 +34,9 @@ export function ContentGrid({
   onSelectDive,
   onSelectPhoto,
   onOpenPhoto,
+  bulkEditMode,
+  selectedDiveIds,
+  onToggleDiveSelection,
 }: ContentGridProps) {
   const [diveThumbnails, setDiveThumbnails] = useState<DiveThumbnails>({});
   const [diveStats, setDiveStats] = useState<DiveStatsMap>({});
@@ -115,6 +122,16 @@ export function ContentGrid({
     onSelectPhoto(photoId, multiSelect);
   };
 
+  const handleDiveCardClick = (diveId: number, e: React.MouseEvent) => {
+    if (bulkEditMode && onToggleDiveSelection) {
+      e.preventDefault();
+      e.stopPropagation();
+      onToggleDiveSelection(diveId);
+    } else {
+      onSelectDive(diveId);
+    }
+  };
+
   return (
     <div className="content-grid">
       {/* Dive cards when viewing a trip */}
@@ -123,13 +140,33 @@ export function ContentGrid({
           {dives.map((dive) => {
             const thumbnails = diveThumbnails[dive.id] || [];
             const stats = diveStats[dive.id] || { photo_count: 0, species_count: 0 };
+            const isSelected = selectedDiveIds?.has(dive.id) ?? false;
             
             return (
               <button
                 key={dive.id}
-                className="grid-item dive-card"
-                onClick={() => onSelectDive(dive.id)}
+                className={`grid-item dive-card ${bulkEditMode ? 'bulk-edit-mode' : ''} ${isSelected ? 'selected' : ''}`}
+                onClick={(e) => handleDiveCardClick(dive.id, e)}
               >
+                {/* Selection checkbox in bulk edit mode */}
+                {bulkEditMode && (
+                  <div className="dive-card-checkbox">
+                    <input 
+                      type="checkbox" 
+                      checked={isSelected}
+                      onChange={() => onToggleDiveSelection?.(dive.id)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                )}
+                {/* Selection indicator */}
+                {isSelected && (
+                  <div className="dive-selected-check">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                      <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                    </svg>
+                  </div>
+                )}
                 {/* Thumbnail grid */}
                 {thumbnails.length > 0 && (
                   <div className={`dive-card-thumbs thumbs-${Math.min(thumbnails.length, 4)}`}>

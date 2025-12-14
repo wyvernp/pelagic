@@ -59,6 +59,7 @@ pub fn run() {
             commands::get_dive,
             commands::update_dive,
             commands::delete_dive,
+            commands::bulk_update_dives,
             commands::get_dive_samples,
             commands::get_tank_pressures,
             commands::insert_dive_samples,
@@ -130,6 +131,33 @@ pub fn run() {
             commands::identify_species_batch,
             // System utilities
             commands::open_url,
+            // Equipment commands
+            commands::get_equipment_categories,
+            commands::create_equipment_category,
+            commands::update_equipment_category,
+            commands::delete_equipment_category,
+            commands::get_all_equipment,
+            commands::get_equipment_by_category,
+            commands::get_equipment,
+            commands::create_equipment,
+            commands::update_equipment,
+            commands::delete_equipment,
+            // Equipment set commands
+            commands::get_equipment_sets,
+            commands::get_equipment_sets_by_type,
+            commands::get_equipment_set_with_items,
+            commands::create_equipment_set,
+            commands::update_equipment_set,
+            commands::delete_equipment_set,
+            commands::add_equipment_to_set,
+            commands::remove_equipment_from_set,
+            commands::set_equipment_set_items,
+            // Dive equipment commands
+            commands::get_equipment_sets_for_dive,
+            commands::add_equipment_set_to_dive,
+            commands::remove_equipment_set_from_dive,
+            commands::set_dive_equipment_sets,
+            commands::get_default_equipment_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
