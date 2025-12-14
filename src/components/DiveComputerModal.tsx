@@ -132,21 +132,21 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const selected = await open({
-        multiple: false,
+        multiple: true,
         filters: [{
           name: 'Dive Log Files',
           extensions: ['ssrf', 'xml', 'json', 'fit']
         }]
       });
 
-      if (selected) {
+      if (selected && selected.length > 0) {
         // If a trip is selected, ask if they want to import into it
         let targetTripId: number | null = null;
         
         if (tripId) {
           const { confirm } = await import('@tauri-apps/plugin-dialog');
           const importIntoExisting = await confirm(
-            `Import dives into the current trip?\n\nClick OK to add to this trip, or Cancel to create a new trip.`,
+            `Import ${selected.length} dive${selected.length !== 1 ? 's' : ''} into the current trip?\n\nClick OK to add to this trip, or Cancel to create a new trip.`,
             {
               title: 'Import Dives',
               kind: 'info',
@@ -157,13 +157,32 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
           }
         }
         
-        await invoke<number>('import_dive_file', { 
-          filePath: selected,
-          tripId: targetTripId,
-        });
+        // Import each selected file
+        const importedDiveIds: number[] = [];
+        for (const filePath of selected) {
+          try {
+            const diveId = await invoke<number>('import_dive_file', { 
+              filePath,
+              tripId: targetTripId,
+            });
+            importedDiveIds.push(diveId);
+          } catch (fileError) {
+            console.error(`Failed to import file ${filePath}:`, fileError);
+            // Continue with other files even if one fails
+          }
+        }
         
-        // Call the onDivesImported callback to refresh the UI
-        onDivesImported([]);
+        if (importedDiveIds.length > 0) {
+          // Call the onDivesImported callback to refresh the UI
+          if (targetTripId) {
+            // If we imported into a specific trip, refresh that trip's dives
+            const importedDives = await invoke<Dive[]>('get_dives_for_trip', { tripId: targetTripId });
+            onDivesImported(importedDives);
+          } else {
+            // If no trip was selected, just notify that dives were imported
+            onDivesImported([]);
+          }
+        }
         
         onClose();
       }
@@ -975,28 +994,108 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     }
 
     // USB Storage devices (like Garmin) mount as a drive
-    // We need to use the File System Access API to let user select the dive folder
+    // Use File System Access API to let user select multiple dive files
     try {
-      if ('showDirectoryPicker' in window) {
-        const dirHandle = await (window as Window & { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+      if ('showOpenFilePicker' in window) {
+        const fileHandles = await (window as Window & { showOpenFilePicker(options?: OpenFilePickerOptions): Promise<FileSystemFileHandle[]> }).showOpenFilePicker({
+          multiple: true,
+          types: [{
+            description: 'Dive Log Files',
+            accept: {
+              'application/octet-stream': ['.fit', '.FIT', '.ssrf', '.SSRF'],
+              'application/xml': ['.xml', '.XML'],
+              'application/json': ['.json', '.JSON']
+            }
+          }]
+        });
+
+        if (fileHandles.length === 0) {
+          setErrorMessage('No files selected');
+          setStep('error');
+          return;
+        }
+
+        // If a trip is selected, ask if they want to import into it
+        let targetTripId: number | null = null;
         
-        // Look for dive files in the selected directory
-        // Garmin stores dives in /Garmin/Activity folder as .FIT files
-        setErrorMessage(`USB Storage connection selected folder: ${dirHandle.name}. Dive file parsing is not yet implemented.`);
-        setStep('error');
+        if (tripId) {
+          const { confirm } = await import('@tauri-apps/plugin-dialog');
+          const importIntoExisting = await confirm(
+            `Import ${fileHandles.length} dive file${fileHandles.length !== 1 ? 's' : ''} into the current trip?\n\nClick OK to add to this trip, or Cancel to create a new trip.`,
+            {
+              title: 'Import Dives',
+              kind: 'info',
+            }
+          );
+          if (importIntoExisting) {
+            targetTripId = tripId;
+          }
+        }
+
+        setStep('downloading');
+        setProgress({ current: 0, maximum: fileHandles.length });
+
+        let totalImportedDives = 0;
+        let successCount = 0;
+
+        // Process each selected file
+        for (let i = 0; i < fileHandles.length; i++) {
+          const fileHandle = fileHandles[i];
+          setProgress({ current: i + 1, maximum: fileHandles.length });
+
+          try {
+            // Get file from handle
+            const file = await fileHandle.getFile();
+            
+            // Read file as array buffer
+            const arrayBuffer = await file.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            
+            // Import the file data directly using the backend command
+            const importedCount = await invoke<number>('import_dive_file_data', {
+              fileName: file.name,
+              fileData: Array.from(uint8Array),
+              tripId: targetTripId,
+            });
+            
+            totalImportedDives += importedCount;
+            successCount++;
+            console.log(`✅ Imported ${importedCount} dives from ${file.name}`);
+
+          } catch (fileError) {
+            console.error(`Failed to process file ${fileHandle.name}:`, fileError);
+            // Continue with other files - don't fail the entire import
+            setErrorMessage(`Warning: Failed to import ${fileHandle.name}: ${fileError}. Continuing with other files...`);
+          }
+        }
+
+        if (successCount > 0) {
+          // Call the onDivesImported callback to refresh the UI
+          if (targetTripId) {
+            const importedDives = await invoke<Dive[]>('get_dives_for_trip', { tripId: targetTripId });
+            onDivesImported(importedDives);
+          } else {
+            onDivesImported([]);
+          }
+          onClose();
+        } else {
+          setErrorMessage('No files were successfully imported');
+          setStep('error');
+        }
+
       } else {
         setErrorMessage('File System Access API is not available. Please use a browser that supports it (Chrome, Edge) or manually import dive files.');
         setStep('error');
       }
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
-        // User cancelled the folder picker
+        // User cancelled the file picker
         return;
       }
-      setErrorMessage(`Failed to access storage: ${(error as Error).message}`);
+      setErrorMessage(`Failed to access files: ${(error as Error).message}`);
       setStep('error');
     }
-  }, [descriptor]);
+  }, [descriptor, tripId]);
 
   const handleConnect = useCallback(() => {
     if (requiresBluetoothScan(connectionType)) {
@@ -1637,7 +1736,16 @@ interface WebHID {
 }
 
 // Type declarations for File System Access API
-interface FileSystemDirectoryHandle {
-  kind: 'directory';
+interface FileSystemFileHandle {
+  kind: 'file';
   name: string;
+  getFile(): Promise<File>;
+}
+
+interface OpenFilePickerOptions {
+  multiple?: boolean;
+  types?: Array<{
+    description?: string;
+    accept: Record<string, string[]>;
+  }>;
 }

@@ -5,7 +5,8 @@ import { curveMonotoneX } from '@visx/curve';
 import { LinearGradient } from '@visx/gradient';
 import { AxisBottom, AxisLeft, AxisRight } from '@visx/axis';
 import { GridRows } from '@visx/grid';
-import type { Dive } from '../types';
+import { invoke } from '@tauri-apps/api/core';
+import type { Dive, TankPressure } from '../types';
 import './DiveProfile.css';
 
 interface DiveSample {
@@ -21,6 +22,14 @@ interface DiveProfileProps {
   dive: Dive;
   samples?: DiveSample[];
 }
+
+// Colors for multiple tanks
+const TANK_COLORS = [
+  'var(--pressure-color)',      // Primary green
+  '#ff9800',                    // Orange
+  '#9c27b0',                    // Purple
+  '#00bcd4',                    // Cyan
+];
 
 // Mock samples for demo
 const mockSamples: DiveSample[] = [
@@ -51,6 +60,20 @@ export function DiveProfile({
 }: DiveProfileProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 220 });
+  const [tankPressures, setTankPressures] = useState<TankPressure[]>([]);
+
+  // Fetch tank pressures from database
+  useEffect(() => {
+    async function fetchTankPressures() {
+      try {
+        const pressures = await invoke<TankPressure[]>('get_tank_pressures', { diveId: dive.id });
+        setTankPressures(pressures);
+      } catch (e) {
+        console.error('Failed to fetch tank pressures:', e);
+      }
+    }
+    fetchTankPressures();
+  }, [dive.id]);
 
   // Responsive sizing
   useEffect(() => {
@@ -70,12 +93,29 @@ export function DiveProfile({
     return () => resizeObserver.disconnect();
   }, []);
 
+  // Group tank pressures by sensor
+  const tanksBySensor = useMemo(() => {
+    const grouped = new Map<string, TankPressure[]>();
+    for (const tp of tankPressures) {
+      const key = String(tp.sensor_id);
+      const existing = grouped.get(key) || [];
+      existing.push(tp);
+      grouped.set(key, existing);
+    }
+    // Sort each tank's readings by time
+    for (const readings of grouped.values()) {
+      readings.sort((a, b) => a.time_seconds - b.time_seconds);
+    }
+    return grouped;
+  }, [tankPressures]);
+
   const { width, height } = dimensions;
   
-  // Check if we have data for each metric
-  const hasPressure = samples.some(s => s.pressure_bar != null);
+  // Check if we have data for each metric - use tankPressures if available, fall back to samples
+  const hasTankPressures = tanksBySensor.size > 0;
+  const hasSamplePressure = samples.some(s => s.pressure_bar != null);
+  const hasPressure = hasTankPressures || hasSamplePressure;
   const hasTemp = samples.some(s => s.temp_c != null);
-  const hasNdl = samples.some(s => s.ndl_seconds != null);
   const hasRbt = samples.some(s => s.rbt_seconds != null);
   
   // Count how many right axes we need
@@ -91,7 +131,7 @@ export function DiveProfile({
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
 
-  const { xScale, yScale, pressureScale, tempScale, ndlScale } = useMemo(() => {
+  const { xScale, yScale, pressureScale, tempScale } = useMemo(() => {
     const maxTime = Math.max(...samples.map((s) => s.time_seconds));
     const maxDepth = Math.max(...samples.map((s) => s.depth_m));
 
@@ -107,9 +147,15 @@ export function DiveProfile({
     });
 
     // Pressure scale (right axis) - starts high, goes low
-    const pressures = samples.filter(s => s.pressure_bar != null).map(s => s.pressure_bar!);
-    const maxPressure = pressures.length > 0 ? Math.max(...pressures) : 200;
-    const minPressure = pressures.length > 0 ? Math.min(...pressures) : 0;
+    // Use tank pressures if available, otherwise fall back to sample pressures
+    let allPressures: number[] = [];
+    if (hasTankPressures) {
+      allPressures = tankPressures.map(tp => tp.pressure_bar);
+    } else {
+      allPressures = samples.filter(s => s.pressure_bar != null).map(s => s.pressure_bar!);
+    }
+    const maxPressure = allPressures.length > 0 ? Math.max(...allPressures) : 200;
+    const minPressure = allPressures.length > 0 ? Math.min(...allPressures) : 0;
     const pressureScale = scaleLinear({
       domain: [maxPressure * 1.05, Math.max(0, minPressure - 10)],
       range: [0, innerHeight],
@@ -125,16 +171,8 @@ export function DiveProfile({
       range: [innerHeight, 0],
     });
 
-    // NDL scale - time in minutes, shown as a bar chart style from top
-    const ndls = samples.filter(s => s.ndl_seconds != null).map(s => s.ndl_seconds!);
-    const maxNdl = ndls.length > 0 ? Math.max(...ndls) : 60 * 60; // Max 60 min
-    const ndlScale = scaleLinear({
-      domain: [0, Math.min(maxNdl, 99 * 60)], // Cap at 99 min (often shown as 99+ on computers)
-      range: [innerHeight, 0],
-    });
-
-    return { xScale, yScale, pressureScale, tempScale, ndlScale };
-  }, [samples, innerWidth, innerHeight]);
+    return { xScale, yScale, pressureScale, tempScale };
+  }, [samples, tankPressures, hasTankPressures, innerWidth, innerHeight]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -144,23 +182,44 @@ export function DiveProfile({
   // Filter samples with valid data for each line
   const pressureSamples = samples.filter(s => s.pressure_bar != null);
   const tempSamples = samples.filter(s => s.temp_c != null);
-  const ndlSamples = samples.filter(s => s.ndl_seconds != null && s.ndl_seconds < 99 * 60);
   const rbtSamples = samples.filter(s => s.rbt_seconds != null);
 
-  // Calculate air consumption stats
-  const startPressure = pressureSamples[0]?.pressure_bar;
-  const endPressure = pressureSamples[pressureSamples.length - 1]?.pressure_bar;
-  const airUsed = startPressure && endPressure ? startPressure - endPressure : null;
-
-  // Get minimum NDL during dive (most critical point)
-  const minNdl = ndlSamples.length > 0 
-    ? Math.min(...ndlSamples.map(s => s.ndl_seconds!)) 
-    : null;
+  // Calculate air consumption stats - use primary tank (most readings) if tank pressures available
+  const airUsed = useMemo(() => {
+    if (hasTankPressures && tanksBySensor.size > 0) {
+      // Find tank with most readings (primary tank)
+      let primaryTank: TankPressure[] = [];
+      for (const readings of tanksBySensor.values()) {
+        if (readings.length > primaryTank.length) {
+          primaryTank = readings;
+        }
+      }
+      if (primaryTank.length >= 2) {
+        const start = primaryTank[0].pressure_bar;
+        const end = primaryTank[primaryTank.length - 1].pressure_bar;
+        return start - end;
+      }
+    }
+    // Fall back to sample pressures
+    const startPressure = pressureSamples[0]?.pressure_bar;
+    const endPressure = pressureSamples[pressureSamples.length - 1]?.pressure_bar;
+    return startPressure && endPressure ? startPressure - endPressure : null;
+  }, [hasTankPressures, tanksBySensor, pressureSamples]);
   
   // Get minimum RBT during dive (most critical point)
   const minRbt = rbtSamples.length > 0 
     ? Math.min(...rbtSamples.map(s => s.rbt_seconds!)) 
     : null;
+
+  // Tank sensor array for rendering multiple lines
+  const tankSensors = useMemo(() => {
+    return Array.from(tanksBySensor.entries()).map(([sensorId, readings], index) => ({
+      sensorId,
+      readings,
+      color: TANK_COLORS[index % TANK_COLORS.length],
+      name: readings[0]?.sensor_name || `Tank ${index + 1}`,
+    }));
+  }, [tanksBySensor]);
 
   return (
     <div className="dive-profile">
@@ -191,12 +250,6 @@ export function DiveProfile({
             <span className="stat-label">Gas</span>
           </div>
         )}
-        {minNdl != null && (
-          <div className="stat">
-            <span className="stat-value">{Math.floor(minNdl / 60)}min</span>
-            <span className="stat-label">Min NDL</span>
-          </div>
-        )}
         {hasRbt && minRbt != null && (
           <div className="stat">
             <span className="stat-value">{Math.floor(minRbt / 60)}min</span>
@@ -215,7 +268,14 @@ export function DiveProfile({
         <span className="legend-item legend-depth">
           <span className="legend-line"></span> Depth
         </span>
-        {hasPressure && (
+        {/* Show individual tank legends if multiple tanks, otherwise generic "Tank Pressure" */}
+        {hasTankPressures && tankSensors.length > 1 ? (
+          tankSensors.map((tank) => (
+            <span key={tank.sensorId} className="legend-item" style={{ color: tank.color }}>
+              <span className="legend-line" style={{ backgroundColor: tank.color }}></span> {tank.name}
+            </span>
+          ))
+        ) : hasPressure && (
           <span className="legend-item legend-pressure">
             <span className="legend-line"></span> Tank Pressure
           </span>
@@ -223,11 +283,6 @@ export function DiveProfile({
         {hasTemp && (
           <span className="legend-item legend-temp">
             <span className="legend-line"></span> Temperature
-          </span>
-        )}
-        {hasNdl && (
-          <span className="legend-item legend-ndl">
-            <span className="legend-line"></span> NDL
           </span>
         )}
       </div>
@@ -241,13 +296,6 @@ export function DiveProfile({
           fromOpacity={0.6}
           toOpacity={0.1}
         />
-        <LinearGradient
-          id="ndl-gradient"
-          from="var(--ndl-color, #22c55e)"
-          to="var(--ndl-color, #22c55e)"
-          fromOpacity={0.3}
-          toOpacity={0.1}
-        />
         
         <g transform={`translate(${margin.left}, ${margin.top})`}>
           <GridRows
@@ -257,18 +305,6 @@ export function DiveProfile({
             strokeOpacity={0.4}
             numTicks={5}
           />
-          
-          {/* NDL area fill - drawn first so it's behind everything */}
-          {hasNdl && ndlSamples.length > 1 && (
-            <AreaClosed
-              data={ndlSamples}
-              x={(d) => xScale(d.time_seconds)}
-              y={(d) => ndlScale(d.ndl_seconds!)}
-              yScale={ndlScale}
-              curve={curveMonotoneX}
-              fill="url(#ndl-gradient)"
-            />
-          )}
           
           {/* Depth area fill */}
           <AreaClosed
@@ -304,22 +340,22 @@ export function DiveProfile({
             curve={curveMonotoneX}
           />
           
-          {/* NDL line */}
-          {hasNdl && ndlSamples.length > 1 && (
+          {/* Tank pressure lines - render each tank with its own color */}
+          {hasTankPressures && tankSensors.map((tank) => (
             <LinePath
-              data={ndlSamples}
+              key={tank.sensorId}
+              data={tank.readings}
               x={(d) => xScale(d.time_seconds)}
-              y={(d) => ndlScale(d.ndl_seconds!)}
-              stroke="var(--ndl-color, #22c55e)"
-              strokeWidth={1.5}
-              strokeDasharray="2,2"
+              y={(d) => pressureScale(d.pressure_bar)}
+              stroke={tank.color}
+              strokeWidth={2}
               curve={curveMonotoneX}
-              strokeOpacity={0.7}
+              strokeOpacity={0.9}
             />
-          )}
+          ))}
           
-          {/* Pressure line */}
-          {hasPressure && pressureSamples.length > 1 && (
+          {/* Fallback: Pressure line from samples (for non-tank-pressure data) */}
+          {!hasTankPressures && hasSamplePressure && pressureSamples.length > 1 && (
             <LinePath
               data={pressureSamples}
               x={(d) => xScale(d.time_seconds)}

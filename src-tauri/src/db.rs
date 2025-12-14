@@ -39,6 +39,7 @@ pub struct Dive {
     pub gear_profile_id: Option<i64>,
     pub buddy: Option<String>,
     pub divemaster: Option<String>,
+    pub guide: Option<String>,
     pub instructor: Option<String>,
     pub comments: Option<String>,
     pub latitude: Option<f64>,
@@ -74,6 +75,16 @@ pub struct DiveEvent {
     pub name: String,
     pub flags: Option<i32>,
     pub value: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TankPressure {
+    pub id: i64,
+    pub dive_id: i64,
+    pub sensor_id: i64,
+    pub sensor_name: Option<String>,
+    pub time_seconds: i32,
+    pub pressure_bar: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -235,6 +246,7 @@ impl Database {
                 gear_profile_id INTEGER,
                 buddy TEXT,
                 divemaster TEXT,
+                guide TEXT,
                 instructor TEXT,
                 comments TEXT,
                 is_fresh_water INTEGER NOT NULL DEFAULT 0,
@@ -265,6 +277,15 @@ impl Database {
                 name TEXT NOT NULL,
                 flags INTEGER,
                 value INTEGER
+            );
+            
+            CREATE TABLE IF NOT EXISTS tank_pressures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dive_id INTEGER NOT NULL REFERENCES dives(id) ON DELETE CASCADE,
+                sensor_id INTEGER NOT NULL,
+                sensor_name TEXT,
+                time_seconds INTEGER NOT NULL,
+                pressure_bar REAL NOT NULL
             );
             
             CREATE TABLE IF NOT EXISTS gear_profiles (
@@ -404,6 +425,17 @@ impl Database {
             self.conn.execute("ALTER TABLE dives ADD COLUMN dive_site_id INTEGER REFERENCES dive_sites(id) ON DELETE SET NULL", [])?;
         }
         
+        // Check and add guide column
+        let has_guide: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('dives') WHERE name = 'guide'",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(false);
+        
+        if !has_guide {
+            self.conn.execute("ALTER TABLE dives ADD COLUMN guide TEXT", [])?;
+        }
+        
         Ok(())
     }
     
@@ -476,6 +508,20 @@ impl Database {
         Ok(())
     }
     
+    pub fn delete_dive(&self, id: i64) -> Result<()> {
+        // Delete associated photos first (due to foreign key)
+        self.conn.execute("DELETE FROM photos WHERE dive_id = ?", params![id])?;
+        // Delete dive samples
+        self.conn.execute("DELETE FROM dive_samples WHERE dive_id = ?", params![id])?;
+        // Delete tank pressures
+        self.conn.execute("DELETE FROM tank_pressures WHERE dive_id = ?", params![id])?;
+        // Delete dive events
+        self.conn.execute("DELETE FROM dive_events WHERE dive_id = ?", params![id])?;
+        // Delete the dive itself
+        self.conn.execute("DELETE FROM dives WHERE id = ?", params![id])?;
+        Ok(())
+    }
+    
     pub fn update_dive(
         &self,
         id: i64,
@@ -484,6 +530,7 @@ impl Database {
         visibility_m: Option<f64>,
         buddy: Option<&str>,
         divemaster: Option<&str>,
+        guide: Option<&str>,
         instructor: Option<&str>,
         comments: Option<&str>,
         latitude: Option<f64>,
@@ -497,7 +544,7 @@ impl Database {
         self.conn.execute(
             "UPDATE dives SET 
                 location = ?, ocean = ?, visibility_m = ?, 
-                buddy = ?, divemaster = ?, instructor = ?, comments = ?,
+                buddy = ?, divemaster = ?, guide = ?, instructor = ?, comments = ?,
                 latitude = ?, longitude = ?,
                 is_fresh_water = ?, is_boat_dive = ?, is_drift_dive = ?, 
                 is_night_dive = ?, is_training_dive = ?,
@@ -505,7 +552,7 @@ impl Database {
              WHERE id = ?",
             params![
                 location, ocean, visibility_m,
-                buddy, divemaster, instructor, comments,
+                buddy, divemaster, guide, instructor, comments,
                 latitude, longitude,
                 is_fresh_water as i32, is_boat_dive as i32, is_drift_dive as i32,
                 is_night_dive as i32, is_training_dive as i32,
@@ -521,7 +568,7 @@ impl Database {
             "SELECT id, trip_id, dive_number, date, time, duration_seconds, max_depth_m, mean_depth_m,
                     water_temp_c, air_temp_c, surface_pressure_bar, otu, cns_percent, nitrox_o2_percent,
                     dive_computer_model, dive_computer_serial, location, ocean, visibility_m,
-                    gear_profile_id, buddy, divemaster, instructor, comments, latitude, longitude, dive_site_id,
+                    gear_profile_id, buddy, divemaster, guide, instructor, comments, latitude, longitude, dive_site_id,
                     is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive,
                     created_at, updated_at
              FROM dives WHERE trip_id = ? ORDER BY dive_number"
@@ -551,18 +598,19 @@ impl Database {
                 gear_profile_id: row.get(19)?,
                 buddy: row.get(20)?,
                 divemaster: row.get(21)?,
-                instructor: row.get(22)?,
-                comments: row.get(23)?,
-                latitude: row.get(24)?,
-                longitude: row.get(25)?,
-                dive_site_id: row.get(26)?,
-                is_fresh_water: row.get::<_, i32>(27)? != 0,
-                is_boat_dive: row.get::<_, i32>(28)? != 0,
-                is_drift_dive: row.get::<_, i32>(29)? != 0,
-                is_night_dive: row.get::<_, i32>(30)? != 0,
-                is_training_dive: row.get::<_, i32>(31)? != 0,
-                created_at: row.get(32)?,
-                updated_at: row.get(33)?,
+                guide: row.get(22)?,
+                instructor: row.get(23)?,
+                comments: row.get(24)?,
+                latitude: row.get(25)?,
+                longitude: row.get(26)?,
+                dive_site_id: row.get(27)?,
+                is_fresh_water: row.get::<_, i32>(28)? != 0,
+                is_boat_dive: row.get::<_, i32>(29)? != 0,
+                is_drift_dive: row.get::<_, i32>(30)? != 0,
+                is_night_dive: row.get::<_, i32>(31)? != 0,
+                is_training_dive: row.get::<_, i32>(32)? != 0,
+                created_at: row.get(33)?,
+                updated_at: row.get(34)?,
             })
         })?.collect::<Result<Vec<_>>>()?;
         
@@ -574,7 +622,7 @@ impl Database {
             "SELECT id, trip_id, dive_number, date, time, duration_seconds, max_depth_m, mean_depth_m,
                     water_temp_c, air_temp_c, surface_pressure_bar, otu, cns_percent, nitrox_o2_percent,
                     dive_computer_model, dive_computer_serial, location, ocean, visibility_m,
-                    gear_profile_id, buddy, divemaster, instructor, comments, latitude, longitude, dive_site_id,
+                    gear_profile_id, buddy, divemaster, guide, instructor, comments, latitude, longitude, dive_site_id,
                     is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive,
                     created_at, updated_at
              FROM dives WHERE id = ?"
@@ -605,18 +653,19 @@ impl Database {
                 gear_profile_id: row.get(19)?,
                 buddy: row.get(20)?,
                 divemaster: row.get(21)?,
-                instructor: row.get(22)?,
-                comments: row.get(23)?,
-                latitude: row.get(24)?,
-                longitude: row.get(25)?,
-                dive_site_id: row.get(26)?,
-                is_fresh_water: row.get::<_, i32>(27)? != 0,
-                is_boat_dive: row.get::<_, i32>(28)? != 0,
-                is_drift_dive: row.get::<_, i32>(29)? != 0,
-                is_night_dive: row.get::<_, i32>(30)? != 0,
-                is_training_dive: row.get::<_, i32>(31)? != 0,
-                created_at: row.get(32)?,
-                updated_at: row.get(33)?,
+                guide: row.get(22)?,
+                instructor: row.get(23)?,
+                comments: row.get(24)?,
+                latitude: row.get(25)?,
+                longitude: row.get(26)?,
+                dive_site_id: row.get(27)?,
+                is_fresh_water: row.get::<_, i32>(28)? != 0,
+                is_boat_dive: row.get::<_, i32>(29)? != 0,
+                is_drift_dive: row.get::<_, i32>(30)? != 0,
+                is_night_dive: row.get::<_, i32>(31)? != 0,
+                is_training_dive: row.get::<_, i32>(32)? != 0,
+                created_at: row.get(33)?,
+                updated_at: row.get(34)?,
             }))
         } else {
             Ok(None)
@@ -674,6 +723,57 @@ impl Database {
                 surface_pressure_bar, cns_percent,
                 dive_computer_model, dive_computer_serial, nitrox_o2_percent,
                 latitude, longitude
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+    
+    /// Create a manual dive with all user-editable fields
+    pub fn create_manual_dive(
+        &self,
+        trip_id: i64,
+        dive_number: i64,
+        date: &str,
+        time: &str,
+        duration_seconds: i64,
+        max_depth_m: f64,
+        mean_depth_m: f64,
+        water_temp_c: Option<f64>,
+        air_temp_c: Option<f64>,
+        surface_pressure_bar: Option<f64>,
+        cns_percent: Option<f64>,
+        nitrox_o2_percent: Option<f64>,
+        location: Option<&str>,
+        ocean: Option<&str>,
+        visibility_m: Option<f64>,
+        buddy: Option<&str>,
+        divemaster: Option<&str>,
+        guide: Option<&str>,
+        instructor: Option<&str>,
+        comments: Option<&str>,
+        latitude: Option<f64>,
+        longitude: Option<f64>,
+        is_fresh_water: bool,
+        is_boat_dive: bool,
+        is_drift_dive: bool,
+        is_night_dive: bool,
+        is_training_dive: bool,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO dives (
+                trip_id, dive_number, date, time, duration_seconds, max_depth_m, mean_depth_m,
+                water_temp_c, air_temp_c, surface_pressure_bar, cns_percent, nitrox_o2_percent,
+                location, ocean, visibility_m, buddy, divemaster, guide, instructor, comments,
+                latitude, longitude,
+                is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                trip_id, dive_number, date, time, duration_seconds,
+                max_depth_m, mean_depth_m, water_temp_c, air_temp_c,
+                surface_pressure_bar, cns_percent, nitrox_o2_percent,
+                location, ocean, visibility_m, buddy, divemaster, guide, instructor, comments,
+                latitude, longitude,
+                is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -751,6 +851,39 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
     
+    // Tank pressure operations
+    /// Insert a tank pressure reading
+    pub fn insert_tank_pressure(&self, pressure: &TankPressure) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO tank_pressures (dive_id, sensor_id, sensor_name, time_seconds, pressure_bar)
+             VALUES (?, ?, ?, ?, ?)",
+            params![pressure.dive_id, pressure.sensor_id, pressure.sensor_name, pressure.time_seconds, pressure.pressure_bar],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+    
+    /// Get all tank pressures for a dive
+    pub fn get_tank_pressures_for_dive(&self, dive_id: i64) -> Result<Vec<TankPressure>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, dive_id, sensor_id, sensor_name, time_seconds, pressure_bar
+             FROM tank_pressures
+             WHERE dive_id = ?
+             ORDER BY sensor_id, time_seconds"
+        )?;
+        
+        let pressures = stmt.query_map([dive_id], |row| {
+            Ok(TankPressure {
+                id: row.get(0)?,
+                dive_id: row.get(1)?,
+                sensor_id: row.get(2)?,
+                sensor_name: row.get(3)?,
+                time_seconds: row.get(4)?,
+                pressure_bar: row.get(5)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(pressures)
+    }
+    
     // Photo operations
     /// Get all photos in the database
     pub fn get_all_photos(&self) -> Result<Vec<Photo>> {
@@ -808,6 +941,57 @@ impl Database {
         
         let photos = stmt.query_map([dive_id], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos)
+    }
+    
+    /// Get top photos for a dive thumbnail display
+    /// Prioritizes: processed versions first, then by rating (high to low), then by capture time
+    pub fn get_dive_thumbnail_photos(&self, dive_id: i64, limit: i64) -> Result<Vec<Photo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.trip_id, p.dive_id, p.file_path, 
+                    COALESCE(proc.thumbnail_path, p.thumbnail_path) as thumbnail_path,
+                    p.filename, p.capture_time,
+                    p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, 
+                    COALESCE(p.rating, 0) as rating,
+                    p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
+                    p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
+                    p.created_at, p.updated_at
+             FROM photos p
+             LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
+             WHERE p.dive_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
+                   AND (p.thumbnail_path IS NOT NULL OR proc.thumbnail_path IS NOT NULL)
+             ORDER BY 
+                CASE WHEN proc.id IS NOT NULL THEN 0 ELSE 1 END,
+                COALESCE(p.rating, 0) DESC,
+                p.capture_time
+             LIMIT ?"
+        )?;
+        
+        let photos = stmt.query_map(params![dive_id, limit], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
+        Ok(photos)
+    }
+    
+    /// Get stats for a dive (photo count and species count)
+    pub fn get_dive_stats(&self, dive_id: i64) -> Result<DiveStats> {
+        let photo_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM photos 
+             WHERE dive_id = ? AND (is_processed = 0 OR raw_photo_id IS NULL)",
+            params![dive_id],
+            |row| row.get(0),
+        )?;
+        
+        let species_count: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT pst.species_tag_id) 
+             FROM photo_species_tags pst
+             JOIN photos p ON p.id = pst.photo_id
+             WHERE p.dive_id = ?",
+            params![dive_id],
+            |row| row.get(0),
+        )?;
+        
+        Ok(DiveStats {
+            photo_count,
+            species_count,
+        })
     }
     
     /// Find a photo by base filename (without extension) within a trip
@@ -1937,7 +2121,7 @@ impl Database {
             "SELECT DISTINCT d.id, d.trip_id, d.dive_number, d.date, d.time, d.duration_seconds, 
                     d.max_depth_m, d.mean_depth_m, d.water_temp_c, d.air_temp_c, d.surface_pressure_bar,
                     d.otu, d.cns_percent, d.nitrox_o2_percent, d.dive_computer_model, d.dive_computer_serial,
-                    d.location, d.ocean, d.visibility_m, d.gear_profile_id, d.buddy, d.divemaster,
+                    d.location, d.ocean, d.visibility_m, d.gear_profile_id, d.buddy, d.divemaster, d.guide,
                     d.instructor, d.comments, d.latitude, d.longitude, d.dive_site_id, d.is_fresh_water, d.is_boat_dive, d.is_drift_dive,
                     d.is_night_dive, d.is_training_dive, d.created_at, d.updated_at
              FROM dives d
@@ -1947,7 +2131,7 @@ impl Database {
              LEFT JOIN photo_general_tags pgt ON pgt.photo_id = p.id
              LEFT JOIN general_tags gt ON gt.id = pgt.general_tag_id
              WHERE LOWER(d.location) LIKE ?1 OR LOWER(d.ocean) LIKE ?1 OR LOWER(d.buddy) LIKE ?1 
-                   OR LOWER(d.comments) LIKE ?1 OR LOWER(d.divemaster) LIKE ?1
+                   OR LOWER(d.comments) LIKE ?1 OR LOWER(d.divemaster) LIKE ?1 OR LOWER(d.guide) LIKE ?1
                    OR LOWER(st.name) LIKE ?1 OR LOWER(st.scientific_name) LIKE ?1
                    OR LOWER(gt.name) LIKE ?1
              ORDER BY d.date DESC
@@ -1977,18 +2161,19 @@ impl Database {
                 gear_profile_id: row.get(19)?,
                 buddy: row.get(20)?,
                 divemaster: row.get(21)?,
-                instructor: row.get(22)?,
-                comments: row.get(23)?,
-                latitude: row.get(24)?,
-                longitude: row.get(25)?,
-                dive_site_id: row.get(26)?,
-                is_fresh_water: row.get(27)?,
-                is_boat_dive: row.get(28)?,
-                is_drift_dive: row.get(29)?,
-                is_night_dive: row.get(30)?,
-                is_training_dive: row.get(31)?,
-                created_at: row.get(32)?,
-                updated_at: row.get(33)?,
+                guide: row.get(22)?,
+                instructor: row.get(23)?,
+                comments: row.get(24)?,
+                latitude: row.get(25)?,
+                longitude: row.get(26)?,
+                dive_site_id: row.get(27)?,
+                is_fresh_water: row.get::<_, i32>(28)? != 0,
+                is_boat_dive: row.get::<_, i32>(29)? != 0,
+                is_drift_dive: row.get::<_, i32>(30)? != 0,
+                is_night_dive: row.get::<_, i32>(31)? != 0,
+                is_training_dive: row.get::<_, i32>(32)? != 0,
+                created_at: row.get(33)?,
+                updated_at: row.get(34)?,
             })
         })?.collect::<std::result::Result<Vec<_>, _>>()?;
         
@@ -2115,6 +2300,12 @@ pub struct Statistics {
     pub warmest_water_c: Option<f64>,
     pub photos_with_species: i64,
     pub rated_photos: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DiveStats {
+    pub photo_count: i64,
+    pub species_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

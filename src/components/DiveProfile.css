@@ -4,7 +4,6 @@
   padding: 16px;
   --pressure-color: #4caf50;
   --temp-color: #ff9800;
-  --ndl-color: #22c55e;
 }
 
 .dive-profile-stats {
@@ -65,26 +64,8 @@
 .legend-temp .legend-line {
   background: var(--temp-color);
   height: 2px;
-  border-style: dashed;
-  background: repeating-linear-gradient(
-    to right,
-    var(--temp-color),
-    var(--temp-color) 4px,
-    transparent 4px,
-    transparent 8px
-  );
-}
-
-.legend-ndl .legend-line {
-  background: var(--ndl-color);
-  height: 2px;
-  background: repeating-linear-gradient(
-    to right,
-    var(--ndl-color),
-    var(--ndl-color) 2px,
-    transparent 2px,
-    transparent 4px
-  );
+  border-top: 2px dashed var(--temp-color);
+  background: transparent;
 }
 
 .dive-profile-chart-container {

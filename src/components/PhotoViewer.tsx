@@ -202,13 +202,6 @@ export function PhotoViewer({
         {hasProcessedVersion && (
           <div className="photo-viewer-mode-toggle">
             <button
-              className={`mode-btn ${viewMode === 'display' ? 'active' : ''}`}
-              onClick={() => setViewMode('display')}
-              title="Best version (processed if available)"
-            >
-              Best
-            </button>
-            <button
               className={`mode-btn ${viewMode === 'raw' ? 'active' : ''}`}
               onClick={() => setViewMode('raw')}
               title="View RAW (R)"

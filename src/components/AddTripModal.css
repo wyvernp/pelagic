@@ -11,6 +11,7 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  padding: 24px;
 }
 
 .modal {
@@ -18,12 +19,25 @@
   border-radius: 8px;
   width: 100%;
   max-width: 420px;
+  max-height: calc(100vh - 48px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal.modal-lg {
   max-width: 520px;
+}
+
+/* Form inside modal needs to be flex too */
+.modal form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .modal-header {
@@ -32,6 +46,7 @@
   justify-content: space-between;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .modal-header h2 {
@@ -60,6 +75,9 @@
 
 .modal-body {
   padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 .form-group {
@@ -133,6 +151,7 @@
   gap: 10px;
   padding: 16px 20px;
   border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .modal-footer-right {
@@ -218,6 +237,20 @@
   border: none;
   border-top: 1px solid var(--border-color);
   margin: 16px 0;
+}
+
+/* Section headers */
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
+}
+
+.section-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 16px 0;
 }
 
 /* Checkbox group */

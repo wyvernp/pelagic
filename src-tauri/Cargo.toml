@@ -58,5 +58,8 @@ dirs = "5"
 base64 = "0.22"
 rexif = "0.7.5"
 
+# Temporary files
+tempfile = "3"
+
 # HTTP client for AI API
 reqwest = { version = "0.12", features = ["json"] }

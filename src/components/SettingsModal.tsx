@@ -28,6 +28,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [rescanning, setRescanning] = useState(false);
   const [rescanResult, setRescanResult] = useState<string | null>(null);
 
+  const openExternalUrl = async (url: string) => {
+    try {
+      await invoke('open_url', { url });
+    } catch (error) {
+      console.error('Failed to open URL:', error);
+    }
+  };
+
   useEffect(() => {
     // Load settings from localStorage
     const stored = localStorage.getItem('pelagic-settings');
@@ -203,7 +211,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <div className="setting-row">
               <label className="setting-label">
                 <span className="setting-name">Google Gemini API Key</span>
-                <span className="setting-desc">Required for AI-powered species identification. Get yours at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a></span>
+                <span className="setting-desc">Required for AI-powered species identification. Get yours at <a href="#" onClick={(e) => { e.preventDefault(); openExternalUrl('https://aistudio.google.com/apikey'); }}>Google AI Studio</a></span>
               </label>
               <input
                 type="password"

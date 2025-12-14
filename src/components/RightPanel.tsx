@@ -303,7 +303,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     }
   };
 
-  if (!photo && !dive) {
+  if (!photo && !dive && !trip) {
     return (
       <aside className="panel">
         <div className="panel-header">
@@ -768,6 +768,48 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
               <div className="panel-section">
                 <h4 className="panel-section-title">Notes</h4>
                 <p className="dive-notes">{dive.comments}</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      
+      {!photo && !dive && trip && (
+        <>
+          <div className="panel-header">
+            <h3>Trip Details</h3>
+          </div>
+          <div className="panel-content">
+            <div className="panel-section">
+              <h4 className="panel-section-title">Trip Info</h4>
+              <dl className="info-list">
+                <div className="info-item">
+                  <dt>Name</dt>
+                  <dd>{trip.name}</dd>
+                </div>
+                <div className="info-item">
+                  <dt>Location</dt>
+                  <dd>{trip.location}</dd>
+                </div>
+                {trip.resort && (
+                  <div className="info-item">
+                    <dt>Resort</dt>
+                    <dd>{trip.resort}</dd>
+                  </div>
+                )}
+                <div className="info-item">
+                  <dt>Dates</dt>
+                  <dd>
+                    {format(new Date(trip.date_start), 'MMM d')} - {format(new Date(trip.date_end), 'MMM d, yyyy')}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+            
+            {trip.notes && (
+              <div className="panel-section">
+                <h4 className="panel-section-title">Notes</h4>
+                <p className="dive-notes">{trip.notes}</p>
               </div>
             )}
           </div>

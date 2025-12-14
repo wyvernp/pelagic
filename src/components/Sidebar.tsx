@@ -11,6 +11,7 @@ interface SidebarProps {
   onSelectDive: (diveId: number | null) => void;
   onAddTrip: () => void;
   onEditTrip: (trip: Trip) => void;
+  onAddDive: (tripId: number) => void;
 }
 
 export function Sidebar({
@@ -22,6 +23,7 @@ export function Sidebar({
   onSelectDive,
   onAddTrip,
   onEditTrip,
+  onAddDive,
 }: SidebarProps) {
   const getTripDives = (tripId: number) => dives.filter((d) => d.trip_id === tripId);
 
@@ -97,12 +99,36 @@ export function Sidebar({
                           </button>
                         </li>
                       ))}
+                      <li>
+                        <button
+                          className="dive-button add-dive-button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddDive(trip.id);
+                          }}
+                          title="Add manual dive"
+                        >
+                          <svg className="dive-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                          </svg>
+                          <span className="add-dive-text">Add Dive</span>
+                        </button>
+                      </li>
                     </ul>
                   )}
                   
                   {isExpanded && tripDives.length === 0 && (
                     <div className="dive-list-empty">
-                      <span className="text-muted">No dives imported</span>
+                      <span className="text-muted">No dives yet</span>
+                      <button
+                        className="add-dive-link"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAddDive(trip.id);
+                        }}
+                      >
+                        Add manual dive
+                      </button>
                     </div>
                   )}
                 </li>

@@ -1,13 +1,14 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::path::Path;
-use crate::db::{Dive, DiveSample, DiveEvent, Database};
+use crate::db::{Dive, DiveSample, DiveEvent, Database, TankPressure};
 
 #[derive(Debug)]
 pub struct ImportedDive {
     pub dive: Dive,
     pub samples: Vec<DiveSample>,
     pub events: Vec<DiveEvent>,
+    pub tank_pressures: Vec<TankPressure>,
 }
 
 #[derive(Debug)]
@@ -82,6 +83,7 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                             gear_profile_id: None,
                             buddy: None,
                             divemaster: None,
+                            guide: None,
                             instructor: None,
                             comments: None,
                             latitude: None,
@@ -289,6 +291,7 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                                 dive,
                                 samples: std::mem::take(&mut current_samples),
                                 events: std::mem::take(&mut current_events),
+                                tank_pressures: Vec::new(),
                             });
                         }
                     }
@@ -358,7 +361,17 @@ fn parse_pressure(s: &str) -> f64 {
 
 /// Import dives from .ssrf file into database
 /// If trip_id is provided, add dives to existing trip; otherwise create a new trip
-pub fn import_to_database(db: &Database, result: ImportResult, existing_trip_id: Option<i64>) -> Result<i64, String> {
+pub fn import_to_database(db: &Database, mut result: ImportResult, existing_trip_id: Option<i64>) -> Result<i64, String> {
+    // Sort dives by date and time before importing
+    result.dives.sort_by(|a, b| {
+        let date_cmp = a.dive.date.cmp(&b.dive.date);
+        if date_cmp == std::cmp::Ordering::Equal {
+            a.dive.time.cmp(&b.dive.time)
+        } else {
+            date_cmp
+        }
+    });
+    
     // Use existing trip or create new one
     let trip_id = match existing_trip_id {
         Some(id) => id,
@@ -381,7 +394,7 @@ pub fn import_to_database(db: &Database, result: ImportResult, existing_trip_id:
         .max()
         .unwrap_or(0);
     
-    // Insert dives with samples and events
+    // Insert dives with samples and events (now in chronological order)
     for (i, imported) in result.dives.into_iter().enumerate() {
         let mut dive = imported.dive;
         dive.trip_id = trip_id;
@@ -405,6 +418,13 @@ pub fn import_to_database(db: &Database, result: ImportResult, existing_trip_id:
             event.dive_id = dive_id;
             db.insert_dive_event(&event)
                 .map_err(|e| format!("Failed to insert event: {}", e))?;
+        }
+        
+        // Insert tank pressures
+        for mut tank_pressure in imported.tank_pressures {
+            tank_pressure.dive_id = dive_id;
+            db.insert_tank_pressure(&tank_pressure)
+                .map_err(|e| format!("Failed to insert tank pressure: {}", e))?;
         }
     }
     
@@ -734,6 +754,7 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
         gear_profile_id: None,
         buddy: None,
         divemaster: None,
+        guide: None,
         instructor: None,
         comments: None,
         latitude: None,
@@ -752,6 +773,7 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
         dive,
         samples,
         events: Vec::new(),
+        tank_pressures: Vec::new(),
     }];
     
     // Determine trip info
@@ -880,6 +902,7 @@ fn parse_suunto_dives_format(suunto_dives: Vec<SuuntoDive>) -> Result<ImportResu
             gear_profile_id: None,
             buddy: None,
             divemaster: None,
+            guide: None,
             instructor: None,
             comments: suunto_dive.notes,
             latitude: suunto_dive.latitude,
@@ -898,6 +921,7 @@ fn parse_suunto_dives_format(suunto_dives: Vec<SuuntoDive>) -> Result<ImportResu
             dive,
             samples,
             events: Vec::new(),
+            tank_pressures: Vec::new(),
         });
         
         dive_number_counter += 1;
@@ -1012,6 +1036,7 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     let mut dives: Vec<ImportedDive> = Vec::new();
     let mut current_samples: Vec<DiveSample> = Vec::new();
     let mut current_events: Vec<DiveEvent> = Vec::new();
+    let mut current_tank_pressures: Vec<TankPressure> = Vec::new();
     let dive_number = 1;
     
     // Collect ALL data from the file - we'll figure out what's useful later
@@ -1021,7 +1046,8 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     let mut start_timestamp: Option<chrono::DateTime<chrono::Utc>> = None;
     
     // Separate collection for tank pressure data (indexed by timestamp or sample number)
-    let mut tank_pressures: Vec<(i32, f64)> = Vec::new(); // (time_offset, pressure_bar)
+    // Format: (timestamp_or_index, pressure_bar, sensor_id, has_timestamp) - sensor_id distinguishes multiple tanks
+    let mut tank_pressures: Vec<(i64, f64, i64, bool)> = Vec::new();
     
     for record in &records {
         let kind = record.kind().to_string();
@@ -1078,18 +1104,22 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
                 sample_time_offset += 1; // Always increment for timing purposes
             }
             // Tank pressure records - Garmin and other dive computers often send these separately
-            "TankUpdate" | "TankSummary" | "Tank" => {
+            // Note: fitparser returns lowercase record type names like "tank_update", "tank_summary"
+            "TankUpdate" | "TankSummary" | "Tank" | "tank_update" | "tank_summary" | "tank" => {
                 let fields: Vec<String> = record.fields().iter().map(|f| format!("{}={:?}", f.name(), f.value())).collect();
                 log::info!("Tank record fields: {:?}", fields);
                 
                 let mut pressure: Option<f64> = None;
-                let time_offset: i32 = tank_pressures.len() as i32;
+                let mut tank_timestamp: Option<i64> = None;
+                let mut sensor_id: Option<i64> = None;
                 
                 for field in record.fields() {
                     let name = field.name().to_lowercase();
-                    if name.contains("pressure") {
+                    // Look for "pressure" field but not start/end pressure from summary
+                    if name == "pressure" {
                         if let Some(p) = extract_float(field.value()) {
-                            // Convert from Pa to bar if needed
+                            // Garmin tank_update records have pressure in bar (e.g., 210.42)
+                            // Some formats may use Pa (values > 10000)
                             let p_bar = if p > 10000.0 { p / 100000.0 } else { p };
                             if p_bar > 1.0 && p_bar < 350.0 {
                                 pressure = Some(p_bar);
@@ -1097,12 +1127,25 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
                         }
                     }
                     if name == "timestamp" {
-                        // Could calculate actual offset here
+                        if let Value::Timestamp(ts) = field.value() {
+                            tank_timestamp = Some(ts.timestamp());
+                        }
+                    }
+                    // Track sensor ID to distinguish between multiple tanks
+                    if name == "sensor" {
+                        sensor_id = extract_float(field.value()).map(|f| f as i64);
                     }
                 }
                 
                 if let Some(p) = pressure {
-                    tank_pressures.push((time_offset, p));
+                    // Track whether we have a real timestamp or just a sequential index
+                    let (time_value, has_ts) = match tank_timestamp {
+                        Some(ts) => (ts, true),
+                        None => (tank_pressures.len() as i64, false),
+                    };
+                    let sid = sensor_id.unwrap_or(0);
+                    tank_pressures.push((time_value, p, sid, has_ts));
+                    log::info!("Tank pressure: {} bar at time {} (has_ts={}) from sensor {}", p, time_value, has_ts, sid);
                 }
             }
             // Events
@@ -1146,23 +1189,83 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     
     // Merge tank pressure data into samples if we have separate tank records
     if !tank_pressures.is_empty() && !current_samples.is_empty() {
-        // If tank pressures are fewer than samples, distribute them evenly
-        let pressure_interval = if tank_pressures.len() < current_samples.len() {
-            current_samples.len() / tank_pressures.len().max(1)
-        } else {
-            1
-        };
+        // Check if we have real timestamps (first entry's has_timestamp flag)
+        let have_timestamps = tank_pressures.first().map(|t| t.3).unwrap_or(false);
         
-        for (idx, sample) in current_samples.iter_mut().enumerate() {
-            if sample.pressure_bar.is_none() {
-                // Find closest tank pressure reading
-                let pressure_idx = idx / pressure_interval;
-                if pressure_idx < tank_pressures.len() {
-                    sample.pressure_bar = Some(tank_pressures[pressure_idx].1);
+        // Group tank pressures by sensor ID to handle multiple tanks
+        // Store (time_value, pressure, has_timestamp)
+        let mut sensors: HashMap<i64, Vec<(i64, f64, bool)>> = HashMap::new();
+        for (time_value, pressure, sensor_id, has_ts) in &tank_pressures {
+            sensors.entry(*sensor_id).or_insert_with(Vec::new).push((*time_value, *pressure, *has_ts));
+        }
+        
+        log::info!("Found {} different tank sensors (have_timestamps={})", sensors.len(), have_timestamps);
+        for (sensor_id, readings) in &sensors {
+            log::info!("  Sensor {}: {} readings, first={:.1} bar, last={:.1} bar", 
+                sensor_id, readings.len(),
+                readings.first().map(|r| r.1).unwrap_or(0.0),
+                readings.last().map(|r| r.1).unwrap_or(0.0));
+        }
+        
+        // Get dive parameters for time calculation
+        // Use the first sample timestamp as reference if available, otherwise first tank reading
+        let first_sample_ts = current_samples.first()
+            .and_then(|s| {
+                // Samples already have relative time_seconds, we need the absolute timestamp
+                // from the start_timestamp
+                start_timestamp.map(|st| st.timestamp())
+            });
+        
+        let first_tank_ts = tank_pressures.iter()
+            .filter(|(_, _, _, has_ts)| *has_ts)
+            .map(|(ts, _, _, _)| *ts)
+            .min();
+        
+        let dive_start_ts = first_sample_ts
+            .or_else(|| start_timestamp.map(|ts| ts.timestamp()))
+            .or(first_tank_ts)
+            .unwrap_or(0);
+        
+        let dive_duration = current_samples.last().map(|s| s.time_seconds).unwrap_or(0);
+        
+        log::info!("Dive start timestamp: {}, dive duration: {} seconds, first_tank_ts: {:?}", 
+            dive_start_ts, dive_duration, first_tank_ts);
+        
+        // Create TankPressure records for each sensor
+        for (idx, (sensor_id, readings)) in sensors.iter().enumerate() {
+            let sensor_name = Some(format!("Tank {}", idx + 1));
+            let total_readings = readings.len();
+            
+            for (i, (time_value, pressure, has_ts)) in readings.iter().enumerate() {
+                // Calculate time_seconds based on whether we have real timestamps
+                let time_seconds = if *has_ts {
+                    // Real timestamp: subtract dive start to get relative offset
+                    (*time_value - dive_start_ts) as i32
+                } else {
+                    // No timestamp: interpolate across dive duration based on reading index
+                    if total_readings > 1 {
+                        (i as i32 * dive_duration) / (total_readings as i32 - 1)
+                    } else {
+                        0
+                    }
+                };
+                
+                // Only include tank pressures within the dive time range
+                if time_seconds >= 0 && time_seconds <= dive_duration {
+                    current_tank_pressures.push(TankPressure {
+                        id: 0,
+                        dive_id: 0,
+                        sensor_id: *sensor_id,
+                        sensor_name: sensor_name.clone(),
+                        time_seconds,
+                        pressure_bar: *pressure,
+                    });
                 }
             }
         }
-        log::info!("Merged tank pressure data into {} samples", current_samples.len());
+        
+        log::info!("Created {} tank pressure records across {} sensors (filtered to dive duration)", 
+            current_tank_pressures.len(), sensors.len());
     }
     
     // Build dive from all collected data
@@ -1173,14 +1276,15 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     let has_duration = dive.duration_seconds > 0;
     let has_date = !dive.date.is_empty();
     
-    log::info!("Dive data: depth={}, duration={}, date={}, samples={}", 
-        dive.max_depth_m, dive.duration_seconds, dive.date, current_samples.len());
+    log::info!("Dive data: depth={}, duration={}, date={}, samples={}, tank_pressures={}", 
+        dive.max_depth_m, dive.duration_seconds, dive.date, current_samples.len(), current_tank_pressures.len());
     
     if has_depth || has_duration || has_date || !current_samples.is_empty() {
         dives.push(ImportedDive {
             dive,
             samples: current_samples,
             events: current_events,
+            tank_pressures: current_tank_pressures,
         });
     }
     
@@ -1240,6 +1344,7 @@ fn create_empty_dive(dive_number: i32) -> Dive {
         gear_profile_id: None,
         buddy: None,
         divemaster: None,
+        guide: None,
         instructor: None,
         comments: None,
         latitude: None,
@@ -1390,11 +1495,13 @@ fn parse_fit_record_to_sample(
                 sample.depth_m = depth;
             }
         }
-        // Timestamp for this sample
+        // Timestamp for this sample - calculate relative time from dive start
         else if name == "timestamp" {
             if let Value::Timestamp(ts) = field.value() {
-                // Could calculate actual time offset from start here
-                let _ = ts; // For now just note it exists
+                if let Some(start_ts) = _start_timestamp {
+                    let elapsed = ts.signed_duration_since(start_ts);
+                    sample.time_seconds = elapsed.num_seconds() as i32;
+                }
             }
         }
         // Temperature
@@ -1413,8 +1520,9 @@ fn parse_fit_record_to_sample(
         }
         // Tank pressure - look for various field names
         // Garmin uses "tank_pressure", some use "cylinder_pressure", etc.
-        else if (name.contains("pressure") || name.contains("tank") || name.contains("cylinder") || name.contains("air")) 
-                && !name.contains("surface") && !name.contains("ambient") {
+        // IMPORTANT: Exclude "absolute_pressure" which is ambient/water pressure, not tank pressure
+        else if (name.contains("pressure") || name.contains("tank") || name.contains("cylinder")) 
+                && !name.contains("surface") && !name.contains("ambient") && !name.contains("absolute") {
             if let Some(p) = extract_float(field.value()) {
                 // Only set if it looks like a tank pressure (typically 1-300 bar or 100000-30000000 Pa)
                 if p > 0.0 {
@@ -1467,6 +1575,8 @@ fn extract_float(value: &Value) -> Option<f64> {
     match value {
         Value::Float64(f) => Some(*f),
         Value::Float32(f) => Some(*f as f64),
+        Value::SInt64(i) => Some(*i as f64),
+        Value::UInt64(u) => Some(*u as f64),
         Value::SInt32(i) => Some(*i as f64),
         Value::UInt32(u) => Some(*u as f64),
         Value::SInt16(i) => Some(*i as f64),

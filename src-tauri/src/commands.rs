@@ -1,6 +1,6 @@
 use tauri::State;
 use std::path::Path;
-use crate::{AppState, db::{Trip, Dive, DiveSample, Photo}, import, photos};
+use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveStats}, import, photos};
 
 #[tauri::command]
 pub fn get_trips(state: State<AppState>) -> Result<Vec<Trip>, String> {
@@ -58,6 +58,7 @@ pub fn update_dive(
     visibility_m: Option<f64>,
     buddy: Option<String>,
     divemaster: Option<String>,
+    guide: Option<String>,
     instructor: Option<String>,
     comments: Option<String>,
     latitude: Option<f64>,
@@ -76,6 +77,7 @@ pub fn update_dive(
         visibility_m,
         buddy.as_deref(),
         divemaster.as_deref(),
+        guide.as_deref(),
         instructor.as_deref(),
         comments.as_deref(),
         latitude,
@@ -86,6 +88,12 @@ pub fn update_dive(
         is_night_dive,
         is_training_dive,
     ).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_dive(state: State<AppState>, id: i64) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_dive(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -104,6 +112,12 @@ pub fn get_dive(state: State<AppState>, id: i64) -> Result<Option<Dive>, String>
 pub fn get_dive_samples(state: State<AppState>, dive_id: i64) -> Result<Vec<DiveSample>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.get_dive_samples(dive_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_tank_pressures(state: State<AppState>, dive_id: i64) -> Result<Vec<TankPressure>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_tank_pressures_for_dive(dive_id).map_err(|e| e.to_string())
 }
 
 /// Insert samples for a dive (from dive computer data)
@@ -148,6 +162,29 @@ pub fn import_dive_file(state: State<AppState>, file_path: String, trip_id: Opti
     
     // Auto-detect format and parse
     let result = import::parse_dive_file(path)?;
+    
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    import::import_to_database(&db, result, trip_id)
+}
+
+/// Import dive log from file data (bytes) instead of file path
+/// Used for USB storage devices where files are read via File System Access API
+#[tauri::command]
+pub fn import_dive_file_data(state: State<AppState>, file_name: String, file_data: Vec<u8>, trip_id: Option<i64>) -> Result<i64, String> {
+    // Create a temporary file to parse the data
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+    
+    let mut temp_file = NamedTempFile::with_suffix(&format!(".{}", file_name.split('.').last().unwrap_or("tmp")))
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(&file_data)
+        .map_err(|e| format!("Failed to write file data: {}", e))?;
+    
+    let path = temp_file.path().to_path_buf();
+    
+    // Auto-detect format and parse
+    let result = import::parse_dive_file(&path)?;
     
     let db = state.db.lock().map_err(|e| e.to_string())?;
     import::import_to_database(&db, result, trip_id)
@@ -199,10 +236,93 @@ pub fn create_dive_from_computer(
     ).map_err(|e| e.to_string())
 }
 
+/// Create a manual dive with all fields (for dives without a dive computer)
+#[tauri::command]
+pub fn create_manual_dive(
+    state: State<AppState>,
+    trip_id: i64,
+    date: String,
+    time: String,
+    duration_seconds: i64,
+    max_depth_m: f64,
+    mean_depth_m: f64,
+    water_temp_c: Option<f64>,
+    air_temp_c: Option<f64>,
+    surface_pressure_bar: Option<f64>,
+    cns_percent: Option<f64>,
+    nitrox_o2_percent: Option<f64>,
+    // User-editable fields
+    location: Option<String>,
+    ocean: Option<String>,
+    visibility_m: Option<f64>,
+    buddy: Option<String>,
+    divemaster: Option<String>,
+    guide: Option<String>,
+    instructor: Option<String>,
+    comments: Option<String>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
+    is_fresh_water: bool,
+    is_boat_dive: bool,
+    is_drift_dive: bool,
+    is_night_dive: bool,
+    is_training_dive: bool,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    
+    // Get current dive count for numbering
+    let existing_dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
+    let dive_number = existing_dives.len() as i64 + 1;
+    
+    db.create_manual_dive(
+        trip_id,
+        dive_number,
+        &date,
+        &time,
+        duration_seconds,
+        max_depth_m,
+        mean_depth_m,
+        water_temp_c,
+        air_temp_c,
+        surface_pressure_bar,
+        cns_percent,
+        nitrox_o2_percent,
+        location.as_deref(),
+        ocean.as_deref(),
+        visibility_m,
+        buddy.as_deref(),
+        divemaster.as_deref(),
+        guide.as_deref(),
+        instructor.as_deref(),
+        comments.as_deref(),
+        latitude,
+        longitude,
+        is_fresh_water,
+        is_boat_dive,
+        is_drift_dive,
+        is_night_dive,
+        is_training_dive,
+    ).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_photos_for_dive(state: State<AppState>, dive_id: i64) -> Result<Vec<Photo>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.get_photos_for_dive(dive_id).map_err(|e| e.to_string())
+}
+
+/// Get top photos for a dive for thumbnail display (prioritizes processed versions and high ratings)
+#[tauri::command]
+pub fn get_dive_thumbnail_photos(state: State<AppState>, dive_id: i64, limit: i64) -> Result<Vec<Photo>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_dive_thumbnail_photos(dive_id, limit).map_err(|e| e.to_string())
+}
+
+/// Get photo count and species count for a dive
+#[tauri::command]
+pub fn get_dive_stats(state: State<AppState>, dive_id: i64) -> Result<DiveStats, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_dive_stats(dive_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -999,4 +1119,33 @@ pub async fn identify_species_batch(
     }
     
     Ok(results)
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    
+    Ok(())
 }

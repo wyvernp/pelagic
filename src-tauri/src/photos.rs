@@ -343,6 +343,173 @@ fn read_exif_with_rexif(path: &Path) -> ExifData {
     data
 }
 
+/// Read EXIF data from CR3 files (Canon RAW)
+/// CR3 files use ISO Base Media File Format (like MP4) but store EXIF in specific boxes
+/// We search for the embedded EXIF/TIFF data directly in the file
+fn read_exif_from_cr3(path: &Path) -> ExifData {
+    // Read the file to search for EXIF data
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("Failed to read CR3 file {:?}: {:?}", path, e);
+            return ExifData::default();
+        }
+    };
+    
+    // CR3 files contain EXIF data in a TIFF format block
+    // Look for TIFF header (II for little-endian or MM for big-endian)
+    // followed by 0x002A (42) which indicates TIFF
+    
+    // Search for embedded TIFF/EXIF data
+    for i in 0..data.len().saturating_sub(8) {
+        // Look for TIFF header: "II" (0x4949) + 0x2A00 or "MM" (0x4D4D) + 0x002A
+        let is_little_endian = data[i] == 0x49 && data[i+1] == 0x49 && data[i+2] == 0x2A && data[i+3] == 0x00;
+        let is_big_endian = data[i] == 0x4D && data[i+1] == 0x4D && data[i+2] == 0x00 && data[i+3] == 0x2A;
+        
+        if is_little_endian || is_big_endian {
+            // Found a potential TIFF header, try to parse it
+            // Extract a reasonable chunk (EXIF data is usually < 64KB)
+            let end = std::cmp::min(i + 65536, data.len());
+            let tiff_data = &data[i..end];
+            
+            match rexif::parse_buffer(tiff_data) {
+                Ok(exif) => {
+                    // Check if this has meaningful EXIF data (camera make/model or datetime)
+                    let has_camera_info = exif.entries.iter().any(|e| 
+                        matches!(e.tag, ExifTag::Make | ExifTag::Model | ExifTag::DateTimeOriginal)
+                    );
+                    
+                    if has_camera_info {
+                        log::info!("Found EXIF in CR3 at offset {} with {} entries", i, exif.entries.len());
+                        
+                        let mut result = ExifData::default();
+                        
+                        for entry in &exif.entries {
+                            match entry.tag {
+                                ExifTag::DateTimeOriginal | ExifTag::DateTime => {
+                                    if result.capture_time.is_none() {
+                                        result.capture_time = parse_exif_datetime(&entry.value_more_readable);
+                                    }
+                                }
+                                ExifTag::Make => {
+                                    result.camera_make = Some(entry.value_more_readable.trim().to_string());
+                                }
+                                ExifTag::Model => {
+                                    result.camera_model = Some(entry.value_more_readable.trim().to_string());
+                                }
+                                ExifTag::LensModel => {
+                                    result.lens_info = Some(entry.value_more_readable.trim().to_string());
+                                }
+                                ExifTag::FocalLength => {
+                                    let val = entry.value_more_readable.replace(" mm", "").replace("mm", "");
+                                    if let Some(focal) = parse_rational_or_float(&val) {
+                                        result.focal_length_mm = Some(focal);
+                                    }
+                                }
+                                ExifTag::FocalLengthIn35mmFilm => {
+                                    let val = entry.value_more_readable
+                                        .trim()
+                                        .replace(" mm", "")
+                                        .replace("mm", "");
+                                    if let Some(focal) = parse_rational_or_float(&val) {
+                                        result.focal_length_mm = Some(focal);
+                                    }
+                                }
+                                ExifTag::FNumber => {
+                                    let val = entry.value_more_readable
+                                        .trim()
+                                        .trim_start_matches("f/")
+                                        .trim_start_matches("F/");
+                                    if let Some(aperture) = parse_rational_or_float(val) {
+                                        result.aperture = Some(aperture);
+                                    }
+                                }
+                                ExifTag::ApertureValue => {
+                                    if result.aperture.is_none() {
+                                        if let Some(apex) = parse_rational_or_float(&entry.value_more_readable) {
+                                            let fnumber = (2.0_f64).powf(apex / 2.0);
+                                            result.aperture = Some((fnumber * 10.0).round() / 10.0);
+                                        }
+                                    }
+                                }
+                                ExifTag::ExposureTime => {
+                                    let val = entry.value_more_readable
+                                        .trim()
+                                        .trim_end_matches(" s")
+                                        .trim_end_matches("s");
+                                    result.shutter_speed = Some(val.to_string());
+                                }
+                                ExifTag::ShutterSpeedValue => {
+                                    if result.shutter_speed.is_none() {
+                                        if let Some(apex) = parse_rational_or_float(&entry.value_more_readable) {
+                                            let time = 1.0 / (2.0_f64).powf(apex);
+                                            if time >= 1.0 {
+                                                result.shutter_speed = Some(format!("{:.1}s", time));
+                                            } else {
+                                                let denom = (1.0 / time).round() as i32;
+                                                result.shutter_speed = Some(format!("1/{}", denom));
+                                            }
+                                        }
+                                    }
+                                }
+                                ExifTag::ISOSpeedRatings => {
+                                    let val = entry.value_more_readable
+                                        .trim()
+                                        .trim_start_matches("ISO ")
+                                        .trim_start_matches("ISO");
+                                    if let Ok(iso) = val.trim().parse::<i32>() {
+                                        result.iso = Some(iso);
+                                    }
+                                }
+                                ExifTag::ExposureBiasValue => {
+                                    if let Some(ev) = parse_rational_or_float(&entry.value_more_readable) {
+                                        result.exposure_compensation = Some(ev);
+                                    }
+                                }
+                                ExifTag::LightSource => {
+                                    result.white_balance = Some(entry.value_more_readable.trim().to_string());
+                                }
+                                ExifTag::Flash => {
+                                    let flash_str = entry.value_more_readable.to_lowercase();
+                                    result.flash_fired = Some(flash_str.contains("fired") || flash_str.contains("yes") || flash_str.contains("on"));
+                                }
+                                ExifTag::MeteringMode => {
+                                    result.metering_mode = Some(entry.value_more_readable.trim().to_string());
+                                }
+                                ExifTag::GPSLatitude => {
+                                    if let Some(lat) = parse_gps_coordinate(&entry.value_more_readable) {
+                                        result.gps_latitude = Some(lat);
+                                    }
+                                }
+                                ExifTag::GPSLongitude => {
+                                    if let Some(lon) = parse_gps_coordinate(&entry.value_more_readable) {
+                                        result.gps_longitude = Some(lon);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        
+                        return result;
+                    }
+                }
+                Err(_) => {
+                    // Not valid EXIF at this offset, continue searching
+                }
+            }
+        }
+        
+        // Limit search to first 1MB to avoid performance issues
+        if i > 1_000_000 {
+            break;
+        }
+    }
+    
+    log::warn!("No EXIF data found in CR3 file {:?}", path);
+    ExifData::default()
+}
+
+
 /// Parse GPS coordinates from EXIF (handles various formats)
 fn parse_gps_coordinate(s: &str) -> Option<f64> {
     // Try direct float parse first
@@ -390,6 +557,19 @@ fn parse_rational_or_float(s: &str) -> Option<f64> {
 }
 
 fn read_exif_data(path: &Path) -> ExifData {
+    // Check if this is a CR3 file (Canon RAW)
+    if path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_lowercase() == "cr3")
+        .unwrap_or(false)
+    {
+        let cr3_data = read_exif_from_cr3(path);
+        // If we got good data from CR3 parsing, use it
+        if cr3_data.capture_time.is_some() || cr3_data.aperture.is_some() || cr3_data.iso.is_some() {
+            return cr3_data;
+        }
+    }
+    
     // First try rexif which has better DNG/TIFF support
     let rexif_data = read_exif_with_rexif(path);
     

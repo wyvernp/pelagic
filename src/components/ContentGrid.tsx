@@ -1,6 +1,16 @@
-import type { Dive, Photo, ViewMode } from '../types';
+import { useState, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import type { Dive, Photo, ViewMode, DiveStats } from '../types';
 import { ImageLoader } from './ImageLoader';
 import './ContentGrid.css';
+
+interface DiveThumbnails {
+  [diveId: number]: Photo[];
+}
+
+interface DiveStatsMap {
+  [diveId: number]: DiveStats;
+}
 
 interface ContentGridProps {
   viewMode: ViewMode;
@@ -21,6 +31,67 @@ export function ContentGrid({
   onSelectPhoto,
   onOpenPhoto,
 }: ContentGridProps) {
+  const [diveThumbnails, setDiveThumbnails] = useState<DiveThumbnails>({});
+  const [diveStats, setDiveStats] = useState<DiveStatsMap>({});
+  const loadingRef = useRef<boolean>(false);
+  const abortRef = useRef<boolean>(false);
+  
+  // Load thumbnails and stats for dives progressively (non-blocking)
+  useEffect(() => {
+    if (viewMode === 'trip' && dives.length > 0) {
+      // Abort any previous loading
+      abortRef.current = true;
+      
+      // Clear previous data
+      setDiveThumbnails({});
+      setDiveStats({});
+      
+      // Small delay to let the abort take effect
+      const timeoutId = setTimeout(() => {
+        abortRef.current = false;
+        loadingRef.current = true;
+        
+        const loadDiveDataProgressively = async () => {
+          // Load data for each dive one at a time to avoid blocking
+          for (const dive of dives) {
+            if (abortRef.current) break;
+            
+            try {
+              // Load thumbnails and stats for this dive
+              const [thumbs, stats] = await Promise.all([
+                invoke<Photo[]>('get_dive_thumbnail_photos', { diveId: dive.id, limit: 4 }),
+                invoke<DiveStats>('get_dive_stats', { diveId: dive.id })
+              ]);
+              
+              if (abortRef.current) break;
+              
+              // Update state incrementally
+              setDiveThumbnails(prev => ({ ...prev, [dive.id]: thumbs }));
+              setDiveStats(prev => ({ ...prev, [dive.id]: stats }));
+              
+              // Small yield to let UI update
+              await new Promise(resolve => setTimeout(resolve, 10));
+            } catch (error) {
+              console.error(`Failed to load data for dive ${dive.id}:`, error);
+            }
+          }
+          
+          loadingRef.current = false;
+        };
+        
+        loadDiveDataProgressively();
+      }, 50);
+      
+      return () => {
+        clearTimeout(timeoutId);
+        abortRef.current = true;
+      };
+    } else {
+      setDiveThumbnails({});
+      setDiveStats({});
+    }
+  }, [viewMode, dives]);
+
   const hasDives = viewMode === 'trip' && dives.length > 0;
   const hasPhotos = photos.length > 0;
   
@@ -49,32 +120,93 @@ export function ContentGrid({
       {/* Dive cards when viewing a trip */}
       {hasDives && (
         <>
-          {dives.map((dive) => (
-            <button
-              key={dive.id}
-              className="grid-item dive-card"
-              onClick={() => onSelectDive(dive.id)}
-            >
-              <div className="dive-card-header">
-                <span className="dive-card-number">Dive {dive.dive_number}</span>
-                <span className="dive-card-depth">{dive.max_depth_m.toFixed(1)}m</span>
-              </div>
-              <div className="dive-card-body">
-                <div className="dive-card-location">
-                  {dive.location || 'Unnamed Dive'}
+          {dives.map((dive) => {
+            const thumbnails = diveThumbnails[dive.id] || [];
+            const stats = diveStats[dive.id] || { photo_count: 0, species_count: 0 };
+            
+            return (
+              <button
+                key={dive.id}
+                className="grid-item dive-card"
+                onClick={() => onSelectDive(dive.id)}
+              >
+                {/* Thumbnail grid */}
+                {thumbnails.length > 0 && (
+                  <div className={`dive-card-thumbs thumbs-${Math.min(thumbnails.length, 4)}`}>
+                    {thumbnails.slice(0, 4).map((photo, idx) => (
+                      <div key={photo.id} className="dive-thumb-wrapper">
+                        <ImageLoader
+                          filePath={photo.thumbnail_path}
+                          alt=""
+                          className="dive-thumb"
+                          placeholderClassName="dive-thumb-placeholder"
+                        />
+                        {idx === 3 && stats.photo_count > 4 && (
+                          <div className="dive-thumb-more">+{stats.photo_count - 4}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {thumbnails.length === 0 && (
+                  <div className="dive-card-no-photos">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32">
+                      <path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2l2-2h4l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4z"/>
+                    </svg>
+                  </div>
+                )}
+                
+                <div className="dive-card-content">
+                  <div className="dive-card-header">
+                    <span className="dive-card-number">#{dive.dive_number}</span>
+                    <span className="dive-card-depth">{dive.max_depth_m.toFixed(1)}m</span>
+                  </div>
+                  
+                  <div className="dive-card-location">
+                    {dive.location || 'Unnamed Site'}
+                  </div>
+                  
+                  <div className="dive-card-stats">
+                    <span className="dive-stat">
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                      </svg>
+                      {Math.floor(dive.duration_seconds / 60)}min
+                    </span>
+                    {dive.water_temp_c && (
+                      <span className="dive-stat">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                          <path d="M15 13V5c0-1.66-1.34-3-3-3S9 3.34 9 5v8c-1.21.91-2 2.37-2 4 0 2.76 2.24 5 5 5s5-2.24 5-5c0-1.63-.79-3.09-2-4z"/>
+                        </svg>
+                        {dive.water_temp_c}°
+                      </span>
+                    )}
+                    {stats.photo_count > 0 && (
+                      <span className="dive-stat">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+                          <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                        </svg>
+                        {stats.photo_count}
+                      </span>
+                    )}
+                    {stats.species_count > 0 && (
+                      <span className="dive-stat species">
+                        🐠 {stats.species_count}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {(dive.is_night_dive || dive.is_boat_dive || dive.is_drift_dive) && (
+                    <div className="dive-card-tags">
+                      {dive.is_night_dive && <span className="dive-tag">🌙</span>}
+                      {dive.is_boat_dive && <span className="dive-tag">🚤</span>}
+                      {dive.is_drift_dive && <span className="dive-tag">🌊</span>}
+                    </div>
+                  )}
                 </div>
-                <div className="dive-card-stats">
-                  <span>{Math.floor(dive.duration_seconds / 60)} min</span>
-                  {dive.water_temp_c && <span>{dive.water_temp_c}°C</span>}
-                </div>
-              </div>
-              <div className="dive-card-footer">
-                {dive.is_night_dive && <span className="dive-tag">🌙 Night</span>}
-                {dive.is_boat_dive && <span className="dive-tag">🚤 Boat</span>}
-                {dive.is_drift_dive && <span className="dive-tag">🌊 Drift</span>}
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </>
       )}
       

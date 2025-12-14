@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import type { Dive } from '../types';
 import './AddTripModal.css'; // Reuse modal styles
 
@@ -16,6 +17,7 @@ export interface DiveFormData {
   visibility_m: number | null;
   buddy: string;
   divemaster: string;
+  guide: string;
   instructor: string;
   comments: string;
   latitude: number | null;
@@ -32,9 +34,10 @@ interface DiveModalProps {
   dive: Dive | null;
   onClose: () => void;
   onSubmit: (diveId: number, data: DiveFormData) => void;
+  onDelete?: (diveId: number) => void;
 }
 
-export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
+export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveModalProps) {
   const [location, setLocation] = useState('');
   const [ocean, setOcean] = useState('');
   const [visibility, setVisibility] = useState('');
@@ -42,6 +45,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
   const [longitude, setLongitude] = useState('');
   const [buddy, setBuddy] = useState('');
   const [divemaster, setDivemaster] = useState('');
+  const [guide, setGuide] = useState('');
   const [instructor, setInstructor] = useState('');
   const [comments, setComments] = useState('');
   const [isFreshWater, setIsFreshWater] = useState(false);
@@ -115,6 +119,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
       setLongitude(dive.longitude?.toString() || '');
       setBuddy(dive.buddy || '');
       setDivemaster(dive.divemaster || '');
+      setGuide(dive.guide || '');
       setInstructor(dive.instructor || '');
       setComments(dive.comments || '');
       setIsFreshWater(dive.is_fresh_water);
@@ -136,6 +141,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
       visibility_m: visibility ? parseFloat(visibility) : null,
       buddy: buddy.trim(),
       divemaster: divemaster.trim(),
+      guide: guide.trim(),
       instructor: instructor.trim(),
       comments: comments.trim(),
       latitude: latitude ? parseFloat(latitude) : null,
@@ -151,6 +157,22 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onClose();
+    }
+  };
+
+  const handleDelete = async () => {
+    if (dive && onDelete) {
+      const confirmed = await confirm(
+        `Are you sure you want to delete Dive #${dive.dive_number}? This will also delete all photos associated with this dive.`,
+        {
+          title: 'Delete Dive',
+          kind: 'warning',
+        }
+      );
+      
+      if (confirmed) {
+        onDelete(dive.id);
+      }
     }
   };
 
@@ -322,6 +344,19 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
               </div>
               
               <div className="form-group">
+                <label htmlFor="dive-guide">Guide</label>
+                <input
+                  id="dive-guide"
+                  type="text"
+                  value={guide}
+                  onChange={(e) => setGuide(e.target.value)}
+                  placeholder="Guide name"
+                />
+              </div>
+            </div>
+            
+            <div className="form-row">
+              <div className="form-group">
                 <label htmlFor="dive-instructor">Instructor</label>
                 <input
                   id="dive-instructor"
@@ -392,6 +427,11 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit }: DiveModalProps) {
           </div>
           
           <div className="modal-footer">
+            {onDelete && dive && (
+              <button type="button" className="btn btn-danger" onClick={handleDelete}>
+                Delete Dive
+              </button>
+            )}
             <div className="modal-footer-right">
               <button type="button" className="btn btn-secondary" onClick={onClose}>
                 Cancel

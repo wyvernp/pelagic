@@ -39,6 +39,7 @@ export interface Dive {
   gear_profile_id?: number;
   buddy?: string;
   divemaster?: string;
+  guide?: string;
   instructor?: string;
   comments?: string;
   
@@ -66,6 +67,15 @@ export interface DiveSample {
   pressure_bar?: number;
   ndl_seconds?: number;
   rbt_seconds?: number;
+}
+
+export interface TankPressure {
+  id: number;
+  dive_id: number;
+  sensor_id: string;
+  sensor_name?: string;
+  time_seconds: number;
+  pressure_bar: number;
 }
 
 export interface DiveEvent {
@@ -128,6 +138,11 @@ export interface Photo {
   
   created_at: string;
   updated_at: string;
+}
+
+export interface DiveStats {
+  photo_count: number;
+  species_count: number;
 }
 
 export interface SpeciesTag {

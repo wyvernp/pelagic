@@ -6,6 +6,11 @@
   min-height: 0;
 }
 
+/* Dive cards need to be larger */
+.content-grid:has(.dive-card) {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
 .grid-item {
   aspect-ratio: 1;
   border-radius: 8px;
@@ -16,6 +21,11 @@
   min-height: 0;
 }
 
+/* Dive cards don't use aspect-ratio 1 */
+.grid-item.dive-card {
+  aspect-ratio: auto;
+}
+
 /* Dive cards */
 .dive-card {
   background: var(--bg-dark);
@@ -23,7 +33,8 @@
   display: flex;
   flex-direction: column;
   text-align: left;
-  padding: 12px;
+  padding: 0;
+  overflow: hidden;
 }
 
 .dive-card:hover {
@@ -31,33 +42,114 @@
   background: var(--bg-medium);
 }
 
+/* Dive card thumbnail grid */
+.dive-card-thumbs {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  aspect-ratio: 16/10;
+  background: var(--bg-medium);
+  overflow: hidden;
+}
+
+.dive-card-thumbs.thumbs-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.dive-card-thumbs.thumbs-2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+.dive-card-thumbs.thumbs-3 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.dive-card-thumbs.thumbs-3 .dive-thumb-wrapper:first-child {
+  grid-row: span 2;
+}
+
+.dive-card-thumbs.thumbs-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.dive-thumb-wrapper {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+}
+
+.dive-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.dive-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-medium);
+}
+
+.dive-thumb-more {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+}
+
+.dive-card-no-photos {
+  width: 100%;
+  aspect-ratio: 16/10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-medium);
+  color: var(--text-muted);
+}
+
+.dive-card-content {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
 .dive-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
 }
 
 .dive-card-number {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--accent-primary);
 }
 
 .dive-card-depth {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
-}
-
-.dive-card-body {
-  flex: 1;
 }
 
 .dive-card-location {
   font-size: 13px;
   color: var(--text-primary);
-  margin-bottom: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -65,24 +157,34 @@
 
 .dive-card-stats {
   display: flex;
-  gap: 12px;
-  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
-.dive-card-footer {
+.dive-stat {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+.dive-stat svg {
+  opacity: 0.6;
+}
+
+.dive-stat.species {
+  color: var(--accent-primary);
+}
+
+.dive-card-tags {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 .dive-tag {
-  font-size: 10px;
-  padding: 2px 6px;
-  background: var(--bg-medium);
-  border-radius: 4px;
-  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 /* Photo cards */

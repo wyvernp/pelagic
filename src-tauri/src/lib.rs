@@ -58,13 +58,19 @@ pub fn run() {
             commands::get_dives_for_trip,
             commands::get_dive,
             commands::update_dive,
+            commands::delete_dive,
             commands::get_dive_samples,
+            commands::get_tank_pressures,
             commands::insert_dive_samples,
             commands::import_ssrf_file,
             commands::import_dive_file,
+            commands::import_dive_file_data,
             commands::create_dive_from_computer,
+            commands::create_manual_dive,
             commands::get_photos_for_dive,
             commands::get_photos_for_trip,
+            commands::get_dive_thumbnail_photos,
+            commands::get_dive_stats,
             commands::get_photo,
             commands::scan_photos_for_import,
             commands::import_photos,
@@ -122,6 +128,8 @@ pub fn run() {
             // AI species identification
             commands::identify_species_in_photo,
             commands::identify_species_batch,
+            // System utilities
+            commands::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

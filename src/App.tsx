@@ -7,6 +7,7 @@ import { ContentArea } from './components/ContentArea';
 import { RightPanel } from './components/RightPanel';
 import { TripModal, type TripFormData } from './components/AddTripModal';
 import { DiveModal, type DiveFormData } from './components/DiveModal';
+import { AddDiveModal, type NewDiveFormData } from './components/AddDiveModal';
 import { PhotoImportModal } from './components/PhotoImportModal';
 import { PhotoViewer } from './components/PhotoViewer';
 import { SpeciesTagModal } from './components/SpeciesTagModal';
@@ -39,6 +40,8 @@ function App() {
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [diveModalOpen, setDiveModalOpen] = useState(false);
   const [editingDive, setEditingDive] = useState<Dive | null>(null);
+  const [addDiveModalOpen, setAddDiveModalOpen] = useState(false);
+  const [addDiveTripId, setAddDiveTripId] = useState<number | null>(null);
   const [photoImportOpen, setPhotoImportOpen] = useState(false);
   const [photoImportPaths, setPhotoImportPaths] = useState<string[]>([]);
   const [viewerPhotoId, setViewerPhotoId] = useState<number | null>(null);
@@ -455,6 +458,56 @@ function App() {
     setDiveModalOpen(true);
   };
 
+  const handleAddDive = (tripId: number) => {
+    setAddDiveTripId(tripId);
+    setAddDiveModalOpen(true);
+  };
+
+  const handleAddDiveSubmit = async (data: NewDiveFormData) => {
+    if (!addDiveTripId) return;
+    
+    try {
+      const diveId = await invoke<number>('create_manual_dive', {
+        tripId: addDiveTripId,
+        date: data.date,
+        time: data.time,
+        durationSeconds: Math.round(data.duration_minutes * 60),
+        maxDepthM: data.max_depth_m,
+        meanDepthM: data.mean_depth_m,
+        waterTempC: data.water_temp_c,
+        airTempC: data.air_temp_c,
+        surfacePressureBar: data.surface_pressure_bar,
+        cnsPercent: data.cns_percent,
+        nitroxO2Percent: data.nitrox_o2_percent,
+        location: data.location || null,
+        ocean: data.ocean || null,
+        visibilityM: data.visibility_m,
+        buddy: data.buddy || null,
+        divemaster: data.divemaster || null,
+        guide: data.guide || null,
+        instructor: data.instructor || null,
+        comments: data.comments || null,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        isFreshWater: data.is_fresh_water,
+        isBoatDive: data.is_boat_dive,
+        isDriftDive: data.is_drift_dive,
+        isNightDive: data.is_night_dive,
+        isTrainingDive: data.is_training_dive,
+      });
+      
+      setAddDiveModalOpen(false);
+      setAddDiveTripId(null);
+      
+      // Reload dives and select the new one
+      await loadDivesForTrip(addDiveTripId);
+      handleSelectDive(diveId);
+    } catch (error) {
+      console.error('Failed to create dive:', error);
+      alert('Failed to create dive: ' + error);
+    }
+  };
+
   const handleDiveSubmit = async (diveId: number, data: DiveFormData) => {
     try {
       await invoke('update_dive', {
@@ -464,6 +517,7 @@ function App() {
         visibilityM: data.visibility_m,
         buddy: data.buddy || null,
         divemaster: data.divemaster || null,
+        guide: data.guide || null,
         instructor: data.instructor || null,
         comments: data.comments || null,
         latitude: data.latitude,
@@ -482,6 +536,21 @@ function App() {
     } catch (error) {
       console.error('Failed to update dive:', error);
       alert('Failed to update dive: ' + error);
+    }
+  };
+
+  const handleDeleteDive = async (diveId: number) => {
+    try {
+      await invoke('delete_dive', { id: diveId });
+      setDiveModalOpen(false);
+      // Clear selection and reload dives
+      handleSelectDive(null);
+      if (state.selectedTripId) {
+        await loadDivesForTrip(state.selectedTripId);
+      }
+    } catch (error) {
+      console.error('Failed to delete dive:', error);
+      alert('Failed to delete dive: ' + error);
     }
   };
 
@@ -511,6 +580,7 @@ function App() {
           onSelectDive={handleSelectDive}
           onAddTrip={handleAddTrip}
           onEditTrip={handleEditTrip}
+          onAddDive={handleAddDive}
         />
         <ContentArea
           viewMode={state.viewMode}
@@ -571,7 +641,19 @@ function App() {
         dive={editingDive}
         onClose={() => setDiveModalOpen(false)}
         onSubmit={handleDiveSubmit}
+        onDelete={handleDeleteDive}
       />
+      {addDiveTripId && (
+        <AddDiveModal
+          isOpen={addDiveModalOpen}
+          tripId={addDiveTripId}
+          onClose={() => {
+            setAddDiveModalOpen(false);
+            setAddDiveTripId(null);
+          }}
+          onSubmit={handleAddDiveSubmit}
+        />
+      )}
       {state.selectedTripId && (
         <PhotoImportModal
           isOpen={photoImportOpen}
