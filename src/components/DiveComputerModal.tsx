@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import {
@@ -21,6 +21,16 @@ import {
 import { SuuntoEonSteelWebHID, type DiveFile } from '../../dive-computer-ts/src/protocols/suunto-eonsteel-webhid';
 import type { Dive } from '../types';
 import './DiveComputerModal.css';
+
+// Import status tracking for UI feedback
+interface ImportStatus {
+  phase: 'idle' | 'downloading' | 'parsing' | 'saving' | 'complete';
+  currentDive: number;
+  totalDives: number;
+  currentSamples: number;
+  totalSamples: number;
+  message: string;
+}
 
 interface DiveComputerModalProps {
   isOpen: boolean;
@@ -123,6 +133,20 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
   const [rawDiveFiles, setRawDiveFiles] = useState<DiveFile[]>([]);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [existingDives, setExistingDives] = useState<Dive[]>([]);
+  
+  // Import status for detailed progress feedback
+  const [importStatus, setImportStatus] = useState<ImportStatus>({
+    phase: 'idle',
+    currentDive: 0,
+    totalDives: 0,
+    currentSamples: 0,
+    totalSamples: 0,
+    message: '',
+  });
+  
+  // Batch state update buffer for downloaded dives
+  const pendingDivesRef = useRef<DownloadedDive[]>([]);
+  const batchUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Managers
   const [downloadManager] = useState(() => new DownloadManager());
@@ -251,14 +275,46 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     });
   }, [existingDives]);
 
-  // Setup event handlers
+  // Flush pending dives to state (batched update)
+  const flushPendingDives = useCallback(() => {
+    if (pendingDivesRef.current.length > 0) {
+      const divesToAdd = [...pendingDivesRef.current];
+      pendingDivesRef.current = [];
+      setDownloadedDives(prev => [...prev, ...divesToAdd]);
+    }
+  }, []);
+
+  // Setup event handlers with batched dive updates
   useEffect(() => {
     const handleProgress = (p: ProgressEvent) => setProgress(p);
+    
+    // Batch dive additions to reduce re-renders during download
     const handleDive = (dive: DCDive) => {
-      setDownloadedDives(prev => [...prev, { ...dive, selected: true, isDuplicate: false }]);
+      pendingDivesRef.current.push({ ...dive, selected: true, isDuplicate: false });
+      
+      // Clear existing timeout
+      if (batchUpdateTimeoutRef.current) {
+        clearTimeout(batchUpdateTimeoutRef.current);
+      }
+      
+      // Flush after 100ms of no new dives, or every 5 dives
+      if (pendingDivesRef.current.length >= 5) {
+        flushPendingDives();
+      } else {
+        batchUpdateTimeoutRef.current = setTimeout(flushPendingDives, 100);
+      }
     };
-    const handleState = (state: DownloadState) => setDownloadState(state);
+    
+    const handleState = (state: DownloadState) => {
+      setDownloadState(state);
+      // Flush any pending dives when state changes (e.g., download complete)
+      if (state === DownloadState.IDLE) {
+        flushPendingDives();
+      }
+    };
+    
     const handleError = (error: Error) => {
+      flushPendingDives(); // Flush any pending dives before showing error
       setErrorMessage(error.message);
       setStep('error');
     };
@@ -281,6 +337,10 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     discovery.on('deviceFound', handleDeviceFound);
     
     return () => {
+      // Clear any pending batch timeout
+      if (batchUpdateTimeoutRef.current) {
+        clearTimeout(batchUpdateTimeoutRef.current);
+      }
       // Cast handlers to unknown to satisfy TypeScript - the library types are not fully compatible
       downloadManager.off('progress', handleProgress as unknown as Parameters<typeof downloadManager.off>[1]);
       downloadManager.off('dive', handleDive as unknown as Parameters<typeof downloadManager.off>[1]);
@@ -288,7 +348,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       downloadManager.off('error', handleError as unknown as Parameters<typeof downloadManager.off>[1]);
       discovery.off('deviceFound', handleDeviceFound as unknown as Parameters<typeof discovery.off>[1]);
     };
-  }, [downloadManager, discovery]);
+  }, [downloadManager, discovery, flushPendingDives]);
 
   // Update duplicate status when existingDives changes
   useEffect(() => {
@@ -315,6 +375,19 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       setErrorMessage('');
       setProgress({ current: 0, maximum: 100 });
       setExistingDives([]);
+      setImportStatus({
+        phase: 'idle',
+        currentDive: 0,
+        totalDives: 0,
+        currentSamples: 0,
+        totalSamples: 0,
+        message: '',
+      });
+      pendingDivesRef.current = [];
+      if (batchUpdateTimeoutRef.current) {
+        clearTimeout(batchUpdateTimeoutRef.current);
+        batchUpdateTimeoutRef.current = null;
+      }
       discovery.stopScan();
     }
   }, [isOpen, discovery]);
@@ -1244,9 +1317,35 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       const selectedDiveData = downloadedDives.filter(d => d.selected);
       const importedDives: Dive[] = [];
       
+      // Calculate total samples for progress
+      const totalSamples = selectedDiveData.reduce((sum, d) => {
+        const dc = d.diveComputers[0];
+        return sum + (dc?.samples?.length || 0);
+      }, 0);
+      
+      // Switch to downloading step to show progress
+      setStep('downloading');
+      setImportStatus({
+        phase: 'saving',
+        currentDive: 0,
+        totalDives: selectedDiveData.length,
+        currentSamples: 0,
+        totalSamples,
+        message: 'Preparing to save dives...',
+      });
+      
+      let samplesProcessed = 0;
+      
       for (let i = 0; i < selectedDiveData.length; i++) {
         const dcDive = selectedDiveData[i];
         const diveData = convertDive(dcDive, tripId, i + 1);
+        
+        // Update progress status
+        setImportStatus(prev => ({
+          ...prev,
+          currentDive: i + 1,
+          message: `Saving dive ${i + 1} of ${selectedDiveData.length}...`,
+        }));
         
         // Create the dive in the database
         const diveId = await invoke<number>('create_dive_from_computer', {
@@ -1283,21 +1382,48 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
             rbt_seconds: s.rbt?.seconds,
           }));
           
+          // Update status before batch insert
+          setImportStatus(prev => ({
+            ...prev,
+            message: `Saving ${samples.length} samples for dive ${i + 1}...`,
+          }));
+          
           const count = await invoke<number>('insert_dive_samples', {
             diveId,
             samples,
           });
+          
+          samplesProcessed += count;
+          setImportStatus(prev => ({
+            ...prev,
+            currentSamples: samplesProcessed,
+          }));
+          
           logger.info(`✅ Inserted ${count} samples for dive ${diveId}`);
         }
         
         importedDives.push({ ...diveData, id: diveId } as Dive);
+        
+        // Update progress bar
+        setProgress({
+          current: i + 1,
+          maximum: selectedDiveData.length,
+        });
       }
+      
+      // Mark as complete
+      setImportStatus(prev => ({
+        ...prev,
+        phase: 'complete',
+        message: `Successfully imported ${importedDives.length} dive(s)`,
+      }));
       
       onDivesImported(importedDives);
       onClose();
     } catch (error) {
       logger.error('Failed to import dives:', error);
       setErrorMessage(`Failed to import dives: ${error}`);
+      setImportStatus(prev => ({ ...prev, phase: 'idle' }));
       setStep('error');
     }
   };
@@ -1530,20 +1656,51 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
             <div className="download-progress">
               <div className="progress-info">
                 <span className="progress-state">
-                  {downloadState === DownloadState.CONNECTING && 'Connecting to device...'}
-                  {downloadState === DownloadState.DOWNLOADING && 'Downloading dives...'}
-                  {downloadState === DownloadState.PARSING && 'Processing data...'}
+                  {/* Show import status if saving, otherwise show download status */}
+                  {importStatus.phase === 'saving' ? (
+                    importStatus.message
+                  ) : (
+                    <>
+                      {downloadState === DownloadState.CONNECTING && 'Connecting to device...'}
+                      {downloadState === DownloadState.DOWNLOADING && 'Downloading dives...'}
+                      {downloadState === DownloadState.PARSING && 'Processing data...'}
+                      {downloadState === DownloadState.IDLE && importStatus.phase === 'idle' && 'Ready'}
+                    </>
+                  )}
                 </span>
-                <span className="progress-percent">{Math.round((progress.current / progress.maximum) * 100)}%</span>
+                <span className="progress-percent">
+                  {importStatus.phase === 'saving' 
+                    ? `${importStatus.currentDive}/${importStatus.totalDives}`
+                    : `${Math.round((progress.current / progress.maximum) * 100)}%`
+                  }
+                </span>
               </div>
               <div className="progress-bar">
                 <div 
                   className="progress-fill" 
-                  style={{ width: `${(progress.current / progress.maximum) * 100}%` }}
+                  style={{ 
+                    width: importStatus.phase === 'saving'
+                      ? `${(importStatus.currentDive / importStatus.totalDives) * 100}%`
+                      : `${(progress.current / progress.maximum) * 100}%` 
+                  }}
                 />
               </div>
-              {downloadedDives.length > 0 && (
-                <p className="dives-count">{downloadedDives.length} dive(s) downloaded</p>
+              {/* Show dive count during download, or sample count during save */}
+              {importStatus.phase === 'saving' ? (
+                <div className="import-details">
+                  <p className="dives-count">
+                    💾 Saving dive {importStatus.currentDive} of {importStatus.totalDives}
+                  </p>
+                  {importStatus.totalSamples > 0 && (
+                    <p className="samples-count">
+                      📊 {importStatus.currentSamples.toLocaleString()} / {importStatus.totalSamples.toLocaleString()} samples
+                    </p>
+                  )}
+                </div>
+              ) : (
+                downloadedDives.length > 0 && (
+                  <p className="dives-count">{downloadedDives.length} dive(s) downloaded</p>
+                )
               )}
             </div>
           )}

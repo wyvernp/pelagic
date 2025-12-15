@@ -402,3 +402,9 @@ export interface IdentificationResult {
   identification?: SpeciesIdentification;
   error?: string;
 }
+
+// External image editor types
+export interface ImageEditor {
+  name: string;
+  path: string;
+}

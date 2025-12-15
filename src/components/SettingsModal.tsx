@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { logger } from '../utils/logger';
+import type { ImageEditor } from '../types';
 import './SettingsModal.css';
 
 interface SettingsModalProps {
@@ -14,6 +15,7 @@ export interface AppSettings {
   showFilenames: boolean;
   showRatings: boolean;
   geminiApiKey: string;
+  defaultImageEditor: string; // Path to default editor, empty = system default
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -21,6 +23,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showFilenames: true,
   showRatings: true,
   geminiApiKey: '',
+  defaultImageEditor: '',
 };
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
@@ -28,6 +31,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [saved, setSaved] = useState(false);
   const [rescanning, setRescanning] = useState(false);
   const [rescanResult, setRescanResult] = useState<string | null>(null);
+  const [detectedEditors, setDetectedEditors] = useState<ImageEditor[]>([]);
+  const [loadingEditors, setLoadingEditors] = useState(false);
 
   const openExternalUrl = async (url: string) => {
     try {
@@ -46,6 +51,21 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       } catch {
         // Use defaults if parse fails
       }
+    }
+    
+    // Detect installed editors when modal opens
+    if (isOpen) {
+      setLoadingEditors(true);
+      invoke<ImageEditor[]>('detect_image_editors')
+        .then((editors) => {
+          setDetectedEditors(editors);
+        })
+        .catch((error) => {
+          logger.error('Failed to detect image editors:', error);
+        })
+        .finally(() => {
+          setLoadingEditors(false);
+        });
     }
   }, [isOpen]);
 
@@ -90,6 +110,38 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       logger.error('Failed to select CSV file:', error);
       setRescanResult(`✗ Error: ${error}`);
     }
+  };
+
+  const handleBrowseEditor = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{
+          name: 'Executable Files',
+          extensions: ['exe', 'app', '']
+        }]
+      });
+
+      if (selected) {
+        handleChange('defaultImageEditor', selected);
+      }
+    } catch (error) {
+      logger.error('Failed to select editor:', error);
+    }
+  };
+
+  const handleEditorChange = (value: string) => {
+    handleChange('defaultImageEditor', value);
+  };
+
+  // Get display name for current editor
+  const getEditorDisplayName = (path: string): string => {
+    if (!path) return 'System Default';
+    const editor = detectedEditors.find(e => e.path === path);
+    if (editor) return editor.name;
+    // Extract filename from path for custom editors
+    const parts = path.split(/[\\/]/);
+    return parts[parts.length - 1] || path;
   };
 
   const handleSave = () => {
@@ -204,6 +256,50 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 Import CSV
               </button>
             </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">External Editor</h3>
+            
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">Default Image Editor</span>
+                <span className="setting-desc">Choose an application to open photos for editing</span>
+              </label>
+              <div className="setting-editor-controls">
+                <select
+                  className="setting-select"
+                  value={settings.defaultImageEditor}
+                  onChange={(e) => handleEditorChange(e.target.value)}
+                  disabled={loadingEditors}
+                >
+                  <option value="">System Default</option>
+                  {detectedEditors.map((editor) => (
+                    <option key={editor.path} value={editor.path}>
+                      {editor.name}
+                    </option>
+                  ))}
+                  {settings.defaultImageEditor && !detectedEditors.find(e => e.path === settings.defaultImageEditor) && (
+                    <option value={settings.defaultImageEditor}>
+                      {getEditorDisplayName(settings.defaultImageEditor)}
+                    </option>
+                  )}
+                </select>
+                <button 
+                  className="btn btn-secondary btn-small"
+                  onClick={handleBrowseEditor}
+                  title="Browse for editor..."
+                >
+                  Browse...
+                </button>
+              </div>
+            </div>
+            {loadingEditors && (
+              <div className="setting-hint">Detecting installed editors...</div>
+            )}
+            {!loadingEditors && detectedEditors.length === 0 && (
+              <div className="setting-hint">No common image editors detected. Use Browse to select one.</div>
+            )}
           </div>
 
           <div className="settings-section">

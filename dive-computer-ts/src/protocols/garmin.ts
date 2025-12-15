@@ -17,6 +17,7 @@
  */
 
 import * as fs from 'fs';
+import { promises as fsp } from 'fs';
 import * as path from 'path';
 import { BaseProtocol, ProtocolDeviceInfo, ProtocolDive, Checksum } from './base-protocol';
 
@@ -212,38 +213,56 @@ export class GarminProtocol extends BaseProtocol {
     static async findDevices(): Promise<string[]> {
         const possiblePaths: string[] = [];
 
+        const dirExists = async (p: string): Promise<boolean> => {
+            try {
+                await fsp.access(p);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+
         if (process.platform === 'win32') {
             // Windows: Check drive letters D-Z
+            const checks = [];
             for (let i = 68; i <= 90; i++) {
                 const drive = `${String.fromCharCode(i)}:`;
                 const garminPath = path.join(drive, 'Garmin');
-                if (fs.existsSync(garminPath)) {
-                    possiblePaths.push(drive);
-                }
+                checks.push(
+                    dirExists(garminPath).then(exists => exists ? drive : null)
+                );
             }
+            const results = await Promise.all(checks);
+            possiblePaths.push(...results.filter((p): p is string => p !== null));
         } else if (process.platform === 'darwin') {
             // macOS: Check /Volumes
             const volumesPath = '/Volumes';
-            if (fs.existsSync(volumesPath)) {
-                const volumes = fs.readdirSync(volumesPath);
-                for (const volume of volumes) {
+            if (await dirExists(volumesPath)) {
+                const volumes = await fsp.readdir(volumesPath);
+                const checks = volumes.map(async volume => {
                     const garminPath = path.join(volumesPath, volume, 'Garmin');
-                    if (fs.existsSync(garminPath)) {
-                        possiblePaths.push(path.join(volumesPath, volume));
+                    if (await dirExists(garminPath)) {
+                        return path.join(volumesPath, volume);
                     }
-                }
+                    return null;
+                });
+                const results = await Promise.all(checks);
+                possiblePaths.push(...results.filter((p): p is string => p !== null));
             }
         } else {
             // Linux: Check /media and /mnt
             for (const basePath of ['/media', '/mnt']) {
-                if (fs.existsSync(basePath)) {
-                    const entries = fs.readdirSync(basePath);
-                    for (const entry of entries) {
+                if (await dirExists(basePath)) {
+                    const entries = await fsp.readdir(basePath);
+                    const checks = entries.map(async entry => {
                         const garminPath = path.join(basePath, entry, 'Garmin');
-                        if (fs.existsSync(garminPath)) {
-                            possiblePaths.push(path.join(basePath, entry));
+                        if (await dirExists(garminPath)) {
+                            return path.join(basePath, entry);
                         }
-                    }
+                        return null;
+                    });
+                    const results = await Promise.all(checks);
+                    possiblePaths.push(...results.filter((p): p is string => p !== null));
                 }
             }
         }
@@ -297,9 +316,18 @@ export class GarminProtocol extends BaseProtocol {
             path.join(this.mountPath, 'Garmin', 'Dives'),
         ];
 
+        const dirExists = async (p: string): Promise<boolean> => {
+            try {
+                await fsp.access(p);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+
         for (const folder of folders) {
-            if (fs.existsSync(folder)) {
-                const entries = fs.readdirSync(folder);
+            if (await dirExists(folder)) {
+                const entries = await fsp.readdir(folder);
                 for (const entry of entries) {
                     if (entry.toLowerCase().endsWith('.fit')) {
                         files.push(path.join(folder, entry));
@@ -308,14 +336,18 @@ export class GarminProtocol extends BaseProtocol {
             }
         }
 
-        // Sort by modification time (newest first)
-        files.sort((a, b) => {
-            const statA = fs.statSync(a);
-            const statB = fs.statSync(b);
-            return statB.mtimeMs - statA.mtimeMs;
-        });
+        // Get file stats in parallel for sorting
+        const fileStats = await Promise.all(
+            files.map(async f => ({
+                path: f,
+                mtimeMs: (await fsp.stat(f)).mtimeMs
+            }))
+        );
 
-        return files;
+        // Sort by modification time (newest first)
+        fileStats.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+        return fileStats.map(f => f.path);
     }
 
     /**
@@ -323,7 +355,7 @@ export class GarminProtocol extends BaseProtocol {
      */
     private async readDeviceInfoFromFit(filePath: string): Promise<void> {
         try {
-            const data = fs.readFileSync(filePath);
+            const data = await fsp.readFile(filePath);
             const header = this.parseFitHeader(data);
             
             if (!header) {
@@ -389,15 +421,21 @@ export class GarminProtocol extends BaseProtocol {
     async downloadDive(identifier: string): Promise<ProtocolDive | null> {
         try {
             const filePath = identifier;
-            if (!fs.existsSync(filePath)) {
+            
+            // Check file exists using async access
+            try {
+                await fsp.access(filePath);
+            } catch {
                 console.error('FIT file not found:', filePath);
                 return null;
             }
 
-            const data = fs.readFileSync(filePath);
+            const [data, stat] = await Promise.all([
+                fsp.readFile(filePath),
+                fsp.stat(filePath)
+            ]);
             
             // Create fingerprint from file modification time + size
-            const stat = fs.statSync(filePath);
             const fingerprint = Buffer.alloc(8);
             fingerprint.writeUInt32LE(Math.floor(stat.mtimeMs / 1000), 0);
             fingerprint.writeUInt32LE(stat.size, 4);

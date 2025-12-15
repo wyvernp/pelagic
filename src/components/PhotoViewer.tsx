@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import type { Photo } from '../types';
 import { ImageLoader } from './ImageLoader';
+import { useSettings } from './SettingsModal';
 import './PhotoViewer.css';
 
 type ViewMode = 'display' | 'raw' | 'processed' | 'side-by-side';
@@ -24,6 +25,7 @@ export function PhotoViewer({
   hasPrevious = false,
   hasNext = false,
 }: PhotoViewerProps) {
+  const settings = useSettings();
   const [viewMode, setViewMode] = useState<ViewMode>('display');
   const [displayPhoto, setDisplayPhoto] = useState<Photo>(photo);
   const [processedPhoto, setProcessedPhoto] = useState<Photo | null>(null);
@@ -93,6 +95,21 @@ export function PhotoViewer({
     setPan({ x: 0, y: 0 });
   }, []);
 
+  // Open in external editor
+  const handleOpenInEditor = useCallback(async () => {
+    try {
+      // Use the currently displayed photo's file path (raw or processed depending on view)
+      const filePath = viewMode === 'processed' && processedPhoto 
+        ? processedPhoto.file_path 
+        : rawPhoto.file_path;
+      
+      const editorPath = settings.defaultImageEditor || undefined;
+      await invoke('open_in_editor', { filePath, editorPath });
+    } catch (error) {
+      logger.error('Failed to open in editor:', error);
+    }
+  }, [rawPhoto, processedPhoto, viewMode, settings.defaultImageEditor]);
+
   // Pan handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (zoom > 1) {
@@ -144,6 +161,10 @@ export function PhotoViewer({
           setViewMode(v => v === 'side-by-side' ? 'display' : 'side-by-side');
         }
         break;
+      case 'e':
+      case 'E':
+        handleOpenInEditor();
+        break;
       case '+':
       case '=':
         handleZoomIn();
@@ -155,7 +176,7 @@ export function PhotoViewer({
         handleResetZoom();
         break;
     }
-  }, [onClose, onPrevious, onNext, hasPrevious, hasNext, hasProcessedVersion, handleZoomIn, handleZoomOut, handleResetZoom]);
+  }, [onClose, onPrevious, onNext, hasPrevious, hasNext, hasProcessedVersion, handleZoomIn, handleZoomOut, handleResetZoom, handleOpenInEditor]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
@@ -267,6 +288,12 @@ export function PhotoViewer({
           <button onClick={handleResetZoom} title="Reset zoom (0)">
             <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
               <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/>
+            </svg>
+          </button>
+          <div className="zoom-controls-divider"></div>
+          <button onClick={handleOpenInEditor} title="Open in external editor (E)">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
             </svg>
           </button>
         </div>

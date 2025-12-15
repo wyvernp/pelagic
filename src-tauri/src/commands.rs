@@ -154,7 +154,7 @@ pub fn get_tank_pressures(state: State<AppState>, dive_id: i64) -> Result<Vec<Ta
     db.get_tank_pressures_for_dive(dive_id).map_err(|e| e.to_string())
 }
 
-/// Insert samples for a dive (from dive computer data)
+/// Insert samples for a dive (from dive computer data) - uses batch insert for performance
 #[tauri::command]
 pub fn insert_dive_samples(
     state: State<AppState>,
@@ -162,13 +162,9 @@ pub fn insert_dive_samples(
     samples: Vec<DiveSample>,
 ) -> Result<i64, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    let mut count = 0i64;
-    for mut sample in samples {
-        sample.dive_id = dive_id;
-        db.insert_dive_sample(&sample).map_err(|e| e.to_string())?;
-        count += 1;
-    }
-    Ok(count)
+    let count = db.insert_dive_samples_batch(dive_id, &samples)
+        .map_err(|e| e.to_string())?;
+    Ok(count as i64)
 }
 
 #[tauri::command]
@@ -363,6 +359,12 @@ pub fn get_dive_stats(state: State<AppState>, dive_id: i64) -> Result<DiveStats,
 pub fn get_photos_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Photo>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.get_photos_for_trip(trip_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_all_photos_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Photo>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_all_photos_for_trip(trip_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1404,4 +1406,231 @@ pub fn set_dive_equipment_sets(state: State<AppState>, dive_id: i64, set_ids: Ve
 pub fn get_default_equipment_set(state: State<AppState>, set_type: String) -> Result<Option<EquipmentSet>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.get_default_equipment_set(&set_type).map_err(|e| e.to_string())
+}
+
+// ==================== External Image Editor Commands ====================
+
+#[derive(serde::Serialize, Clone)]
+pub struct ImageEditor {
+    pub name: String,
+    pub path: String,
+}
+
+/// Detect installed image editors on the system
+#[tauri::command]
+pub fn detect_image_editors() -> Result<Vec<ImageEditor>, String> {
+    let mut editors = Vec::new();
+    
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::Path;
+        
+        // Common image editors and their typical installation paths
+        let editor_paths = [
+            // Adobe Photoshop (various versions)
+            ("Adobe Photoshop", r"C:\Program Files\Adobe\Adobe Photoshop 2024\Photoshop.exe"),
+            ("Adobe Photoshop", r"C:\Program Files\Adobe\Adobe Photoshop 2023\Photoshop.exe"),
+            ("Adobe Photoshop", r"C:\Program Files\Adobe\Adobe Photoshop 2022\Photoshop.exe"),
+            ("Adobe Photoshop", r"C:\Program Files\Adobe\Adobe Photoshop CC 2019\Photoshop.exe"),
+            ("Adobe Photoshop", r"C:\Program Files\Adobe\Adobe Photoshop CC 2018\Photoshop.exe"),
+            // Adobe Lightroom
+            ("Adobe Lightroom Classic", r"C:\Program Files\Adobe\Adobe Lightroom Classic\Lightroom.exe"),
+            ("Adobe Lightroom", r"C:\Program Files\Adobe\Adobe Lightroom\Lightroom.exe"),
+            // Affinity Photo
+            ("Affinity Photo 2", r"C:\Program Files\Affinity\Photo 2\Photo.exe"),
+            ("Affinity Photo", r"C:\Program Files\Affinity\Photo\Photo.exe"),
+            // GIMP
+            ("GIMP", r"C:\Program Files\GIMP 2\bin\gimp-2.10.exe"),
+            ("GIMP", r"C:\Program Files\GIMP 2\bin\gimp-2.99.exe"),
+            // Paint.NET
+            ("Paint.NET", r"C:\Program Files\paint.net\paintdotnet.exe"),
+            // Capture One
+            ("Capture One", r"C:\Program Files\Capture One\Capture One.exe"),
+            // DxO PhotoLab
+            ("DxO PhotoLab", r"C:\Program Files\DxO\DxO PhotoLab 7\DxOPhotoLab7.exe"),
+            ("DxO PhotoLab", r"C:\Program Files\DxO\DxO PhotoLab 6\DxOPhotoLab6.exe"),
+            // ON1 Photo RAW
+            ("ON1 Photo RAW", r"C:\Program Files\ON1\ON1 Photo RAW 2024\ON1 Photo RAW 2024.exe"),
+            // Darktable
+            ("Darktable", r"C:\Program Files\darktable\bin\darktable.exe"),
+            // RawTherapee
+            ("RawTherapee", r"C:\Program Files\RawTherapee\rawtherapee.exe"),
+            // IrfanView
+            ("IrfanView", r"C:\Program Files\IrfanView\i_view64.exe"),
+            ("IrfanView", r"C:\Program Files (x86)\IrfanView\i_view32.exe"),
+            // XnView
+            ("XnView", r"C:\Program Files\XnView\xnview.exe"),
+            ("XnViewMP", r"C:\Program Files\XnViewMP\xnviewmp.exe"),
+            // FastStone Image Viewer
+            ("FastStone Image Viewer", r"C:\Program Files (x86)\FastStone Image Viewer\FSViewer.exe"),
+        ];
+        
+        // Check which editors exist
+        for (name, path) in editor_paths {
+            if Path::new(path).exists() {
+                // Avoid duplicates (in case multiple versions exist)
+                if !editors.iter().any(|e: &ImageEditor| e.name == name) {
+                    editors.push(ImageEditor {
+                        name: name.to_string(),
+                        path: path.to_string(),
+                    });
+                }
+            }
+        }
+        
+        // Also try to find editors via registry
+        if let Ok(output) = std::process::Command::new("reg")
+            .args(["query", r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Photoshop.exe", "/ve"])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains("REG_SZ") {
+                        if let Some(path) = line.split("REG_SZ").nth(1) {
+                            let path = path.trim();
+                            if Path::new(path).exists() && !editors.iter().any(|e| e.name == "Adobe Photoshop") {
+                                editors.push(ImageEditor {
+                                    name: "Adobe Photoshop".to_string(),
+                                    path: path.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        use std::path::Path;
+        
+        let editor_paths = [
+            ("Adobe Photoshop", "/Applications/Adobe Photoshop 2024/Adobe Photoshop 2024.app"),
+            ("Adobe Photoshop", "/Applications/Adobe Photoshop 2023/Adobe Photoshop 2023.app"),
+            ("Adobe Lightroom Classic", "/Applications/Adobe Lightroom Classic/Adobe Lightroom Classic.app"),
+            ("Affinity Photo 2", "/Applications/Affinity Photo 2.app"),
+            ("Affinity Photo", "/Applications/Affinity Photo.app"),
+            ("GIMP", "/Applications/GIMP-2.10.app"),
+            ("Pixelmator Pro", "/Applications/Pixelmator Pro.app"),
+            ("Capture One", "/Applications/Capture One.app"),
+            ("Darktable", "/Applications/darktable.app"),
+            ("Preview", "/System/Applications/Preview.app"),
+        ];
+        
+        for (name, path) in editor_paths {
+            if Path::new(path).exists() {
+                if !editors.iter().any(|e: &ImageEditor| e.name == name) {
+                    editors.push(ImageEditor {
+                        name: name.to_string(),
+                        path: path.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        // On Linux, check common locations and use `which` command
+        let editor_commands = [
+            ("GIMP", "gimp"),
+            ("Darktable", "darktable"),
+            ("RawTherapee", "rawtherapee"),
+            ("Krita", "krita"),
+            ("Inkscape", "inkscape"),
+        ];
+        
+        for (name, cmd) in editor_commands {
+            if let Ok(output) = std::process::Command::new("which").arg(cmd).output() {
+                if output.status.success() {
+                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !path.is_empty() {
+                        editors.push(ImageEditor {
+                            name: name.to_string(),
+                            path,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(editors)
+}
+
+/// Open a file in an external editor
+#[tauri::command]
+pub fn open_in_editor(file_path: String, editor_path: Option<String>) -> Result<(), String> {
+    let path = std::path::Path::new(&file_path);
+    
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    
+    match editor_path {
+        Some(editor) => {
+            // Use specified editor
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new(&editor)
+                    .arg(&file_path)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open editor: {}", e))?;
+            }
+            
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, .app bundles need 'open -a'
+                if editor.ends_with(".app") {
+                    std::process::Command::new("open")
+                        .args(["-a", &editor, &file_path])
+                        .spawn()
+                        .map_err(|e| format!("Failed to open editor: {}", e))?;
+                } else {
+                    std::process::Command::new(&editor)
+                        .arg(&file_path)
+                        .spawn()
+                        .map_err(|e| format!("Failed to open editor: {}", e))?;
+                }
+            }
+            
+            #[cfg(target_os = "linux")]
+            {
+                std::process::Command::new(&editor)
+                    .arg(&file_path)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open editor: {}", e))?;
+            }
+        }
+        None => {
+            // Use system default
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("cmd")
+                    .args(["/c", "start", "", &file_path])
+                    .spawn()
+                    .map_err(|e| format!("Failed to open with default app: {}", e))?;
+            }
+            
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg(&file_path)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open with default app: {}", e))?;
+            }
+            
+            #[cfg(target_os = "linux")]
+            {
+                std::process::Command::new("xdg-open")
+                    .arg(&file_path)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open with default app: {}", e))?;
+            }
+        }
+    }
+    
+    Ok(())
 }

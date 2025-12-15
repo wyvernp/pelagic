@@ -418,6 +418,27 @@
   color: var(--text-muted);
 }
 
+/* Import progress details */
+.import-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.import-details .dives-count,
+.import-details .samples-count {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.samples-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
 /* Download Complete */
 .download-complete {
   display: flex;

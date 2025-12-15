@@ -253,3 +253,27 @@
   color: #ef4444;
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
+
+/* Editor controls with dropdown and browse button */
+.setting-editor-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.setting-editor-controls .setting-select {
+  min-width: 180px;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Hint text below settings */
+.setting-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+  font-style: italic;
+}

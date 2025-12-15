@@ -42,11 +42,19 @@ export function ContentGrid({
 }: ContentGridProps) {
   const [diveThumbnails, setDiveThumbnails] = useState<DiveThumbnails>({});
   const [diveStats, setDiveStats] = useState<DiveStatsMap>({});
+  const [allTripPhotos, setAllTripPhotos] = useState<Photo[]>([]);
+  const [allPhotosCount, setAllPhotosCount] = useState<number>(0);
+  const [allPhotosLoading, setAllPhotosLoading] = useState<boolean>(false);
   const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const [allPhotosExpanded, setAllPhotosExpanded] = useState<boolean>(false);
   const loadingRef = useRef<boolean>(false);
   const abortRef = useRef<boolean>(false);
+  const photosAbortRef = useRef<boolean>(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const settings = useSettings();
+  
+  // Batch size for progressive photo loading
+  const PHOTO_BATCH_SIZE = 50;
   
   // Map thumbnail size setting to actual pixel values
   const thumbnailSize = useMemo(() => {
@@ -63,10 +71,14 @@ export function ContentGrid({
     if (viewMode === 'trip' && dives.length > 0) {
       // Abort any previous loading
       abortRef.current = true;
+      photosAbortRef.current = true;
       
       // Clear previous data
       setDiveThumbnails({});
       setDiveStats({});
+      setAllTripPhotos([]);
+      setAllPhotosCount(0);
+      setAllPhotosExpanded(false);
       
       // Small delay to let the abort take effect
       const timeoutId = setTimeout(() => {
@@ -74,6 +86,19 @@ export function ContentGrid({
         loadingRef.current = true;
         
         const loadDiveDataProgressively = async () => {
+          // First, get the photo count for the trip (fast query)
+          try {
+            const tripId = dives[0]?.trip_id;
+            if (tripId) {
+              const allPhotos = await invoke<Photo[]>('get_all_photos_for_trip', { tripId });
+              if (!abortRef.current) {
+                setAllPhotosCount(allPhotos.length);
+              }
+            }
+          } catch (error) {
+            logger.error('Failed to get photo count for trip:', error);
+          }
+          
           // Load data for each dive one at a time to avoid blocking
           for (const dive of dives) {
             if (abortRef.current) break;
@@ -107,12 +132,66 @@ export function ContentGrid({
       return () => {
         clearTimeout(timeoutId);
         abortRef.current = true;
+        photosAbortRef.current = true;
       };
     } else {
       setDiveThumbnails({});
       setDiveStats({});
+      setAllTripPhotos([]);
+      setAllPhotosCount(0);
     }
   }, [viewMode, dives]);
+
+  // Load all photos progressively when section is expanded
+  useEffect(() => {
+    if (!allPhotosExpanded || viewMode !== 'trip' || dives.length === 0) {
+      return;
+    }
+    
+    // If we already have photos loaded, don't reload
+    if (allTripPhotos.length > 0) {
+      return;
+    }
+    
+    photosAbortRef.current = false;
+    setAllPhotosLoading(true);
+    
+    const loadPhotosProgressively = async () => {
+      try {
+        const tripId = dives[0]?.trip_id;
+        if (!tripId) return;
+        
+        // Load all photos (we'll render them progressively)
+        const allPhotos = await invoke<Photo[]>('get_all_photos_for_trip', { tripId });
+        
+        if (photosAbortRef.current) return;
+        
+        // Add photos in batches with small delays to keep UI responsive
+        for (let i = 0; i < allPhotos.length; i += PHOTO_BATCH_SIZE) {
+          if (photosAbortRef.current) break;
+          
+          const batch = allPhotos.slice(0, i + PHOTO_BATCH_SIZE);
+          setAllTripPhotos(batch);
+          
+          // Yield to let UI render
+          if (i + PHOTO_BATCH_SIZE < allPhotos.length) {
+            await new Promise(resolve => setTimeout(resolve, 16)); // ~1 frame
+          }
+        }
+        
+        setAllPhotosLoading(false);
+      } catch (error) {
+        logger.error('Failed to load all photos for trip:', error);
+        setAllPhotosLoading(false);
+      }
+    };
+    
+    loadPhotosProgressively();
+    
+    return () => {
+      photosAbortRef.current = true;
+    };
+  }, [allPhotosExpanded, viewMode, dives, allTripPhotos.length, PHOTO_BATCH_SIZE]);
 
   const hasDives = viewMode === 'trip' && dives.length > 0;
   const hasPhotos = photos.length > 0;
@@ -200,7 +279,10 @@ export function ContentGrid({
   // Reset focused index when photos change
   useEffect(() => {
     setFocusedIndex(-1);
-  }, [photos]);
+  }, [photos, allTripPhotos]);
+
+  // Determine if we're in trip view with photos to show
+  const showAllPhotosSection = viewMode === 'trip' && allPhotosCount > 0;
 
   // Early return for empty state - AFTER all hooks
   if (!hasDives && !hasPhotos) {
@@ -234,17 +316,13 @@ export function ContentGrid({
   };
 
   return (
-    <div 
-      ref={gridRef}
-      className="content-grid"
-      style={{ '--thumbnail-size': `${thumbnailSize}px` } as React.CSSProperties}
-      tabIndex={hasPhotos ? 0 : undefined}
-      role={hasPhotos ? 'grid' : undefined}
-      aria-label={hasPhotos ? 'Photo gallery' : undefined}
-    >
+    <div className="content-grid-wrapper">
       {/* Dive cards when viewing a trip */}
       {hasDives && (
-        <>
+        <div 
+          className="content-grid dive-grid"
+          style={{ '--thumbnail-size': `${thumbnailSize}px` } as React.CSSProperties}
+        >
           {dives.map((dive) => {
             const thumbnails = diveThumbnails[dive.id] || [];
             const stats = diveStats[dive.id] || { photo_count: 0, species_count: 0 };
@@ -352,48 +430,139 @@ export function ContentGrid({
               </button>
             );
           })}
-        </>
+        </div>
       )}
-      
-      {/* Photo thumbnails */}
-      {photos.map((photo, index) => (
-        <button
-          key={photo.id}
-          className={`grid-item photo-card ${selectedPhotoIds.has(photo.id) ? 'selected' : ''} ${focusedIndex === index ? 'focused' : ''}`}
-          onClick={(e) => {
-            handlePhotoClick(photo.id, e);
-            setFocusedIndex(index);
-          }}
-          onDoubleClick={() => onOpenPhoto(photo.id)}
-          onFocus={() => setFocusedIndex(index)}
+
+      {/* All photos section - collapsible in trip view, loads on expand */}
+      {showAllPhotosSection && (
+        <div className="unassigned-photos-section">
+          <button 
+            className="unassigned-photos-header"
+            onClick={() => setAllPhotosExpanded(!allPhotosExpanded)}
+            aria-expanded={allPhotosExpanded}
+          >
+            <svg 
+              className={`expand-icon ${allPhotosExpanded ? 'expanded' : ''}`}
+              viewBox="0 0 24 24" 
+              fill="currentColor" 
+              width="20" 
+              height="20"
+            >
+              <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+            </svg>
+            <span className="unassigned-photos-title">
+              All Photos
+            </span>
+            <span className="unassigned-photos-count">
+              {allPhotosLoading && allTripPhotos.length < allPhotosCount 
+                ? `Loading ${allTripPhotos.length}/${allPhotosCount}...`
+                : `${allPhotosCount} photo${allPhotosCount !== 1 ? 's' : ''}`
+              }
+            </span>
+          </button>
+          
+          {allPhotosExpanded && (
+            <div 
+              ref={gridRef}
+              className="content-grid photo-grid"
+              style={{ '--thumbnail-size': `${thumbnailSize}px` } as React.CSSProperties}
+              tabIndex={0}
+              role="grid"
+              aria-label="All trip photos gallery"
+            >
+              {allTripPhotos.map((photo, index) => (
+                <button
+                  key={photo.id}
+                  className={`grid-item photo-card ${selectedPhotoIds.has(photo.id) ? 'selected' : ''} ${focusedIndex === index ? 'focused' : ''}`}
+                  onClick={(e) => {
+                    handlePhotoClick(photo.id, e);
+                    setFocusedIndex(index);
+                  }}
+                  onDoubleClick={() => onOpenPhoto(photo.id)}
+                  onFocus={() => setFocusedIndex(index)}
+                  tabIndex={0}
+                  role="gridcell"
+                  aria-selected={selectedPhotoIds.has(photo.id)}
+                  aria-label={`Photo ${photo.filename}${selectedPhotoIds.has(photo.id) ? ', selected' : ''}`}
+                >
+                  <ImageLoader
+                    filePath={photo.thumbnail_path}
+                    alt={photo.filename}
+                    className="photo-thumbnail"
+                    placeholderClassName="photo-placeholder"
+                  />
+                  <div className="photo-info">
+                    <span className="photo-filename">{photo.filename}</span>
+                  </div>
+                  {photo.raw_photo_id && (
+                    <div className="photo-badge" title="Has RAW version">
+                      RAW
+                    </div>
+                  )}
+                  {selectedPhotoIds.has(photo.id) && (
+                    <div className="photo-selected-check">
+                      <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                      </svg>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Photo thumbnails when NOT in trip view (regular dive view) */}
+      {!showAllPhotosSection && hasPhotos && (
+        <div 
+          ref={gridRef}
+          className="content-grid photo-grid"
+          style={{ '--thumbnail-size': `${thumbnailSize}px` } as React.CSSProperties}
           tabIndex={0}
-          role="gridcell"
-          aria-selected={selectedPhotoIds.has(photo.id)}
-          aria-label={`Photo ${photo.filename}${selectedPhotoIds.has(photo.id) ? ', selected' : ''}`}
+          role="grid"
+          aria-label="Photo gallery"
         >
-          <ImageLoader
-            filePath={photo.thumbnail_path}
-            alt={photo.filename}
-            className="photo-thumbnail"
-            placeholderClassName="photo-placeholder"
-          />
-          <div className="photo-info">
-            <span className="photo-filename">{photo.filename}</span>
-          </div>
-          {photo.raw_photo_id && (
-            <div className="photo-badge" title="Has RAW version">
-              RAW
-            </div>
-          )}
-          {selectedPhotoIds.has(photo.id) && (
-            <div className="photo-selected-check">
-              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-              </svg>
-            </div>
-          )}
-        </button>
-      ))}
+          {photos.map((photo, index) => (
+            <button
+              key={photo.id}
+              className={`grid-item photo-card ${selectedPhotoIds.has(photo.id) ? 'selected' : ''} ${focusedIndex === index ? 'focused' : ''}`}
+              onClick={(e) => {
+                handlePhotoClick(photo.id, e);
+                setFocusedIndex(index);
+              }}
+              onDoubleClick={() => onOpenPhoto(photo.id)}
+              onFocus={() => setFocusedIndex(index)}
+              tabIndex={0}
+              role="gridcell"
+              aria-selected={selectedPhotoIds.has(photo.id)}
+              aria-label={`Photo ${photo.filename}${selectedPhotoIds.has(photo.id) ? ', selected' : ''}`}
+            >
+              <ImageLoader
+                filePath={photo.thumbnail_path}
+                alt={photo.filename}
+                className="photo-thumbnail"
+                placeholderClassName="photo-placeholder"
+              />
+              <div className="photo-info">
+                <span className="photo-filename">{photo.filename}</span>
+              </div>
+              {photo.raw_photo_id && (
+                <div className="photo-badge" title="Has RAW version">
+                  RAW
+                </div>
+              )}
+              {selectedPhotoIds.has(photo.id) && (
+                <div className="photo-selected-check">
+                  <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                  </svg>
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

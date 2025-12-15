@@ -70,6 +70,7 @@ pub fn run() {
             commands::create_manual_dive,
             commands::get_photos_for_dive,
             commands::get_photos_for_trip,
+            commands::get_all_photos_for_trip,
             commands::get_dive_thumbnail_photos,
             commands::get_dive_stats,
             commands::get_photo,
@@ -158,6 +159,9 @@ pub fn run() {
             commands::remove_equipment_set_from_dive,
             commands::set_dive_equipment_sets,
             commands::get_default_equipment_set,
+            // External editor commands
+            commands::detect_image_editors,
+            commands::open_in_editor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

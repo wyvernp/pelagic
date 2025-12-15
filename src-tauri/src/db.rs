@@ -1138,6 +1138,34 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
     
+    /// Batch insert multiple dive samples in a single transaction
+    /// This is significantly faster than inserting samples one by one
+    pub fn insert_dive_samples_batch(&self, dive_id: i64, samples: &[DiveSample]) -> Result<usize> {
+        if samples.is_empty() {
+            return Ok(0);
+        }
+        
+        let tx = self.conn.unchecked_transaction()?;
+        
+        // Use a prepared statement for repeated inserts (much faster)
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO dive_samples (dive_id, time_seconds, depth_m, temp_c, pressure_bar, ndl_seconds, rbt_seconds)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+            )?;
+            
+            for sample in samples {
+                stmt.execute(params![
+                    dive_id, sample.time_seconds, sample.depth_m, sample.temp_c,
+                    sample.pressure_bar, sample.ndl_seconds, sample.rbt_seconds
+                ])?;
+            }
+        }
+        
+        tx.commit()?;
+        Ok(samples.len())
+    }
+    
     pub fn insert_dive_event(&self, event: &DiveEvent) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO dive_events (dive_id, time_seconds, event_type, name, flags, value)
@@ -1145,6 +1173,56 @@ impl Database {
             params![event.dive_id, event.time_seconds, event.event_type, event.name, event.flags, event.value],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+    
+    /// Batch insert multiple dive events in a single transaction
+    pub fn insert_dive_events_batch(&self, dive_id: i64, events: &[DiveEvent]) -> Result<usize> {
+        if events.is_empty() {
+            return Ok(0);
+        }
+        
+        let tx = self.conn.unchecked_transaction()?;
+        
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO dive_events (dive_id, time_seconds, event_type, name, flags, value)
+                 VALUES (?, ?, ?, ?, ?, ?)"
+            )?;
+            
+            for event in events {
+                stmt.execute(params![
+                    dive_id, event.time_seconds, event.event_type, event.name, event.flags, event.value
+                ])?;
+            }
+        }
+        
+        tx.commit()?;
+        Ok(events.len())
+    }
+    
+    /// Batch insert multiple tank pressure readings in a single transaction
+    pub fn insert_tank_pressures_batch(&self, dive_id: i64, pressures: &[TankPressure]) -> Result<usize> {
+        if pressures.is_empty() {
+            return Ok(0);
+        }
+        
+        let tx = self.conn.unchecked_transaction()?;
+        
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO tank_pressures (dive_id, sensor_id, sensor_name, time_seconds, pressure_bar)
+                 VALUES (?, ?, ?, ?, ?)"
+            )?;
+            
+            for pressure in pressures {
+                stmt.execute(params![
+                    dive_id, pressure.sensor_id, pressure.sensor_name, pressure.time_seconds, pressure.pressure_bar
+                ])?;
+            }
+        }
+        
+        tx.commit()?;
+        Ok(pressures.len())
     }
     
     // Tank pressure operations
@@ -1211,6 +1289,27 @@ impl Database {
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.trip_id = ? AND p.dive_id IS NULL AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
+             ORDER BY p.capture_time"
+        )?;
+        
+        let photos = stmt.query_map([trip_id], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
+        Ok(photos)
+    }
+
+    /// Get ALL photos for trip (both assigned and unassigned to dives), excluding processed versions
+    /// Returns RAW photos with their processed version's thumbnail if available
+    pub fn get_all_photos_for_trip(&self, trip_id: i64) -> Result<Vec<Photo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.id, p.trip_id, p.dive_id, p.file_path, 
+                    COALESCE(proc.thumbnail_path, p.thumbnail_path) as thumbnail_path,
+                    p.filename, p.capture_time,
+                    p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
+                    p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
+                    p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
+                    p.created_at, p.updated_at
+             FROM photos p
+             LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
+             WHERE p.trip_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
              ORDER BY p.capture_time"
         )?;
         

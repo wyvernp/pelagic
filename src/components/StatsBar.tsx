@@ -7,7 +7,6 @@ import './StatsBar.css';
 interface StatsBarProps {
   trip?: Trip | null;
   dives?: Dive[];
-  photos?: { length: number };
 }
 
 interface TripStats {
@@ -18,7 +17,7 @@ interface TripStats {
   species_count: number;
 }
 
-export function StatsBar({ trip, dives = [], photos }: StatsBarProps) {
+export function StatsBar({ trip, dives = [] }: StatsBarProps) {
   const [globalStats, setGlobalStats] = useState<Statistics | null>(null);
   const [tripStats, setTripStats] = useState<TripStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +36,15 @@ export function StatsBar({ trip, dives = [], photos }: StatsBarProps) {
           const total_bottom_time = dives.reduce((sum, d) => sum + d.duration_seconds, 0);
           const deepest_dive = dives.length > 0 ? Math.max(...dives.map(d => d.max_depth_m)) : 0;
           
+          // Get photo count for this trip (ALL photos, not just unassigned)
+          let photo_count = 0;
+          try {
+            const allPhotos = await invoke<{ id: number }[]>('get_all_photos_for_trip', { tripId: trip.id });
+            if (!cancelled) photo_count = allPhotos.length;
+          } catch {
+            // Command might not exist yet, that's ok
+          }
+          
           // Get species count for this trip
           let species_count = 0;
           try {
@@ -51,7 +59,7 @@ export function StatsBar({ trip, dives = [], photos }: StatsBarProps) {
               dive_count,
               total_bottom_time,
               deepest_dive,
-              photo_count: photos?.length || 0,
+              photo_count,
               species_count,
             });
             setGlobalStats(null);
@@ -75,7 +83,7 @@ export function StatsBar({ trip, dives = [], photos }: StatsBarProps) {
     loadStats();
     
     return () => { cancelled = true; };
-  }, [trip?.id, dives.length, photos?.length]);
+  }, [trip?.id, dives.length]);
 
   const formatDuration = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);

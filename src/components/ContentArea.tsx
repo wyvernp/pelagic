@@ -77,6 +77,24 @@ export function ContentArea({
   const [editDropdownOpen, setEditDropdownOpen] = useState(false);
   const settings = useSettings();
 
+  // Open selected photo(s) in external editor
+  const handleOpenInEditor = async () => {
+    if (selectedPhotoIds.size === 0) return;
+    
+    // Get the file paths for selected photos
+    for (const photoId of selectedPhotoIds) {
+      const photo = photos.find(p => p.id === photoId);
+      if (photo) {
+        try {
+          const editorPath = settings.defaultImageEditor || undefined;
+          await invoke('open_in_editor', { filePath: photo.file_path, editorPath });
+        } catch (error) {
+          logger.error('Failed to open in editor:', error);
+        }
+      }
+    }
+  };
+
   // Sort photos
   const sortedPhotos = useMemo(() => {
     const sorted = [...photos].sort((a, b) => {
@@ -418,7 +436,7 @@ export function ContentArea({
     <div className="content">
       {/* Stats bar for trip view (not dive view, which has its own profile) */}
       {viewMode === 'trip' && trip && (
-        <StatsBar trip={trip} dives={dives} photos={{ length: photos.length }} />
+        <StatsBar trip={trip} dives={dives} />
       )}
       
       <div className="content-header">
@@ -573,6 +591,16 @@ export function ContentArea({
                 <path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z"/>
               </svg>
               Tag
+            </button>
+            <button 
+              className="toolbar-btn"
+              onClick={handleOpenInEditor}
+              title="Open in external editor (E)"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+              </svg>
+              Edit
             </button>
             <button 
               className="toolbar-btn danger"

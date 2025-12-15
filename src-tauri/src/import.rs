@@ -406,25 +406,22 @@ pub fn import_to_database(db: &Database, mut result: ImportResult, existing_trip
         let dive_id = db.insert_dive(&dive)
             .map_err(|e| format!("Failed to insert dive: {}", e))?;
         
-        // Insert samples
-        for mut sample in imported.samples {
-            sample.dive_id = dive_id;
-            db.insert_dive_sample(&sample)
-                .map_err(|e| format!("Failed to insert sample: {}", e))?;
+        // Insert samples using batch operation for performance
+        if !imported.samples.is_empty() {
+            db.insert_dive_samples_batch(dive_id, &imported.samples)
+                .map_err(|e| format!("Failed to insert samples: {}", e))?;
         }
         
-        // Insert events
-        for mut event in imported.events {
-            event.dive_id = dive_id;
-            db.insert_dive_event(&event)
-                .map_err(|e| format!("Failed to insert event: {}", e))?;
+        // Insert events using batch operation for performance
+        if !imported.events.is_empty() {
+            db.insert_dive_events_batch(dive_id, &imported.events)
+                .map_err(|e| format!("Failed to insert events: {}", e))?;
         }
         
-        // Insert tank pressures
-        for mut tank_pressure in imported.tank_pressures {
-            tank_pressure.dive_id = dive_id;
-            db.insert_tank_pressure(&tank_pressure)
-                .map_err(|e| format!("Failed to insert tank pressure: {}", e))?;
+        // Insert tank pressures using batch operation for performance
+        if !imported.tank_pressures.is_empty() {
+            db.insert_tank_pressures_batch(dive_id, &imported.tank_pressures)
+                .map_err(|e| format!("Failed to insert tank pressures: {}", e))?;
         }
     }
     
