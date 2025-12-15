@@ -30,8 +30,8 @@
 }
 
 .equipment-tab.active {
-  color: var(--accent-color);
-  border-bottom-color: var(--accent-color);
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
 }
 
 .equipment-toolbar {
@@ -46,15 +46,15 @@
   padding: 8px 12px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: #000000;
-  color: #b0b0b0;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
   font-size: 14px;
   min-width: 200px;
 }
 
 .category-filter option {
-  background: #000000;
-  color: #b0b0b0;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
 }
 
 .set-type-toggle {
@@ -320,19 +320,4 @@
   color: var(--text-muted);
   font-size: 14px;
   margin: 0;
-}
-
-/* Button Variants */
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.btn-danger {
-  background: var(--danger-color);
-  color: white;
-}
-
-.btn-danger:hover {
-  background: #c82333;
 }

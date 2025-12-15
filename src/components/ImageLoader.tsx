@@ -2,6 +2,31 @@ import { useState, useEffect, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 
+// LRU Cache for image data URLs to avoid re-fetching on scroll
+const IMAGE_CACHE_MAX_SIZE = 300;
+const imageCache = new Map<string, string>();
+
+function getCachedImage(filePath: string): string | undefined {
+  const cached = imageCache.get(filePath);
+  if (cached) {
+    // Move to end (most recently used)
+    imageCache.delete(filePath);
+    imageCache.set(filePath, cached);
+  }
+  return cached;
+}
+
+function setCachedImage(filePath: string, dataUrl: string): void {
+  // Evict oldest entries if at capacity
+  if (imageCache.size >= IMAGE_CACHE_MAX_SIZE) {
+    const firstKey = imageCache.keys().next().value;
+    if (firstKey) {
+      imageCache.delete(firstKey);
+    }
+  }
+  imageCache.set(filePath, dataUrl);
+}
+
 interface ImageLoaderProps {
   filePath: string | null | undefined;
   alt: string;
@@ -30,6 +55,15 @@ export const ImageLoader = memo(function ImageLoader({
       return;
     }
 
+    // Check cache first
+    const cached = getCachedImage(filePath);
+    if (cached) {
+      setDataUrl(cached);
+      setLoading(false);
+      setError(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(false);
@@ -37,6 +71,7 @@ export const ImageLoader = memo(function ImageLoader({
     invoke<string>('get_image_data', { filePath })
       .then((data) => {
         if (!cancelled) {
+          setCachedImage(filePath, data);
           setDataUrl(data);
           setLoading(false);
         }

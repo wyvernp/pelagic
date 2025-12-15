@@ -74,7 +74,6 @@ export function ContentArea({
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [batchIdentifying, setBatchIdentifying] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{current: number; total: number} | null>(null);
-  const [editDropdownOpen, setEditDropdownOpen] = useState(false);
   const settings = useSettings();
 
   // Open selected photo(s) in external editor
@@ -442,62 +441,32 @@ export function ContentArea({
       <div className="content-header">
         <h2>{title}</h2>
         <div className="content-actions">
-          {/* Edit dropdown for dive view */}
+          {/* Direct edit button for dive view */}
           {viewMode === 'dive' && dive && onEditDive && (
-            <div className="edit-dropdown-container">
-              <button 
-                className="edit-dive-btn"
-                onClick={() => setEditDropdownOpen(!editDropdownOpen)}
-                title="Edit options"
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-                </svg>
-                Edit
-                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" className="dropdown-arrow">
-                  <path d="M7 10l5 5 5-5z"/>
-                </svg>
-              </button>
-              {editDropdownOpen && (
-                <div className="edit-dropdown-menu" onClick={() => setEditDropdownOpen(false)}>
-                  <button onClick={() => onEditDive(dive)}>
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-                    </svg>
-                    Edit This Dive
-                  </button>
-                </div>
-              )}
-            </div>
+            <button 
+              className="edit-dive-btn"
+              onClick={() => onEditDive(dive)}
+              title="Edit this dive"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+              </svg>
+              Edit
+            </button>
           )}
           
-          {/* Edit dropdown for trip view - includes bulk edit option */}
+          {/* Direct bulk edit button for trip view */}
           {viewMode === 'trip' && dives.length > 0 && onEnterBulkEditMode && !bulkEditMode && (
-            <div className="edit-dropdown-container">
-              <button 
-                className="edit-dive-btn"
-                onClick={() => setEditDropdownOpen(!editDropdownOpen)}
-                title="Edit options"
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-                </svg>
-                Edit
-                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" className="dropdown-arrow">
-                  <path d="M7 10l5 5 5-5z"/>
-                </svg>
-              </button>
-              {editDropdownOpen && (
-                <div className="edit-dropdown-menu" onClick={() => setEditDropdownOpen(false)}>
-                  <button onClick={onEnterBulkEditMode}>
-                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                      <path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/>
-                    </svg>
-                    Bulk Edit Dives
-                  </button>
-                </div>
-              )}
-            </div>
+            <button 
+              className="edit-dive-btn"
+              onClick={onEnterBulkEditMode}
+              title="Select and edit multiple dives"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/>
+              </svg>
+              Bulk Edit
+            </button>
           )}
           <select 
             className="sort-select"
@@ -538,7 +507,7 @@ export function ContentArea({
               <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                 <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
               </svg>
-              Edit {hasDiveSelection ? `${selectedDiveIds?.size} ` : ''}Dives
+              Edit {hasDiveSelection ? `${selectedDiveIds?.size} ` : ''}Dive{selectedDiveIds?.size !== 1 ? 's' : ''}
             </button>
             <button 
               className="toolbar-btn secondary"

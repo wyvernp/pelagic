@@ -32,17 +32,20 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [additionalContext, setAdditionalContext] = useState('');
   const settings = useSettings();
 
-  // Load tags and rating when photo changes
+  // Load tags when photo changes (separate from rating to avoid unnecessary reloads)
   useEffect(() => {
     if (photo) {
       loadSpeciesTags(photo.id);
       loadGeneralTags(photo.id);
-      setRating(photo.rating || 0);
     } else {
       setSpeciesTags([]);
       setGeneralTags([]);
-      setRating(0);
     }
+  }, [photo?.id]);
+
+  // Sync rating state when photo or its rating changes
+  useEffect(() => {
+    setRating(photo?.rating || 0);
   }, [photo?.id, photo?.rating]);
 
   const loadSpeciesTags = async (photoId: number) => {

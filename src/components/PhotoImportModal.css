@@ -40,7 +40,7 @@
   width: 40px;
   height: 40px;
   border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
+  border-top-color: var(--accent-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -81,15 +81,15 @@
 .gap-control select {
   padding: 4px 8px;
   font-size: 13px;
-  background: #000000;
+  background: var(--bg-darkest);
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: #b0b0b0;
+  color: var(--text-secondary);
 }
 
 .gap-control select option {
-  background: #000000;
-  color: #b0b0b0;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
 }
 
 .overwrite-control {
@@ -197,16 +197,16 @@
 .group-assignment select {
   padding: 6px 10px;
   font-size: 13px;
-  background: #000000;
+  background: var(--bg-darkest);
   border: 1px solid var(--border-color);
   border-radius: 4px;
-  color: #b0b0b0;
+  color: var(--text-secondary);
   min-width: 180px;
 }
 
 .group-assignment select option {
-  background: #000000;
-  color: #b0b0b0;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
 }
 
 .assignment-label {

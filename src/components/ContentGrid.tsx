@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import type { Dive, Photo, ViewMode, DiveStats } from '../types';
@@ -28,7 +28,7 @@ interface ContentGridProps {
   onToggleDiveSelection?: (diveId: number) => void;
 }
 
-export function ContentGrid({
+export const ContentGrid = memo(function ContentGrid({
   viewMode,
   dives,
   photos,
@@ -565,4 +565,4 @@ export function ContentGrid({
       )}
     </div>
   );
-}
+});

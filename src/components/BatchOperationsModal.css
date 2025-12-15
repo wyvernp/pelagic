@@ -81,16 +81,16 @@
 .batch-select {
   width: 100%;
   padding: 10px 12px;
-  background: #000000;
+  background: var(--bg-darkest);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: #b0b0b0;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
 .batch-select option {
-  background: #000000;
-  color: #b0b0b0;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
 }
 
 .batch-rating {
@@ -141,13 +141,4 @@
 .batch-result.error {
   background: rgba(245, 101, 101, 0.2);
   color: #fc8181;
-}
-
-.btn-danger {
-  background: #e53e3e;
-  color: white;
-}
-
-.btn-danger:hover {
-  background: #c53030;
 }

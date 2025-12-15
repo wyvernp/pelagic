@@ -1,11 +1,11 @@
-/* Backdrop blur overlay */
+/* Use consistent backdrop styling - matches modal-overlay from globals.css */
 .settings-modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   z-index: 1000;
@@ -117,17 +117,17 @@
 
 .setting-select {
   padding: 8px 12px;
-  background: #000000;
+  background: var(--bg-darkest);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: #b0b0b0;
+  color: var(--text-secondary);
   font-size: 14px;
   min-width: 140px;
 }
 
 .setting-select option {
-  background: #000000;
-  color: #b0b0b0;
+  background: var(--bg-darkest);
+  color: var(--text-secondary);
 }
 
 .setting-input {

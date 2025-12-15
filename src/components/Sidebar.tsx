@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { format } from 'date-fns';
 import type { Trip, Dive } from '../types';
 import './Sidebar.css';
@@ -32,7 +33,16 @@ export function Sidebar({
   selectedDiveIds,
   onToggleDiveSelection,
 }: SidebarProps) {
-  const getTripDives = (tripId: number) => dives.filter((d) => d.trip_id === tripId);
+  // Pre-compute dives by trip ID to avoid filtering per trip during render
+  const divesByTripId = useMemo(() => {
+    const map = new Map<number, Dive[]>();
+    for (const dive of dives) {
+      const existing = map.get(dive.trip_id) || [];
+      existing.push(dive);
+      map.set(dive.trip_id, existing);
+    }
+    return map;
+  }, [dives]);
 
   const handleDiveClick = (diveId: number, e: React.MouseEvent) => {
     if (bulkEditMode && onToggleDiveSelection) {
@@ -64,7 +74,7 @@ export function Sidebar({
         ) : (
           <ul className="trip-list">
             {trips.map((trip) => {
-              const tripDives = getTripDives(trip.id);
+              const tripDives = divesByTripId.get(trip.id) || [];
               const isExpanded = selectedTripId === trip.id;
               
               return (

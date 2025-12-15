@@ -477,6 +477,7 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_dive_events_dive_id ON dive_events(dive_id);
             CREATE INDEX IF NOT EXISTS idx_photos_trip_id ON photos(trip_id);
             CREATE INDEX IF NOT EXISTS idx_photos_dive_id ON photos(dive_id);
+            CREATE INDEX IF NOT EXISTS idx_photos_capture_time ON photos(capture_time);
             CREATE INDEX IF NOT EXISTS idx_equipment_category_id ON equipment(category_id);
             CREATE INDEX IF NOT EXISTS idx_equipment_set_items_set ON equipment_set_items(equipment_set_id);
             CREATE INDEX IF NOT EXISTS idx_dive_equipment_sets_dive ON dive_equipment_sets(dive_id);
