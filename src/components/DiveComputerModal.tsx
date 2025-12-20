@@ -165,7 +165,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
   const [downloadManager] = useState(() => new DownloadManager());
   const [discovery] = useState(() => new BluetoothDiscovery());
   
-  // Import from file functionality
+  // Import from file functionality - uses review modal for consistency
   const handleImportFromFile = async () => {
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
@@ -178,51 +178,53 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
       });
 
       if (selected && selected.length > 0) {
-        // If a trip is selected, ask if they want to import into it
-        let targetTripId: number | null = null;
+        setStep('downloading');
+        setProgress({ current: 0, maximum: selected.length });
         
-        if (tripId) {
-          const { confirm } = await import('@tauri-apps/plugin-dialog');
-          const importIntoExisting = await confirm(
-            `Import ${selected.length} dive${selected.length !== 1 ? 's' : ''} into the current trip?\n\nClick OK to add to this trip, or Cancel to create a new trip.`,
-            {
-              title: 'Import Dives',
-              kind: 'info',
-            }
-          );
-          if (importIntoExisting) {
-            targetTripId = tripId;
-          }
-        }
+        const allParsedDives: DownloadedDive[] = [];
         
-        // Import each selected file
-        const importedDiveIds: number[] = [];
-        for (const filePath of selected) {
+        // Parse each selected file
+        for (let i = 0; i < selected.length; i++) {
+          const filePath = selected[i];
+          setProgress({ current: i + 1, maximum: selected.length });
+          
           try {
-            const diveId = await invoke<number>('import_dive_file', { 
-              filePath,
-              tripId: targetTripId,
+            // Read file and parse it
+            const { readFile } = await import('@tauri-apps/plugin-fs');
+            const fileData = await readFile(filePath);
+            const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
+            
+            const result = await invoke<ParsedFileResult>('parse_dive_file_data', {
+              fileName,
+              fileData: Array.from(fileData),
             });
-            importedDiveIds.push(diveId);
+            
+            // Convert parsed dives to DownloadedDive format
+            for (const parsed of result.dives) {
+              allParsedDives.push(convertParsedDiveToDownloadedDive(parsed));
+            }
+            
+            logger.info(`Parsed ${result.dives.length} dives from ${fileName}`);
           } catch (fileError) {
-            logger.error(`Failed to import file ${filePath}:`, fileError);
+            logger.error(`Failed to parse file ${filePath}:`, fileError);
             // Continue with other files even if one fails
           }
         }
         
-        if (importedDiveIds.length > 0) {
-          // Call the onDivesImported callback to refresh the UI
-          if (targetTripId) {
-            // If we imported into a specific trip, refresh that trip's dives
-            const importedDives = await invoke<Dive[]>('get_dives_for_trip', { tripId: targetTripId });
-            onDivesImported(importedDives);
-          } else {
-            // If no trip was selected, just notify that dives were imported
-            onDivesImported([]);
-          }
+        if (allParsedDives.length > 0) {
+          // Apply duplicate detection
+          const divesWithDuplicateCheck = allParsedDives.map(dive => {
+            const isDup = isDuplicateDive(dive);
+            return { ...dive, isDuplicate: isDup, selected: !isDup };
+          });
+          
+          setDownloadedDives(divesWithDuplicateCheck);
+          setStep('complete');
+          openReviewModal();
+        } else {
+          setErrorMessage('No dives could be parsed from the selected files');
+          setStep('error');
         }
-        
-        onClose();
       }
     } catch (error) {
       logger.error('Failed to import dives:', error);
@@ -2024,7 +2026,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
         isOpen={showReviewModal}
         onClose={() => {
           setShowReviewModal(false);
-          // Go back to complete step to show downloaded dives
+          onClose(); // Close the entire dive computer modal
         }}
         dives={downloadedDives.map((d, index) => ({
           id: `dive-${index}`,
