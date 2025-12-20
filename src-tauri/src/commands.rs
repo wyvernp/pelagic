@@ -167,6 +167,30 @@ pub fn insert_dive_samples(
     Ok(count as i64)
 }
 
+/// Insert tank pressures for a dive (from file imports like FIT) - uses batch insert for performance
+#[tauri::command]
+pub fn insert_tank_pressures(
+    state: State<AppState>,
+    dive_id: i64,
+    pressures: Vec<ParsedTankPressure>,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    
+    // Convert ParsedTankPressure to TankPressure
+    let tank_pressures: Vec<TankPressure> = pressures.into_iter().map(|p| TankPressure {
+        id: 0,
+        dive_id,
+        sensor_id: p.sensor_id,
+        sensor_name: p.sensor_name,
+        time_seconds: p.time_seconds,
+        pressure_bar: p.pressure_bar,
+    }).collect();
+    
+    let count = db.insert_tank_pressures_batch(dive_id, &tank_pressures)
+        .map_err(|e| e.to_string())?;
+    Ok(count as i64)
+}
+
 #[tauri::command]
 pub fn import_ssrf_file(state: State<AppState>, file_path: String, trip_id: Option<i64>) -> Result<i64, String> {
     let path = Path::new(&file_path);
@@ -218,6 +242,264 @@ pub fn import_dive_file_data(state: State<AppState>, file_name: String, file_dat
     
     let db = state.db.lock().map_err(|e| e.to_string())?;
     import::import_to_database(&db, result, trip_id)
+}
+
+/// Preview/parse dive log from file data without importing
+/// Returns parsed dive data for the review UI
+#[derive(serde::Serialize)]
+pub struct ParsedDivePreview {
+    pub date: String,
+    pub time: String,
+    pub duration_seconds: i32,
+    pub max_depth_m: f64,
+    pub mean_depth_m: f64,
+    pub water_temp_c: Option<f64>,
+    pub dive_computer_model: Option<String>,
+    pub samples: Vec<ParsedDiveSample>,
+    pub tank_pressures: Vec<ParsedTankPressure>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ParsedDiveSample {
+    pub time_seconds: i32,
+    pub depth_m: f64,
+    pub temp_c: Option<f64>,
+    pub pressure_bar: Option<f64>,
+    pub ndl_seconds: Option<i32>,
+    pub rbt_seconds: Option<i32>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ParsedTankPressure {
+    pub sensor_id: i64,
+    pub sensor_name: Option<String>,
+    pub time_seconds: i32,
+    pub pressure_bar: f64,
+}
+
+#[derive(serde::Serialize)]
+pub struct ParsedFileResult {
+    pub dives: Vec<ParsedDivePreview>,
+    pub trip_name: String,
+    pub date_start: String,
+    pub date_end: String,
+}
+
+// ============================================================================
+// Bulk Import Structures (for high-performance import from review modal)
+// ============================================================================
+
+/// A single dive with all its data for bulk import
+#[derive(serde::Deserialize)]
+pub struct BulkDiveData {
+    pub date: String,
+    pub time: String,
+    pub duration_seconds: i64,
+    pub max_depth_m: f64,
+    pub mean_depth_m: f64,
+    pub water_temp_c: Option<f64>,
+    pub air_temp_c: Option<f64>,
+    pub surface_pressure_bar: Option<f64>,
+    pub cns_percent: Option<f64>,
+    pub dive_computer_model: Option<String>,
+    pub dive_computer_serial: Option<String>,
+    pub nitrox_o2_percent: Option<f64>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub samples: Vec<BulkDiveSample>,
+    pub tank_pressures: Vec<ParsedTankPressure>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct BulkDiveSample {
+    pub time_seconds: i32,
+    pub depth_m: f64,
+    pub temp_c: Option<f64>,
+    pub pressure_bar: Option<f64>,
+    pub ndl_seconds: Option<i32>,
+    pub rbt_seconds: Option<i32>,
+}
+
+/// A group of dives to import together (may create a new trip)
+#[derive(serde::Deserialize)]
+pub struct BulkImportGroup {
+    pub trip_id: Option<i64>,           // Existing trip ID, or None to create new
+    pub new_trip_name: Option<String>,  // Name for new trip if trip_id is None
+    pub date_start: String,
+    pub date_end: String,
+    pub dives: Vec<BulkDiveData>,
+}
+
+/// Result of bulk import
+#[derive(serde::Serialize)]
+pub struct BulkImportResult {
+    pub trips_created: i64,
+    pub dives_imported: i64,
+    pub samples_imported: i64,
+    pub tank_pressures_imported: i64,
+    pub created_trip_ids: Vec<i64>,
+}
+
+/// Bulk import multiple dive groups in a single transaction
+/// This is much faster than individual IPC calls per dive
+#[tauri::command]
+pub fn bulk_import_dives(
+    state: State<AppState>,
+    groups: Vec<BulkImportGroup>,
+) -> Result<BulkImportResult, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    
+    let mut trips_created: i64 = 0;
+    let mut dives_imported: i64 = 0;
+    let mut samples_imported: i64 = 0;
+    let mut tank_pressures_imported: i64 = 0;
+    let mut created_trip_ids: Vec<i64> = Vec::new();
+    
+    // Process all groups - each group becomes a trip
+    for group in groups {
+        if group.dives.is_empty() {
+            continue;
+        }
+        
+        // Get or create trip
+        let trip_id = match group.trip_id {
+            Some(id) => id,
+            None => {
+                let name = group.new_trip_name.unwrap_or_else(|| {
+                    format!("Import {}", &group.date_start)
+                });
+                let id = db.create_trip(&name, "", &group.date_start, &group.date_end)
+                    .map_err(|e| format!("Failed to create trip: {}", e))?;
+                trips_created += 1;
+                created_trip_ids.push(id);
+                id
+            }
+        };
+        
+        // Get starting dive number
+        let existing_dives = db.get_dives_for_trip(trip_id)
+            .map_err(|e| format!("Failed to get existing dives: {}", e))?;
+        let mut dive_number = existing_dives.len() as i64 + 1;
+        
+        // Import each dive
+        for dive_data in group.dives {
+            // Create the dive
+            let dive_id = db.create_dive_from_computer(
+                trip_id,
+                dive_number,
+                &dive_data.date,
+                &dive_data.time,
+                dive_data.duration_seconds,
+                dive_data.max_depth_m,
+                dive_data.mean_depth_m,
+                dive_data.water_temp_c,
+                dive_data.air_temp_c,
+                dive_data.surface_pressure_bar,
+                dive_data.cns_percent,
+                dive_data.dive_computer_model.as_deref(),
+                dive_data.dive_computer_serial.as_deref(),
+                dive_data.nitrox_o2_percent,
+                dive_data.latitude,
+                dive_data.longitude,
+            ).map_err(|e| format!("Failed to create dive: {}", e))?;
+            
+            dive_number += 1;
+            dives_imported += 1;
+            
+            // Insert samples in batch
+            if !dive_data.samples.is_empty() {
+                let samples: Vec<DiveSample> = dive_data.samples.iter().map(|s| DiveSample {
+                    id: 0,
+                    dive_id,
+                    time_seconds: s.time_seconds,
+                    depth_m: s.depth_m,
+                    temp_c: s.temp_c,
+                    pressure_bar: s.pressure_bar,
+                    ndl_seconds: s.ndl_seconds,
+                    rbt_seconds: s.rbt_seconds,
+                }).collect();
+                
+                let count = db.insert_dive_samples_batch(dive_id, &samples)
+                    .map_err(|e| format!("Failed to insert samples: {}", e))?;
+                samples_imported += count as i64;
+            }
+            
+            // Insert tank pressures in batch
+            if !dive_data.tank_pressures.is_empty() {
+                let pressures: Vec<TankPressure> = dive_data.tank_pressures.iter().map(|p| TankPressure {
+                    id: 0,
+                    dive_id,
+                    sensor_id: p.sensor_id,
+                    sensor_name: p.sensor_name.clone(),
+                    time_seconds: p.time_seconds,
+                    pressure_bar: p.pressure_bar,
+                }).collect();
+                
+                let count = db.insert_tank_pressures_batch(dive_id, &pressures)
+                    .map_err(|e| format!("Failed to insert tank pressures: {}", e))?;
+                tank_pressures_imported += count as i64;
+            }
+        }
+    }
+    
+    Ok(BulkImportResult {
+        trips_created,
+        dives_imported,
+        samples_imported,
+        tank_pressures_imported,
+        created_trip_ids,
+    })
+}
+
+#[tauri::command]
+pub fn parse_dive_file_data(file_name: String, file_data: Vec<u8>) -> Result<ParsedFileResult, String> {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+    
+    let mut temp_file = NamedTempFile::with_suffix(&format!(".{}", file_name.split('.').last().unwrap_or("tmp")))
+        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
+    
+    temp_file.write_all(&file_data)
+        .map_err(|e| format!("Failed to write file data: {}", e))?;
+    
+    let path = temp_file.path().to_path_buf();
+    
+    // Parse without importing
+    let result = import::parse_dive_file(&path)?;
+    
+    // Convert to preview format
+    let dives = result.dives.into_iter().map(|imported| {
+        ParsedDivePreview {
+            date: imported.dive.date,
+            time: imported.dive.time,
+            duration_seconds: imported.dive.duration_seconds,
+            max_depth_m: imported.dive.max_depth_m,
+            mean_depth_m: imported.dive.mean_depth_m,
+            water_temp_c: imported.dive.water_temp_c,
+            dive_computer_model: imported.dive.dive_computer_model,
+            samples: imported.samples.into_iter().map(|s| ParsedDiveSample {
+                time_seconds: s.time_seconds,
+                depth_m: s.depth_m,
+                temp_c: s.temp_c,
+                pressure_bar: s.pressure_bar,
+                ndl_seconds: s.ndl_seconds,
+                rbt_seconds: s.rbt_seconds,
+            }).collect(),
+            tank_pressures: imported.tank_pressures.into_iter().map(|tp| ParsedTankPressure {
+                sensor_id: tp.sensor_id,
+                sensor_name: tp.sensor_name,
+                time_seconds: tp.time_seconds,
+                pressure_bar: tp.pressure_bar,
+            }).collect(),
+        }
+    }).collect();
+    
+    Ok(ParsedFileResult {
+        dives,
+        trip_name: result.trip_name,
+        date_start: result.date_start,
+        date_end: result.date_end,
+    })
 }
 
 /// Create a dive from dive computer data (downloaded directly via Bluetooth/USB)

@@ -845,10 +845,17 @@ function App() {
         onClose={() => setDiveComputerModalOpen(false)}
         tripId={state.selectedTripId}
         onDivesImported={async (_importedDives) => {
+          console.log('📥 App.tsx onDivesImported called with', _importedDives.length, 'dives');
           // Dives were already saved by the modal - just reload
           if (state.selectedTripId) {
             await loadDivesForTrip(state.selectedTripId);
           }
+        }}
+        onTripsChanged={async () => {
+          console.log('🔄 App.tsx onTripsChanged called - reloading trips');
+          // A new trip was created during import - refresh the trips list
+          await loadTrips();
+          console.log('✅ App.tsx trips reloaded');
         }}
       />
       <EquipmentModal

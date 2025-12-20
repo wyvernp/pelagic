@@ -19,7 +19,8 @@ import {
   type DiscoveredDevice,
 } from '../../dive-computer-ts/src/index';
 import { SuuntoEonSteelWebHID, type DiveFile } from '../../dive-computer-ts/src/protocols/suunto-eonsteel-webhid';
-import type { Dive } from '../types';
+import type { Dive, Trip } from '../types';
+import { DiveImportReviewModal, type DiveGroup } from './DiveImportReviewModal';
 import './DiveComputerModal.css';
 
 // Import status tracking for UI feedback
@@ -37,6 +38,7 @@ interface DiveComputerModalProps {
   onClose: () => void;
   tripId: number | null;
   onDivesImported: (dives: Dive[]) => void;
+  onTripsChanged?: () => void; // Called when a new trip is created during import
 }
 
 type ConnectionType = 'bluetooth' | 'ble' | 'serial' | 'usb' | 'usbhid' | 'usbstorage';
@@ -65,6 +67,13 @@ function isUSBStorage(type: ConnectionType): boolean {
 interface DownloadedDive extends DCDive {
   selected: boolean;
   isDuplicate?: boolean; // True if a dive with same date/time exists
+  // Tank pressure readings (for file imports like FIT that have separate tank pressure records)
+  tankPressures?: {
+    sensor_id: number;
+    sensor_name?: string;
+    time_seconds: number;
+    pressure_bar: number;
+  }[];
 }
 
 // Convert dive-computer-ts Dive to Pelagic Dive format
@@ -114,7 +123,7 @@ function convertDive(dcDive: DCDive, tripId: number, diveNumber: number): Omit<D
   };
 }
 
-export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: DiveComputerModalProps) {
+export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, onTripsChanged }: DiveComputerModalProps) {
   // Device selection state
   const [selectedVendor, setSelectedVendor] = useState<string>('');
   const [selectedProduct, setSelectedProduct] = useState<string>('');
@@ -147,6 +156,10 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
   // Batch state update buffer for downloaded dives
   const pendingDivesRef = useRef<DownloadedDive[]>([]);
   const batchUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Review modal state
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [allTrips, setAllTrips] = useState<Trip[]>([]);
   
   // Managers
   const [downloadManager] = useState(() => new DownloadManager());
@@ -375,6 +388,8 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       setErrorMessage('');
       setProgress({ current: 0, maximum: 100 });
       setExistingDives([]);
+      setShowReviewModal(false);
+      setAllTrips([]);
       setImportStatus({
         phase: 'idle',
         currentDive: 0,
@@ -400,6 +415,15 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
         .catch(err => logger.error('Failed to fetch existing dives:', err));
     }
   }, [isOpen, tripId]);
+
+  // Fetch all trips when modal opens (for review modal dropdown)
+  useEffect(() => {
+    if (isOpen) {
+      invoke<Trip[]>('get_trips')
+        .then(trips => setAllTrips(trips))
+        .catch(err => logger.error('Failed to fetch trips:', err));
+    }
+  }, [isOpen]);
 
   const handleVendorChange = (vendor: string) => {
     setSelectedVendor(vendor);
@@ -530,6 +554,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
         if (result.success) {
           setDownloadedDives(result.dives.map(d => ({ ...d, selected: true })));
           setStep('complete');
+          openReviewModal();
         } else if (result.error) {
           setErrorMessage(result.error.message);
           setStep('error');
@@ -689,6 +714,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       logger.debug(`✅ Converted ${convertedDives.length} dives for display`);
       setDownloadedDives(convertedDives);
       setStep('complete');
+      openReviewModal();
 
     } catch (error) {
       logger.error('Suunto download error:', error);
@@ -1061,6 +1087,81 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
     };
   };
 
+  // Type for parsed file result from backend
+  interface ParsedDiveSample {
+    time_seconds: number;
+    depth_m: number;
+    temp_c?: number;
+    pressure_bar?: number;
+    ndl_seconds?: number;
+    rbt_seconds?: number;
+  }
+
+  interface ParsedTankPressure {
+    sensor_id: number;
+    sensor_name?: string;
+    time_seconds: number;
+    pressure_bar: number;
+  }
+
+  interface ParsedDivePreview {
+    date: string;
+    time: string;
+    duration_seconds: number;
+    max_depth_m: number;
+    mean_depth_m: number;
+    water_temp_c?: number;
+    dive_computer_model?: string;
+    samples: ParsedDiveSample[];
+    tank_pressures: ParsedTankPressure[];
+  }
+
+  interface ParsedFileResult {
+    dives: ParsedDivePreview[];
+    trip_name: string;
+    date_start: string;
+    date_end: string;
+  }
+
+  // Convert parsed file dive to DownloadedDive format (includes tank pressures) for the review modal
+  const convertParsedDiveToDownloadedDive = (parsed: ParsedDivePreview): DownloadedDive => {
+    // Parse date and time to create a Date object
+    // Ensure time has seconds (some formats might be HH:MM only)
+    const timeStr = parsed.time.includes(':') && parsed.time.split(':').length === 2 
+      ? `${parsed.time}:00` 
+      : parsed.time;
+    const dateTime = new Date(`${parsed.date}T${timeStr}`);
+    
+    logger.debug(`Converting parsed dive: date=${parsed.date}, time=${parsed.time}, dateTime=${dateTime.toISOString()}, tankPressures=${parsed.tank_pressures?.length || 0}`);
+    
+    return {
+      id: 0,
+      when: dateTime,
+      duration: { seconds: parsed.duration_seconds, minutes: parsed.duration_seconds / 60, hours: parsed.duration_seconds / 3600, milliseconds: parsed.duration_seconds * 1000 },
+      maxDepth: { mm: parsed.max_depth_m * 1000, m: parsed.max_depth_m, ft: parsed.max_depth_m * 3.28084 },
+      meanDepth: { mm: parsed.mean_depth_m * 1000, m: parsed.mean_depth_m, ft: parsed.mean_depth_m * 3.28084 },
+      waterTemperature: parsed.water_temp_c != null ? { mkelvin: (parsed.water_temp_c + 273.15) * 1000, celsius: parsed.water_temp_c, fahrenheit: parsed.water_temp_c * 9/5 + 32 } : undefined,
+      cylinders: [],
+      diveComputers: [{
+        model: parsed.dive_computer_model,
+        serial: undefined,
+        samples: parsed.samples.map(s => ({
+          time: { seconds: s.time_seconds, minutes: s.time_seconds / 60, hours: s.time_seconds / 3600, milliseconds: s.time_seconds * 1000 },
+          depth: { mm: s.depth_m * 1000, m: s.depth_m, ft: s.depth_m * 3.28084 },
+          temperature: s.temp_c != null ? { mkelvin: (s.temp_c + 273.15) * 1000, celsius: s.temp_c, fahrenheit: s.temp_c * 9/5 + 32 } : undefined,
+          pressure: s.pressure_bar != null ? [{ sensor: 0, pressure: { mbar: s.pressure_bar * 1000, bar: s.pressure_bar, psi: s.pressure_bar * 14.5038 } }] : undefined,
+          ndl: s.ndl_seconds != null ? { seconds: s.ndl_seconds, minutes: s.ndl_seconds / 60, hours: s.ndl_seconds / 3600, milliseconds: s.ndl_seconds * 1000 } : undefined,
+          rbt: s.rbt_seconds != null ? { seconds: s.rbt_seconds, minutes: s.rbt_seconds / 60, hours: s.rbt_seconds / 3600, milliseconds: s.rbt_seconds * 1000 } : undefined,
+        })),
+      }],
+      // Include additional fields for DownloadedDive
+      selected: true,
+      isDuplicate: false,
+      // Pass through tank pressures from file import
+      tankPressures: parsed.tank_pressures,
+    } as unknown as DownloadedDive;
+  };
+
   const startUSBStorageConnection = useCallback(async () => {
     if (!descriptor) {
       setErrorMessage('Please select a dive computer model first');
@@ -1089,30 +1190,12 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
           return;
         }
 
-        // If a trip is selected, ask if they want to import into it
-        let targetTripId: number | null = null;
-        
-        if (tripId) {
-          const { confirm } = await import('@tauri-apps/plugin-dialog');
-          const importIntoExisting = await confirm(
-            `Import ${fileHandles.length} dive file${fileHandles.length !== 1 ? 's' : ''} into the current trip?\n\nClick OK to add to this trip, or Cancel to create a new trip.`,
-            {
-              title: 'Import Dives',
-              kind: 'info',
-            }
-          );
-          if (importIntoExisting) {
-            targetTripId = tripId;
-          }
-        }
-
         setStep('downloading');
         setProgress({ current: 0, maximum: fileHandles.length });
 
-        let totalImportedDives = 0;
-        let successCount = 0;
+        const allParsedDives: DownloadedDive[] = [];
 
-        // Process each selected file
+        // Parse each selected file without importing
         for (let i = 0; i < fileHandles.length; i++) {
           const fileHandle = fileHandles[i];
           setProgress({ current: i + 1, maximum: fileHandles.length });
@@ -1125,35 +1208,37 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
             const arrayBuffer = await file.arrayBuffer();
             const uint8Array = new Uint8Array(arrayBuffer);
             
-            // Import the file data directly using the backend command
-            const importedCount = await invoke<number>('import_dive_file_data', {
+            // Parse the file data using the new backend command
+            const result = await invoke<ParsedFileResult>('parse_dive_file_data', {
               fileName: file.name,
               fileData: Array.from(uint8Array),
-              tripId: targetTripId,
             });
             
-            totalImportedDives += importedCount;
-            successCount++;
-            logger.info(`✅ Imported ${importedCount} dives from ${file.name}`);
+            // Convert parsed dives to DownloadedDive format (includes tank pressures)
+            for (const parsed of result.dives) {
+              allParsedDives.push(convertParsedDiveToDownloadedDive(parsed));
+            }
+            
+            logger.info(`✅ Parsed ${result.dives.length} dives from ${file.name}`);
 
           } catch (fileError) {
-            logger.error(`Failed to process file ${fileHandle.name}:`, fileError);
-            // Continue with other files - don't fail the entire import
-            setErrorMessage(`Warning: Failed to import ${fileHandle.name}: ${fileError}. Continuing with other files...`);
+            logger.error(`Failed to parse file ${fileHandle.name}:`, fileError);
+            setErrorMessage(`Warning: Failed to parse ${fileHandle.name}: ${fileError}. Continuing with other files...`);
           }
         }
 
-        if (successCount > 0) {
-          // Call the onDivesImported callback to refresh the UI
-          if (targetTripId) {
-            const importedDives = await invoke<Dive[]>('get_dives_for_trip', { tripId: targetTripId });
-            onDivesImported(importedDives);
-          } else {
-            onDivesImported([]);
-          }
-          onClose();
+        if (allParsedDives.length > 0) {
+          // Apply duplicate detection to parsed dives
+          const divesWithDuplicateCheck = allParsedDives.map(dive => {
+            const isDup = isDuplicateDive(dive);
+            return { ...dive, isDuplicate: isDup, selected: !isDup };
+          });
+          
+          setDownloadedDives(divesWithDuplicateCheck);
+          setStep('complete');
+          openReviewModal();
         } else {
-          setErrorMessage('No files were successfully imported');
+          setErrorMessage('No dives could be parsed from the selected files');
           setStep('error');
         }
 
@@ -1169,7 +1254,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       setErrorMessage(`Failed to access files: ${(error as Error).message}`);
       setStep('error');
     }
-  }, [descriptor, tripId]);
+  }, [descriptor]);
 
   const handleConnect = useCallback(() => {
     if (requiresBluetoothScan(connectionType)) {
@@ -1209,6 +1294,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
       if (result.success) {
         setDownloadedDives(result.dives.map(d => ({ ...d, selected: true })));
         setStep('complete');
+        openReviewModal();
       } else if (result.error) {
         setErrorMessage(result.error.message);
         setStep('error');
@@ -1305,6 +1391,112 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
 
   const selectNoneDives = () => {
     setDownloadedDives(prev => prev.map(d => ({ ...d, selected: false })));
+  };
+
+  // Open the review modal when download completes
+  const openReviewModal = () => {
+    setShowReviewModal(true);
+  };
+
+  // Bulk import result type
+  interface BulkImportResult {
+    trips_created: number;
+    dives_imported: number;
+    samples_imported: number;
+    tank_pressures_imported: number;
+    created_trip_ids: number[];
+  }
+
+  // Handle import from the review modal - uses bulk import for performance
+  const handleReviewImport = async (groups: DiveGroup[]) => {
+    logger.info('handleReviewImport called with', groups.length, 'groups');
+    try {
+      // Build bulk import data structure - all data in memory first
+      const bulkGroups = groups
+        .filter(group => group.dives.some(d => d.selected))
+        .map(group => {
+          const selectedDives = group.dives.filter(d => d.selected);
+          
+          return {
+            trip_id: group.selectedTripId,
+            new_trip_name: group.selectedTripId === null 
+              ? (group.newTripName || group.defaultTripName) 
+              : null,
+            date_start: group.dateStart.toISOString().split('T')[0],
+            date_end: group.dateEnd.toISOString().split('T')[0],
+            dives: selectedDives.map(importableDive => {
+              const dcDive = importableDive.dcDive;
+              const dc = dcDive.diveComputers[0];
+              const diveData = convertDive(dcDive, 0, 0); // tripId/diveNumber set by backend
+              
+              return {
+                date: diveData.date,
+                time: diveData.time,
+                duration_seconds: diveData.duration_seconds,
+                max_depth_m: diveData.max_depth_m,
+                mean_depth_m: diveData.mean_depth_m,
+                water_temp_c: diveData.water_temp_c,
+                air_temp_c: diveData.air_temp_c,
+                surface_pressure_bar: diveData.surface_pressure_bar,
+                cns_percent: diveData.cns_percent,
+                dive_computer_model: diveData.dive_computer_model,
+                dive_computer_serial: diveData.dive_computer_serial,
+                nitrox_o2_percent: diveData.nitrox_o2_percent,
+                latitude: diveData.latitude,
+                longitude: diveData.longitude,
+                samples: dc?.samples?.map(s => ({
+                  time_seconds: s.time.seconds,
+                  depth_m: s.depth.mm / 1000,
+                  temp_c: s.temperature ? (s.temperature.mkelvin / 1000) - 273.15 : undefined,
+                  pressure_bar: s.pressure?.[0]?.pressure?.mbar ? s.pressure[0].pressure.mbar / 1000 : undefined,
+                  ndl_seconds: s.ndl?.seconds,
+                  rbt_seconds: s.rbt?.seconds,
+                })) || [],
+                tank_pressures: importableDive.tankPressures || [],
+              };
+            }),
+          };
+        });
+      
+      if (bulkGroups.length === 0) {
+        logger.info('No dives selected for import');
+        setShowReviewModal(false);
+        return;
+      }
+      
+      // Single IPC call to import all data
+      logger.info(`Bulk importing ${bulkGroups.length} groups`);
+      const result = await invoke<BulkImportResult>('bulk_import_dives', {
+        groups: bulkGroups,
+      });
+      
+      logger.info(`Import complete: ${result.dives_imported} dives, ${result.samples_imported} samples, ${result.tank_pressures_imported} tank pressures, ${result.trips_created} trips created`);
+      
+      // Notify parent that trips changed (so sidebar refreshes)
+      if (result.trips_created > 0 && onTripsChanged) {
+        logger.debug('Calling onTripsChanged callback');
+        onTripsChanged();
+      }
+      
+      // Create minimal dive objects for the callback
+      // Note: We don't have full dive data back from bulk import, just counts
+      // If the caller needs full dive objects, they should refetch from DB
+      const importedDives: Dive[] = [];
+      onDivesImported(importedDives);
+      setShowReviewModal(false);
+      onClose();
+    } catch (error) {
+      logger.error('Failed to import dives from review modal:', error);
+      throw error; // Re-throw so the review modal can show the error
+    }
+  };
+
+  // Handle creating a new trip from the review modal
+  // Note: Currently not wired up in UI - trips are created inline with just a name
+  const handleCreateTripFromReview = async (): Promise<Trip | null> => {
+    // Future enhancement: Open AddTripModal to create trip with full options
+    // For now, trips are created inline in handleReviewImport with basic info
+    return null;
   };
 
   const importSelectedDives = async () => {
@@ -1583,15 +1775,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
                   )}
                 </div>
               )}
-
-              {!tripId && (
-                <div className="warning-box">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                    <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
-                  </svg>
-                  <span>Please select a trip first to import dives into.</span>
-                </div>
-              )}
             </div>
           )}
 
@@ -1771,7 +1954,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
               <button 
                 className="btn btn-primary" 
                 onClick={handleConnect}
-                disabled={!descriptor || availableConnections.length === 0 || !tripId}
+                disabled={!descriptor || availableConnections.length === 0}
               >
                 {requiresBluetoothScan(connectionType) ? 'Scan for Devices' : 'Connect'}
               </button>
@@ -1835,6 +2018,26 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported }: 
           )}
         </div>
       </div>
+
+      {/* Dive Import Review Modal */}
+      <DiveImportReviewModal
+        isOpen={showReviewModal}
+        onClose={() => {
+          setShowReviewModal(false);
+          // Go back to complete step to show downloaded dives
+        }}
+        dives={downloadedDives.map((d, index) => ({
+          id: `dive-${index}`,
+          dcDive: d as DCDive,
+          date: d.when,
+          selected: d.selected,
+          isDuplicate: d.isDuplicate,
+          tankPressures: d.tankPressures,
+        }))}
+        existingTrips={allTrips}
+        onImport={handleReviewImport}
+        onCreateTrip={handleCreateTripFromReview}
+      />
     </div>
   );
 }
