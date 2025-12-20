@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{State, Emitter};
 use std::path::Path;
 use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveStats}, import, photos};
 
@@ -683,24 +683,43 @@ pub fn get_photo(state: State<AppState>, id: i64) -> Result<Option<Photo>, Strin
 }
 
 #[tauri::command]
-pub fn regenerate_thumbnails(state: State<AppState>) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub async fn regenerate_thumbnails(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    // Get photos needing thumbnails while holding lock briefly
+    let photos_needing_thumbs = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_photos_without_thumbnails().map_err(|e| e.to_string())?
+    };
     
-    // Get all photos without thumbnails
-    let photos_needing_thumbs = db.get_photos_without_thumbnails()
-        .map_err(|e| e.to_string())?;
-    
+    let total = photos_needing_thumbs.len();
     let mut count = 0i64;
     
-    for photo in photos_needing_thumbs {
-        let path = std::path::Path::new(&photo.file_path);
+    for (i, photo) in photos_needing_thumbs.into_iter().enumerate() {
+        let path = std::path::PathBuf::from(&photo.file_path);
+        let photo_id = photo.id;
+        
         if path.exists() {
-            if let Some(thumb_path) = photos::generate_thumbnail(path, photo.id) {
-                db.update_photo_thumbnail(photo.id, &thumb_path)
+            // Run thumbnail generation in blocking thread pool
+            let thumb_result = tokio::task::spawn_blocking(move || {
+                photos::generate_thumbnail(&path, photo_id)
+            }).await.map_err(|e| e.to_string())?;
+            
+            if let Some(thumb_path) = thumb_result {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                db.update_photo_thumbnail(photo_id, &thumb_path)
                     .map_err(|e| format!("Failed to update thumbnail: {}", e))?;
                 count += 1;
             }
         }
+        
+        // Emit progress event
+        let _ = window.emit("thumbnail-progress", serde_json::json!({
+            "current": i + 1,
+            "total": total,
+            "completed": count
+        }));
     }
     
     Ok(count)
@@ -717,45 +736,56 @@ pub fn get_photos_needing_thumbnails(state: State<AppState>) -> Result<Vec<i64>,
 
 /// Generate thumbnail for a single photo (for background processing)
 #[tauri::command]
-pub fn generate_single_thumbnail(state: State<AppState>, photo_id: i64) -> Result<Option<String>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub async fn generate_single_thumbnail(state: State<'_, AppState>, photo_id: i64) -> Result<Option<String>, String> {
+    let photo = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_photo(photo_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Photo not found".to_string())?
+    };
     
-    let photo = db.get_photo(photo_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Photo not found".to_string())?;
-    
-    let path = std::path::Path::new(&photo.file_path);
+    let path = std::path::PathBuf::from(&photo.file_path);
     if !path.exists() {
         return Ok(None);
     }
     
-    if let Some(thumb_path) = photos::generate_thumbnail(path, photo_id) {
-        db.update_photo_thumbnail(photo_id, &thumb_path)
+    // Run thumbnail generation in blocking thread pool
+    let thumb_result = tokio::task::spawn_blocking(move || {
+        photos::generate_thumbnail(&path, photo_id)
+    }).await.map_err(|e| e.to_string())?;
+    
+    if let Some(ref thumb_path) = thumb_result {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.update_photo_thumbnail(photo_id, thumb_path)
             .map_err(|e| format!("Failed to update thumbnail: {}", e))?;
-        Ok(Some(thumb_path))
-    } else {
-        Ok(None)
     }
+    
+    Ok(thumb_result)
 }
 
 /// Rescan EXIF data for a single photo
 #[tauri::command]
-pub fn rescan_photo_exif(state: State<AppState>, photo_id: i64) -> Result<bool, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub async fn rescan_photo_exif(state: State<'_, AppState>, photo_id: i64) -> Result<bool, String> {
+    let photo = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_photo(photo_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Photo not found".to_string())?
+    };
     
-    let photo = db.get_photo(photo_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Photo not found".to_string())?;
-    
-    let path = std::path::Path::new(&photo.file_path);
+    let path = std::path::PathBuf::from(&photo.file_path);
     if !path.exists() {
         return Err(format!("File not found: {}", photo.file_path));
     }
     
     println!("=== RESCAN EXIF for {} ===", photo.filename);
     
-    // Use the scan_single_file function which reads EXIF
-    if let Some(scanned) = photos::scan_single_file(path) {
+    // Run EXIF scanning in blocking thread pool
+    let scanned = tokio::task::spawn_blocking(move || {
+        photos::scan_single_file(&path)
+    }).await.map_err(|e| e.to_string())?;
+    
+    if let Some(scanned) = scanned {
         println!("Scanned values:");
         println!("  aperture: {:?}", scanned.aperture);
         println!("  shutter: {:?}", scanned.shutter_speed);
@@ -764,6 +794,7 @@ pub fn rescan_photo_exif(state: State<AppState>, photo_id: i64) -> Result<bool, 
         println!("  make: {:?}", scanned.camera_make);
         println!("  model: {:?}", scanned.camera_model);
         
+        let db = state.db.lock().map_err(|e| e.to_string())?;
         db.update_photo_exif(
             photo_id,
             scanned.capture_time.as_deref(),
@@ -860,19 +891,27 @@ pub fn debug_dump_exif(state: State<AppState>, photo_id: i64) -> Result<Vec<Stri
 
 /// Rescan EXIF data for all photos in a trip
 #[tauri::command]
-pub fn rescan_trip_exif(state: State<AppState>, trip_id: i64) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
-    
-    let photos = db.get_photos_for_trip(trip_id)
-        .map_err(|e| e.to_string())?;
+pub async fn rescan_trip_exif(state: State<'_, AppState>, trip_id: i64) -> Result<i64, String> {
+    let photos = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_photos_for_trip(trip_id).map_err(|e| e.to_string())?
+    };
     
     let mut count = 0i64;
     for photo in photos {
-        let path = std::path::Path::new(&photo.file_path);
+        let path = std::path::PathBuf::from(&photo.file_path);
+        let photo_id = photo.id;
+        
         if path.exists() {
-            if let Some(scanned) = photos::scan_single_file(path) {
+            // Run EXIF scanning in blocking thread pool
+            let scanned = tokio::task::spawn_blocking(move || {
+                photos::scan_single_file(&path)
+            }).await.map_err(|e| e.to_string())?;
+            
+            if let Some(scanned) = scanned {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
                 db.update_photo_exif(
-                    photo.id,
+                    photo_id,
                     scanned.capture_time.as_deref(),
                     scanned.camera_make.as_deref(),
                     scanned.camera_model.as_deref(),
@@ -892,26 +931,41 @@ pub fn rescan_trip_exif(state: State<AppState>, trip_id: i64) -> Result<i64, Str
 
 /// Rescan EXIF data for ALL photos in the database
 #[tauri::command]
-pub fn rescan_all_exif(state: State<AppState>) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+pub async fn rescan_all_exif(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    // Get all photos while holding lock briefly
+    let all_photos = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_all_photos().map_err(|e| e.to_string())?
+    };
     
-    // Get all photos
-    let photos = db.get_all_photos()
-        .map_err(|e| e.to_string())?;
-    
-    println!("=== RESCANNING ALL {} PHOTOS ===", photos.len());
+    let total = all_photos.len();
+    println!("=== RESCANNING ALL {} PHOTOS ===", total);
     
     let mut count = 0i64;
-    for photo in photos {
-        let path = std::path::Path::new(&photo.file_path);
+    
+    for (i, photo) in all_photos.into_iter().enumerate() {
+        let path = std::path::PathBuf::from(&photo.file_path);
+        let photo_id = photo.id;
+        let filename = photo.filename.clone();
+        
         if path.exists() {
-            if let Some(scanned) = photos::scan_single_file(path) {
+            // Run EXIF scanning in blocking thread pool
+            let scanned = tokio::task::spawn_blocking(move || {
+                photos::scan_single_file(&path)
+            }).await.map_err(|e| e.to_string())?;
+            
+            if let Some(scanned) = scanned {
                 if scanned.aperture.is_some() || scanned.iso.is_some() {
                     println!("  {}: aperture={:?}, iso={:?}, shutter={:?}", 
-                        photo.filename, scanned.aperture, scanned.iso, scanned.shutter_speed);
+                        filename, scanned.aperture, scanned.iso, scanned.shutter_speed);
                 }
+                
+                let db = state.db.lock().map_err(|e| e.to_string())?;
                 db.update_photo_exif(
-                    photo.id,
+                    photo_id,
                     scanned.capture_time.as_deref(),
                     scanned.camera_make.as_deref(),
                     scanned.camera_model.as_deref(),
@@ -924,6 +978,15 @@ pub fn rescan_all_exif(state: State<AppState>) -> Result<i64, String> {
                 count += 1;
             }
         }
+        
+        // Emit progress event every 10 photos or on last photo
+        if i % 10 == 0 || i == total - 1 {
+            let _ = window.emit("exif-rescan-progress", serde_json::json!({
+                "current": i + 1,
+                "total": total,
+                "completed": count
+            }));
+        }
     }
     
     println!("=== DONE: Updated {} photos ===", count);
@@ -932,39 +995,44 @@ pub fn rescan_all_exif(state: State<AppState>) -> Result<i64, String> {
 
 /// Read an image file and return it as base64-encoded data URL
 /// For RAW files (DNG, CR2, etc.), decodes the raw sensor data into a viewable image
+/// Uses spawn_blocking to avoid blocking the async runtime on CPU-intensive decoding
 #[tauri::command]
-pub fn get_image_data(file_path: String) -> Result<String, String> {
-    let path = std::path::Path::new(&file_path);
+pub async fn get_image_data(file_path: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(&file_path);
     
     if !path.exists() {
         return Err(format!("File not found: {}", file_path));
     }
     
-    // Check if this is a RAW file that needs decoding
-    let raw_extensions = ["raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "raf", "pef"];
-    let is_raw = path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| raw_extensions.contains(&ext.to_lowercase().as_str()))
-        .unwrap_or(false);
-    
-    let jpeg_data = if is_raw {
-        // Decode RAW file using rawloader + imagepipe
-        photos::decode_raw_to_jpeg(path)?
-    } else {
-        // Regular image - just read and re-encode as JPEG if needed
-        let img = image::open(path)
-            .map_err(|e| format!("Failed to open image: {}", e))?;
+    // Run image decoding in blocking thread pool since it's CPU-intensive
+    let result = tokio::task::spawn_blocking(move || {
+        // Check if this is a RAW file that needs decoding
+        let raw_extensions = ["raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "raf", "pef"];
+        let is_raw = path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| raw_extensions.contains(&ext.to_lowercase().as_str()))
+            .unwrap_or(false);
         
-        let mut jpeg_bytes = Vec::new();
-        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
-        img.write_to(&mut cursor, image::ImageFormat::Jpeg)
-            .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
-        jpeg_bytes
-    };
+        let jpeg_data = if is_raw {
+            // Decode RAW file using rawloader + imagepipe
+            photos::decode_raw_to_jpeg(&path)?
+        } else {
+            // Regular image - just read and re-encode as JPEG if needed
+            let img = image::open(&path)
+                .map_err(|e| format!("Failed to open image: {}", e))?;
+            
+            let mut jpeg_bytes = Vec::new();
+            let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+            img.write_to(&mut cursor, image::ImageFormat::Jpeg)
+                .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+            jpeg_bytes
+        };
+        
+        let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_data);
+        Ok::<String, String>(format!("data:image/jpeg;base64,{}", base64_data))
+    }).await.map_err(|e| format!("Task join error: {}", e))?;
     
-    let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_data);
-    
-    Ok(format!("data:image/jpeg;base64,{}", base64_data))
+    result
 }
 
 /// Get the processed version of a RAW photo (if exists)

@@ -107,8 +107,12 @@ pub async fn identify_species(
         _ => "image/jpeg", // Default to jpeg for processed thumbnails
     };
     
-    // Read the image file
-    let image_data = std::fs::read(photo_path)
+    // Read the image file asynchronously
+    let photo_path_owned = photo_path.to_string();
+    let image_data = tokio::task::spawn_blocking(move || {
+        std::fs::read(&photo_path_owned)
+    }).await
+        .map_err(|e| format!("Task join error: {}", e))?
         .map_err(|e| format!("Failed to read image file: {}", e))?;
     
     // Encode to base64

@@ -197,6 +197,142 @@ export function DiveImportReviewModal({
     });
   };
   
+  const handleMergeWithBelow = (groupIndex: number) => {
+    if (groupIndex >= groups.length - 1) return;
+    
+    setGroups(prev => {
+      const newGroups = [...prev];
+      const targetGroup = newGroups[groupIndex];
+      const sourceGroup = newGroups[groupIndex + 1];
+      
+      // Merge dives
+      const mergedDives = [...targetGroup.dives, ...sourceGroup.dives];
+      const dateStart = new Date(Math.min(...mergedDives.map(d => d.date.getTime())));
+      const dateEnd = new Date(Math.max(...mergedDives.map(d => d.date.getTime())));
+      
+      newGroups[groupIndex] = {
+        ...targetGroup,
+        dives: mergedDives,
+        dateStart,
+        dateEnd,
+        defaultTripName: formatDateRange(dateStart, dateEnd),
+        newTripName: formatDateRange(dateStart, dateEnd),
+      };
+      
+      // Remove source group
+      newGroups.splice(groupIndex + 1, 1);
+      
+      return newGroups;
+    });
+  };
+  
+  const handleSplitDive = (groupId: string, diveId: string) => {
+    setGroups(prev => {
+      const groupIndex = prev.findIndex(g => g.id === groupId);
+      if (groupIndex === -1) return prev;
+      
+      const group = prev[groupIndex];
+      const diveIndex = group.dives.findIndex(d => d.id === diveId);
+      if (diveIndex === -1) return prev;
+      
+      // Can't split if only one dive in group
+      if (group.dives.length <= 1) return prev;
+      
+      const diveToSplit = group.dives[diveIndex];
+      const remainingDives = group.dives.filter(d => d.id !== diveId);
+      
+      // Update the original group
+      const origDateStart = new Date(Math.min(...remainingDives.map(d => d.date.getTime())));
+      const origDateEnd = new Date(Math.max(...remainingDives.map(d => d.date.getTime())));
+      
+      const updatedOrigGroup: DiveGroup = {
+        ...group,
+        dives: remainingDives,
+        dateStart: origDateStart,
+        dateEnd: origDateEnd,
+        defaultTripName: formatDateRange(origDateStart, origDateEnd),
+        newTripName: formatDateRange(origDateStart, origDateEnd),
+      };
+      
+      // Create new group for the split dive
+      const newGroup: DiveGroup = {
+        id: `group-${Date.now()}`,
+        dives: [diveToSplit],
+        dateStart: diveToSplit.date,
+        dateEnd: diveToSplit.date,
+        defaultTripName: formatDateRange(diveToSplit.date, diveToSplit.date),
+        selectedTripId: null,
+        newTripName: formatDateRange(diveToSplit.date, diveToSplit.date),
+        status: 'pending',
+      };
+      
+      // Insert the new group in the right position (after original, maintaining time order)
+      const newGroups = [...prev];
+      newGroups[groupIndex] = updatedOrigGroup;
+      
+      // Find the right position to insert based on date
+      let insertIndex = groupIndex + 1;
+      if (diveToSplit.date < origDateStart) {
+        insertIndex = groupIndex; // Insert before if the split dive is earlier
+        newGroups[groupIndex] = newGroup;
+        newGroups.splice(groupIndex + 1, 0, updatedOrigGroup);
+        return newGroups.filter((_, i) => i !== groupIndex + 2); // Remove the duplicate original
+      }
+      
+      newGroups.splice(insertIndex, 0, newGroup);
+      return newGroups;
+    });
+  };
+  
+  const handleSplitAtDive = (groupId: string, diveId: string) => {
+    // Split the group into two: all dives before this one, and this one + all after
+    setGroups(prev => {
+      const groupIndex = prev.findIndex(g => g.id === groupId);
+      if (groupIndex === -1) return prev;
+      
+      const group = prev[groupIndex];
+      // Sort dives by date to ensure consistent split
+      const sortedDives = [...group.dives].sort((a, b) => a.date.getTime() - b.date.getTime());
+      const diveIndex = sortedDives.findIndex(d => d.id === diveId);
+      if (diveIndex === -1 || diveIndex === 0) return prev; // Can't split at first dive
+      
+      const firstGroupDives = sortedDives.slice(0, diveIndex);
+      const secondGroupDives = sortedDives.slice(diveIndex);
+      
+      if (firstGroupDives.length === 0 || secondGroupDives.length === 0) return prev;
+      
+      // Create first group
+      const firstDateStart = new Date(Math.min(...firstGroupDives.map(d => d.date.getTime())));
+      const firstDateEnd = new Date(Math.max(...firstGroupDives.map(d => d.date.getTime())));
+      const firstGroup: DiveGroup = {
+        ...group,
+        dives: firstGroupDives,
+        dateStart: firstDateStart,
+        dateEnd: firstDateEnd,
+        defaultTripName: formatDateRange(firstDateStart, firstDateEnd),
+        newTripName: formatDateRange(firstDateStart, firstDateEnd),
+      };
+      
+      // Create second group
+      const secondDateStart = new Date(Math.min(...secondGroupDives.map(d => d.date.getTime())));
+      const secondDateEnd = new Date(Math.max(...secondGroupDives.map(d => d.date.getTime())));
+      const secondGroup: DiveGroup = {
+        id: `group-${Date.now()}`,
+        dives: secondGroupDives,
+        dateStart: secondDateStart,
+        dateEnd: secondDateEnd,
+        defaultTripName: formatDateRange(secondDateStart, secondDateEnd),
+        selectedTripId: null,
+        newTripName: formatDateRange(secondDateStart, secondDateEnd),
+        status: 'pending',
+      };
+      
+      const newGroups = [...prev];
+      newGroups.splice(groupIndex, 1, firstGroup, secondGroup);
+      return newGroups;
+    });
+  };
+  
   const handleToggleDive = (groupId: string, diveId: string) => {
     setGroups(prev => prev.map(g => {
       if (g.id !== groupId) return g;
@@ -274,7 +410,17 @@ export function DiveImportReviewModal({
                         disabled={isImporting}
                         title="Combine with the group above"
                       >
-                        ↑ Merge with above
+                        ↑ Merge
+                      </button>
+                    )}
+                    {groupIndex < groups.length - 1 && group.status === 'pending' && (
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => handleMergeWithBelow(groupIndex)}
+                        disabled={isImporting}
+                        title="Combine with the group below"
+                      >
+                        ↓ Merge
                       </button>
                     )}
                   </div>
@@ -330,6 +476,7 @@ export function DiveImportReviewModal({
                       <th className="col-duration">Duration</th>
                       <th className="col-depth">Max Depth</th>
                       <th className="col-status">Status</th>
+                      <th className="col-actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -363,6 +510,38 @@ export function DiveImportReviewModal({
                             <span className="status-badge duplicate" title="A dive with this date/time already exists">
                               Duplicate
                             </span>
+                          )}
+                        </td>
+                        <td className="col-actions">
+                          {group.status === 'pending' && group.dives.length > 1 && (
+                            <div className="dive-actions">
+                              <button
+                                className="btn-icon"
+                                onClick={() => handleSplitDive(group.id, dive.id)}
+                                disabled={isImporting}
+                                title="Move this dive to its own separate trip"
+                              >
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                  <path d="M14 4l2.29 2.29-2.88 2.88 1.42 1.42 2.88-2.88L20 10V4h-6zm-4 0H4v6l2.29-2.29 4.71 4.7V20h2v-8.41l-5.29-5.3L10 4z"/>
+                                </svg>
+                              </button>
+                              {(() => {
+                                const sortedDives = [...group.dives].sort((a, b) => a.date.getTime() - b.date.getTime());
+                                const diveIdx = sortedDives.findIndex(d => d.id === dive.id);
+                                return diveIdx > 0 ? (
+                                  <button
+                                    className="btn-icon"
+                                    onClick={() => handleSplitAtDive(group.id, dive.id)}
+                                    disabled={isImporting}
+                                    title="Split trip here - earlier dives become a separate trip"
+                                  >
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                      <path d="M8 19h3v4h2v-4h3l-4-4-4 4zm8-14h-3V1h-2v4H8l4 4 4-4zM4 11v2h16v-2H4z"/>
+                                    </svg>
+                                  </button>
+                                ) : null;
+                              })()}
+                            </div>
                           )}
                         </td>
                       </tr>

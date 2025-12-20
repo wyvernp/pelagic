@@ -287,6 +287,10 @@
   width: 100px;
 }
 
+.dive-table .col-actions {
+  width: 70px;
+}
+
 .dive-table input[type="checkbox"] {
   width: 16px;
   height: 16px;
@@ -306,6 +310,43 @@
 .status-badge.duplicate {
   background: rgba(255, 193, 7, 0.2);
   color: #ffc107;
+}
+
+/* Dive row actions */
+.dive-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.dive-table tbody tr:hover .dive-actions {
+  opacity: 1;
+}
+
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.btn-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* No dives message */

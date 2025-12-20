@@ -1625,16 +1625,33 @@ impl Database {
         Ok(())
     }
     
-    /// Delete photos by ID
+    /// Delete photos by ID (batch delete for performance)
     pub fn delete_photos(&self, photo_ids: &[i64]) -> Result<u64> {
-        let mut deleted = 0u64;
-        for &id in photo_ids {
-            // Delete any processed versions that reference this as raw_photo_id
-            self.conn.execute("DELETE FROM photos WHERE raw_photo_id = ?", [id])?;
-            // Delete the photo itself
-            let changes = self.conn.execute("DELETE FROM photos WHERE id = ?", [id])?;
-            deleted += changes as u64;
+        if photo_ids.is_empty() {
+            return Ok(0);
         }
+        
+        let tx = self.conn.unchecked_transaction()?;
+        
+        // Build placeholders for WHERE IN clause
+        let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        
+        // Delete any processed versions that reference these as raw_photo_id
+        let delete_processed = format!(
+            "DELETE FROM photos WHERE raw_photo_id IN ({})",
+            placeholders
+        );
+        tx.execute(&delete_processed, rusqlite::params_from_iter(photo_ids.iter()))?;
+        
+        // Delete the photos themselves
+        let delete_photos = format!(
+            "DELETE FROM photos WHERE id IN ({})",
+            placeholders
+        );
+        tx.execute(&delete_photos, rusqlite::params_from_iter(photo_ids.iter()))?;
+        let deleted = tx.changes() as u64;
+        
+        tx.commit()?;
         Ok(deleted)
     }
     
@@ -1647,11 +1664,28 @@ impl Database {
         Ok(())
     }
     
-    /// Update rating for multiple photos
+    /// Update rating for multiple photos (batch update for performance)
     pub fn update_photos_rating(&self, photo_ids: &[i64], rating: i32) -> Result<()> {
-        for &id in photo_ids {
-            self.update_photo_rating(id, rating)?;
+        if photo_ids.is_empty() {
+            return Ok(());
         }
+        
+        // Build placeholders for WHERE IN clause
+        let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "UPDATE photos SET rating = ?, updated_at = datetime('now') WHERE id IN ({})",
+            placeholders
+        );
+        
+        // Build params: rating first, then all photo IDs
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::with_capacity(photo_ids.len() + 1);
+        params.push(Box::new(rating));
+        for &id in photo_ids {
+            params.push(Box::new(id));
+        }
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        
+        self.conn.execute(&query, params_refs.as_slice())?;
         Ok(())
     }
     
@@ -1957,16 +1991,27 @@ impl Database {
         Ok(tags)
     }
     
-    /// Add a general tag to multiple photos
+    /// Add a general tag to multiple photos (batch insert for performance)
     pub fn add_general_tag_to_photos(&self, photo_ids: &[i64], general_tag_id: i64) -> Result<i64> {
-        let mut count = 0i64;
-        for photo_id in photo_ids {
-            self.conn.execute(
-                "INSERT OR IGNORE INTO photo_general_tags (photo_id, general_tag_id) VALUES (?, ?)",
-                params![photo_id, general_tag_id],
-            )?;
-            count += self.conn.changes() as i64;
+        if photo_ids.is_empty() {
+            return Ok(0);
         }
+        
+        let tx = self.conn.unchecked_transaction()?;
+        let mut count = 0i64;
+        
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR IGNORE INTO photo_general_tags (photo_id, general_tag_id) VALUES (?, ?)"
+            )?;
+            
+            for &photo_id in photo_ids {
+                stmt.execute(params![photo_id, general_tag_id])?;
+                count += tx.changes() as i64;
+            }
+        }
+        
+        tx.commit()?;
         Ok(count)
     }
     
@@ -2082,16 +2127,27 @@ impl Database {
         Ok(())
     }
     
-    /// Add a species tag to multiple photos
+    /// Add a species tag to multiple photos (batch insert for performance)
     pub fn add_species_tag_to_photos(&self, photo_ids: &[i64], species_tag_id: i64) -> Result<i64> {
-        let mut count = 0i64;
-        for photo_id in photo_ids {
-            self.conn.execute(
-                "INSERT OR IGNORE INTO photo_species_tags (photo_id, species_tag_id) VALUES (?, ?)",
-                params![photo_id, species_tag_id],
-            )?;
-            count += self.conn.changes() as i64;
+        if photo_ids.is_empty() {
+            return Ok(0);
         }
+        
+        let tx = self.conn.unchecked_transaction()?;
+        let mut count = 0i64;
+        
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR IGNORE INTO photo_species_tags (photo_id, species_tag_id) VALUES (?, ?)"
+            )?;
+            
+            for &photo_id in photo_ids {
+                stmt.execute(params![photo_id, species_tag_id])?;
+                count += tx.changes() as i64;
+            }
+        }
+        
+        tx.commit()?;
         Ok(count)
     }
     
