@@ -16,6 +16,8 @@ export interface AppSettings {
   showRatings: boolean;
   geminiApiKey: string;
   defaultImageEditor: string; // Path to default editor, empty = system default
+  diveNamePrefix: string; // Prefix for dive names, e.g., "Dive", "Plongée", etc.
+  hasCompletedWelcome: boolean; // Whether user has completed the welcome setup
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -24,6 +26,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   showRatings: true,
   geminiApiKey: '',
   defaultImageEditor: '',
+  diveNamePrefix: 'Dive',
+  hasCompletedWelcome: false,
 };
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
@@ -214,6 +218,55 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 />
                 <span className="toggle-slider"></span>
               </label>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Dive Naming</h3>
+            
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">Dive Name Prefix</span>
+                <span className="setting-desc">How to label your dives (e.g., "Dive 1", "Plongée 1")</span>
+              </label>
+              <select
+                className="setting-select"
+                value={['Dive', 'Plongée', 'Tauchgang', 'Buceo', 'Duik', 'Immersione', ''].includes(settings.diveNamePrefix) ? settings.diveNamePrefix : '_custom'}
+                onChange={(e) => {
+                  if (e.target.value !== '_custom') {
+                    handleChange('diveNamePrefix', e.target.value);
+                  }
+                }}
+              >
+                <option value="Dive">Dive (English)</option>
+                <option value="Plongée">Plongée (French)</option>
+                <option value="Tauchgang">Tauchgang (German)</option>
+                <option value="Buceo">Buceo (Spanish)</option>
+                <option value="Duik">Duik (Dutch)</option>
+                <option value="Immersione">Immersione (Italian)</option>
+                <option value="">Number only (1, 2, 3...)</option>
+                <option value="_custom">Custom...</option>
+              </select>
+            </div>
+
+            {!['Dive', 'Plongée', 'Tauchgang', 'Buceo', 'Duik', 'Immersione', ''].includes(settings.diveNamePrefix) && (
+              <div className="setting-row">
+                <label className="setting-label">
+                  <span className="setting-name">Custom Prefix</span>
+                  <span className="setting-desc">Enter your own dive name prefix</span>
+                </label>
+                <input
+                  type="text"
+                  className="setting-input"
+                  value={settings.diveNamePrefix}
+                  onChange={(e) => handleChange('diveNamePrefix', e.target.value)}
+                  placeholder="Enter prefix..."
+                />
+              </div>
+            )}
+
+            <div className="setting-hint">
+              Preview: <strong>{settings.diveNamePrefix ? `${settings.diveNamePrefix} 1` : '1'}</strong>, <strong>{settings.diveNamePrefix ? `${settings.diveNamePrefix} 2` : '2'}</strong>, etc.
             </div>
           </div>
 

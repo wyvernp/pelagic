@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { format } from 'date-fns';
 import type { Trip, Dive } from '../types';
+import { useSettings } from './SettingsModal';
 import './Sidebar.css';
 
 interface SidebarProps {
@@ -17,6 +18,7 @@ interface SidebarProps {
   bulkEditMode?: boolean;
   selectedDiveIds?: Set<number>;
   onToggleDiveSelection?: (diveId: number) => void;
+  style?: React.CSSProperties;
 }
 
 export function Sidebar({
@@ -32,7 +34,10 @@ export function Sidebar({
   bulkEditMode,
   selectedDiveIds,
   onToggleDiveSelection,
+  style,
 }: SidebarProps) {
+  const settings = useSettings();
+  
   // Pre-compute dives by trip ID to avoid filtering per trip during render
   const divesByTripId = useMemo(() => {
     const map = new Map<number, Dive[]>();
@@ -55,7 +60,7 @@ export function Sidebar({
   };
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={style}>
       <div className="sidebar-header">
         <h2>Trips</h2>
         <button className="sidebar-add-btn" title="New Trip" onClick={onAddTrip}>
@@ -130,9 +135,9 @@ export function Sidebar({
                                 </svg>
                               )}
                               <div className="dive-text">
-                                <span className="dive-number">
-                                  Dive {dive.dive_number}
-                                  {dive.location && <span className="dive-location"> ({dive.location})</span>}
+                                <span className={`dive-number ${!settings.diveNamePrefix ? 'number-only' : ''}`}>
+                                  {settings.diveNamePrefix ? `${settings.diveNamePrefix} ${dive.dive_number}` : dive.dive_number}
+                                  {dive.location && <span className="dive-location">{settings.diveNamePrefix ? ` (${dive.location})` : ` ${dive.location}`}</span>}
                                 </span>
                               </div>
                               <span className="dive-depth">{dive.max_depth_m.toFixed(1)}m</span>

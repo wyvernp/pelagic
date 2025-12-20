@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useSettings } from './SettingsModal';
 import type { Dive, PhotoImportPreview, PhotoGroup, PhotoAssignment, ScannedPhoto } from '../types';
 import './AddTripModal.css';
 import './PhotoImportModal.css';
@@ -21,6 +22,7 @@ export function PhotoImportModal({
   onClose,
   onImportComplete,
 }: PhotoImportModalProps) {
+  const settings = useSettings();
   const [isScanning, setIsScanning] = useState(false);
   const [preview, setPreview] = useState<PhotoImportPreview | null>(null);
   const [assignments, setAssignments] = useState<Map<number, number | null>>(new Map()); // groupIndex -> diveId
@@ -243,6 +245,7 @@ export function PhotoImportModal({
                     onDiveChange={(diveId) => handleDiveAssignment(index, diveId)}
                     formatTime={formatTime}
                     formatDate={formatDate}
+                    diveNamePrefix={settings.diveNamePrefix}
                   />
                 ))}
 
@@ -310,6 +313,7 @@ interface PhotoGroupCardProps {
   onDiveChange: (diveId: number | null) => void;
   formatTime: (time?: string) => string;
   formatDate: (time?: string) => string;
+  diveNamePrefix: string;
 }
 
 function PhotoGroupCard({
@@ -320,6 +324,7 @@ function PhotoGroupCard({
   onDiveChange,
   formatTime,
   formatDate,
+  diveNamePrefix,
 }: PhotoGroupCardProps) {
   const timeRange = group.start_time && group.end_time
     ? `${formatTime(group.start_time)} - ${formatTime(group.end_time)}`
@@ -348,7 +353,7 @@ function PhotoGroupCard({
               <option value="">-- No dive --</option>
               {dives.map((dive) => (
                 <option key={dive.id} value={dive.id}>
-                  Dive {dive.dive_number} - {dive.location || dive.date}
+                  {diveNamePrefix ? `${diveNamePrefix} ${dive.dive_number}` : dive.dive_number} - {dive.location || dive.date}
                 </option>
               ))}
             </select>

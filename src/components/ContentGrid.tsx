@@ -381,7 +381,7 @@ export const ContentGrid = memo(function ContentGrid({
                 
                 <div className="dive-card-content">
                   <div className="dive-card-header">
-                    <span className="dive-card-number">#{dive.dive_number}</span>
+                    <span className="dive-card-number">{settings.diveNamePrefix ? `${settings.diveNamePrefix} ${dive.dive_number}` : dive.dive_number}</span>
                     <span className="dive-card-depth">{dive.max_depth_m.toFixed(1)}m</span>
                   </div>
                   

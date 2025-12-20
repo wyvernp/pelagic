@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
+import { useSettings } from './SettingsModal';
 import type { DiveMapPoint } from '../types';
 import './MapView.css';
 
@@ -11,6 +12,7 @@ interface MapViewProps {
 }
 
 export function MapView({ isOpen, onClose, onSelectDive }: MapViewProps) {
+  const settings = useSettings();
   const [divePoints, setDivePoints] = useState<DiveMapPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +111,7 @@ export function MapView({ isOpen, onClose, onSelectDive }: MapViewProps) {
       // Create popup content
       const popupContent = `
         <div class="dive-popup">
-          <h4>${point.location || `Dive #${point.dive_number}`}</h4>
+          <h4>${point.location || (settings.diveNamePrefix ? `${settings.diveNamePrefix} #${point.dive_number}` : `#${point.dive_number}`)}</h4>
           <p class="dive-popup-trip">${point.trip_name}</p>
           <div class="dive-popup-details">
             <span>📅 ${new Date(point.date).toLocaleDateString()}</span>

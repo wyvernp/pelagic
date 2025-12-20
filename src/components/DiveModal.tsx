@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { logger } from '../utils/logger';
+import { useSettings } from './SettingsModal';
 import type { Dive, EquipmentSet } from '../types';
 import './AddTripModal.css'; // Reuse modal styles
 
@@ -39,6 +40,7 @@ interface DiveModalProps {
 }
 
 export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveModalProps) {
+  const settings = useSettings();
   const [location, setLocation] = useState('');
   const [ocean, setOcean] = useState('');
   const [visibility, setVisibility] = useState('');
@@ -202,7 +204,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   const handleDelete = async () => {
     if (dive && onDelete) {
       const confirmed = await confirm(
-        `Are you sure you want to delete Dive #${dive.dive_number}? This will also delete all photos associated with this dive.`,
+        `Are you sure you want to delete ${settings.diveNamePrefix ? `${settings.diveNamePrefix} #${dive.dive_number}` : `#${dive.dive_number}`}? This will also delete all photos associated with this dive.`,
         {
           title: 'Delete Dive',
           kind: 'warning',
@@ -228,7 +230,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
     <div className="modal-backdrop" onClick={handleBackdropClick}>
       <div className="modal modal-lg">
         <div className="modal-header">
-          <h2>Edit Dive #{dive.dive_number}</h2>
+          <h2>Edit {settings.diveNamePrefix ? `${settings.diveNamePrefix} #${dive.dive_number}` : `#${dive.dive_number}`}</h2>
           <button className="modal-close" onClick={onClose}>
             <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>

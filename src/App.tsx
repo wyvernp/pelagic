@@ -18,7 +18,8 @@ import { StatisticsModal } from './components/StatisticsModal';
 import { ExportModal } from './components/ExportModal';
 import { SearchModal } from './components/SearchModal';
 import { BatchOperationsModal } from './components/BatchOperationsModal';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsModal, type AppSettings } from './components/SettingsModal';
+import { WelcomeModal } from './components/WelcomeModal';
 import { MapView } from './components/MapView';
 import { DiveComputerModal } from './components/DiveComputerModal';
 import { EquipmentModal } from './components/EquipmentModal';
@@ -65,6 +66,12 @@ function App() {
   const [mapViewOpen, setMapViewOpen] = useState(false);
   const [diveComputerModalOpen, setDiveComputerModalOpen] = useState(false);
   const [equipmentModalOpen, setEquipmentModalOpen] = useState(false);
+  const [welcomeModalOpen, setWelcomeModalOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem('pelagic-sidebar-width');
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const [isResizing, setIsResizing] = useState(false);
   
   // Search results state
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
@@ -73,6 +80,38 @@ function App() {
   // Refs to track current state for background effects (avoids stale closures)
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
+
+  // Sidebar resize handlers
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.min(Math.max(200, e.clientX), 500);
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      localStorage.setItem('pelagic-sidebar-width', sidebarWidth.toString());
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing, sidebarWidth]);
 
   // Computed values - defined early so handlers can use them
   const selectedTrip = trips.find((t) => t.id === state.selectedTripId) ?? null;
@@ -104,6 +143,20 @@ function App() {
         }
       })
       .catch((err) => logger.error('Failed to link orphan photos:', err));
+  }, []);
+
+  // Check if we need to show welcome modal on first boot
+  useEffect(() => {
+    const savedSettings = localStorage.getItem('pelagic-settings');
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings) as AppSettings;
+      if (!settings.hasCompletedWelcome) {
+        setWelcomeModalOpen(true);
+      }
+    } else {
+      // No settings at all, definitely first boot
+      setWelcomeModalOpen(true);
+    }
   }, []);
   
   // Regenerate thumbnails in background ONE AT A TIME (non-blocking)
@@ -666,6 +719,11 @@ function App() {
           bulkEditMode={bulkEditMode}
           selectedDiveIds={selectedDiveIds}
           onToggleDiveSelection={handleToggleDiveSelection}
+          style={{ width: sidebarWidth }}
+        />
+        <div 
+          className={`sidebar-resizer ${isResizing ? 'resizing' : ''}`}
+          onMouseDown={handleResizeStart}
         />
         <ContentArea
           viewMode={state.viewMode}
@@ -831,6 +889,22 @@ function App() {
       <SettingsModal
         isOpen={settingsModalOpen}
         onClose={() => setSettingsModalOpen(false)}
+      />
+      <WelcomeModal
+        isOpen={welcomeModalOpen}
+        onComplete={(prefix: string) => {
+          // Save the settings
+          const savedSettings = localStorage.getItem('pelagic-settings');
+          const settings = savedSettings 
+            ? JSON.parse(savedSettings) as AppSettings 
+            : { diveNamePrefix: 'Dive', hasCompletedWelcome: false };
+          settings.diveNamePrefix = prefix;
+          settings.hasCompletedWelcome = true;
+          localStorage.setItem('pelagic-settings', JSON.stringify(settings));
+          // Trigger settings changed event so other components update
+          window.dispatchEvent(new Event('pelagic-settings-changed'));
+          setWelcomeModalOpen(false);
+        }}
       />
       <MapView
         isOpen={mapViewOpen}

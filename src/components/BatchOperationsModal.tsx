@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { confirmDialog } from '../utils/dialogs';
 import { logger } from '../utils/logger';
+import { useSettings } from './SettingsModal';
 import type { Dive } from '../types';
 import './BatchOperationsModal.css';
 
@@ -24,6 +25,7 @@ export function BatchOperationsModal({
   dives,
   onOperationComplete,
 }: BatchOperationsModalProps) {
+  const settings = useSettings();
   const [operation, setOperation] = useState<Operation>('move');
   const [targetDiveId, setTargetDiveId] = useState<number | string>('');
   const [bulkRating, setBulkRating] = useState<number>(0);
@@ -192,7 +194,7 @@ export function BatchOperationsModal({
                   .filter((d) => d.id !== currentDiveId)
                   .map((dive) => (
                     <option key={dive.id} value={dive.id}>
-                      Dive #{dive.dive_number} - {dive.location || dive.date}
+                      {settings.diveNamePrefix ? `${settings.diveNamePrefix} #${dive.dive_number}` : `#${dive.dive_number}`} - {dive.location || dive.date}
                     </option>
                   ))}
               </select>

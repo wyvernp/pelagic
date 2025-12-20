@@ -329,7 +329,7 @@ export function ContentArea({
                     onClick={() => onSelectDive(diveItem.id)}
                   >
                     <div className="card-title">
-                      Dive #{diveItem.dive_number} - {diveItem.location || 'Unknown'}
+                      {settings.diveNamePrefix ? `${settings.diveNamePrefix} #${diveItem.dive_number}` : `#${diveItem.dive_number}`} - {diveItem.location || 'Unknown'}
                     </div>
                     <div className="card-meta">
                       {diveItem.date} • {diveItem.max_depth_m?.toFixed(1)}m max
@@ -425,7 +425,7 @@ export function ContentArea({
   }
 
   const title = dive 
-    ? `Dive ${dive.dive_number} - ${dive.location || 'Unnamed Dive'}`
+    ? `${settings.diveNamePrefix ? `${settings.diveNamePrefix} ${dive.dive_number}` : dive.dive_number} - ${dive.location || 'Unnamed Dive'}`
     : trip?.name || 'Trip';
 
   const hasSelection = selectedPhotoIds.size > 0;

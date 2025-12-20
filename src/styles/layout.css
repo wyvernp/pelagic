@@ -49,6 +49,20 @@
   height: 100%;
 }
 
+/* Sidebar resizer */
+.sidebar-resizer {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background-color 0.15s;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer.resizing {
+  background: var(--accent-primary);
+}
+
 .sidebar-header {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
