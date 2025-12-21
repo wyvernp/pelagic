@@ -22,6 +22,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -103,6 +104,10 @@ pub fn run() {
             commands::get_species_tags_for_photo,
             commands::add_species_tag_to_photos,
             commands::remove_species_tag_from_photo,
+            commands::remove_species_tag_from_photos,
+            commands::get_distinct_species_categories,
+            commands::update_species_tag_category,
+            commands::get_common_species_tags_for_photos,
             // General tag commands
             commands::get_all_general_tags,
             commands::search_general_tags,
@@ -110,6 +115,8 @@ pub fn run() {
             commands::get_general_tags_for_photo,
             commands::add_general_tag_to_photos,
             commands::remove_general_tag_from_photo,
+            commands::get_common_general_tags_for_photos,
+            commands::remove_general_tag_from_photos,
             // Statistics commands
             commands::get_statistics,
             commands::get_species_with_counts,
@@ -165,6 +172,9 @@ pub fn run() {
             // External editor commands
             commands::detect_image_editors,
             commands::open_in_editor,
+            // Secure settings commands
+            commands::get_secure_setting,
+            commands::set_secure_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

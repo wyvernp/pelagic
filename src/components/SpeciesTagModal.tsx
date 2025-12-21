@@ -26,18 +26,25 @@ export function SpeciesTagModal({
   const [newTagName, setNewTagName] = useState('');
   const [newTagCategory, setNewTagCategory] = useState('');
   const [newTagScientific, setNewTagScientific] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
+  const [appliedTagIds, setAppliedTagIds] = useState<Set<number>>(new Set());
+  const [categoryPromptTag, setCategoryPromptTag] = useState<SpeciesTag | null>(null);
+  const [promptCategory, setPromptCategory] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load all tags when modal opens
+  // Load all tags and categories when modal opens
   useEffect(() => {
     if (isOpen) {
       loadAllTags();
+      loadCategories();
+      loadAppliedTags();
       setSearchQuery('');
       setShowCreateNew(false);
+      setCategoryPromptTag(null);
       // Focus input after a short delay
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [isOpen]);
+  }, [isOpen, selectedPhotoIds]);
 
   // Search as user types
   useEffect(() => {
@@ -58,6 +65,30 @@ export function SpeciesTagModal({
     }
   };
 
+  const loadCategories = async () => {
+    try {
+      const cats = await invoke<string[]>('get_distinct_species_categories');
+      setCategories(cats);
+    } catch (error) {
+      logger.error('Failed to load categories:', error);
+    }
+  };
+
+  const loadAppliedTags = async () => {
+    if (selectedPhotoIds.length === 0) {
+      setAppliedTagIds(new Set());
+      return;
+    }
+    try {
+      const tags = await invoke<SpeciesTag[]>('get_common_species_tags_for_photos', {
+        photoIds: selectedPhotoIds,
+      });
+      setAppliedTagIds(new Set(tags.map(t => t.id)));
+    } catch (error) {
+      logger.error('Failed to load applied tags:', error);
+    }
+  };
+
   const searchTags = async (query: string) => {
     try {
       const tags = await invoke<SpeciesTag[]>('search_species_tags', { query });
@@ -75,12 +106,47 @@ export function SpeciesTagModal({
   const handleSelectTag = async (tag: SpeciesTag) => {
     if (selectedPhotoIds.length === 0) return;
     
+    // Check if tag is already applied - if so, toggle it off
+    if (appliedTagIds.has(tag.id)) {
+      await handleRemoveTag(tag);
+      return;
+    }
+    
+    // If tag has no category, prompt user to assign one
+    if (!tag.category) {
+      setCategoryPromptTag(tag);
+      setPromptCategory('');
+      return;
+    }
+    
+    await addTagToPhotos(tag);
+  };
+
+  const addTagToPhotos = async (tag: SpeciesTag) => {
     setIsLoading(true);
     try {
       await invoke('add_species_tag_to_photos', {
         photoIds: selectedPhotoIds,
         speciesTagId: tag.id,
       });
+      
+      // Also add the category as a general tag
+      if (tag.category) {
+        try {
+          const categoryTagId = await invoke<number>('get_or_create_general_tag', {
+            name: tag.category.toLowerCase(),
+          });
+          await invoke('add_general_tag_to_photos', {
+            photoIds: selectedPhotoIds,
+            generalTagId: categoryTagId,
+          });
+        } catch (error) {
+          logger.error('Failed to add category tag:', error);
+        }
+      }
+      
+      // Update applied tags
+      setAppliedTagIds(prev => new Set([...prev, tag.id]));
       onTagsAdded();
     } catch (error) {
       logger.error('Failed to add species tag:', error);
@@ -88,6 +154,73 @@ export function SpeciesTagModal({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleRemoveTag = async (tag: SpeciesTag) => {
+    if (selectedPhotoIds.length === 0) return;
+    
+    setIsLoading(true);
+    try {
+      await invoke('remove_species_tag_from_photos', {
+        photoIds: selectedPhotoIds,
+        speciesTagId: tag.id,
+      });
+      
+      // Update applied tags
+      setAppliedTagIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(tag.id);
+        return newSet;
+      });
+      onTagsAdded();
+    } catch (error) {
+      logger.error('Failed to remove species tag:', error);
+      alert('Failed to remove species tag: ' + error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCategoryPromptSubmit = async () => {
+    if (!categoryPromptTag) return;
+    
+    setIsLoading(true);
+    try {
+      // Update the tag's category
+      if (promptCategory) {
+        await invoke('update_species_tag_category', {
+          speciesTagId: categoryPromptTag.id,
+          category: promptCategory,
+        });
+        
+        // Update local state
+        categoryPromptTag.category = promptCategory;
+        setAllTags(prev => prev.map(t => 
+          t.id === categoryPromptTag.id ? { ...t, category: promptCategory } : t
+        ));
+      }
+      
+      // Now add the tag to photos
+      await addTagToPhotos({ ...categoryPromptTag, category: promptCategory || undefined });
+      
+      // Clear prompt
+      setCategoryPromptTag(null);
+      setPromptCategory('');
+    } catch (error) {
+      logger.error('Failed to update category:', error);
+      alert('Failed to update category: ' + error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCategoryPromptSkip = async () => {
+    if (!categoryPromptTag) return;
+    
+    // Add tag without updating category
+    await addTagToPhotos(categoryPromptTag);
+    setCategoryPromptTag(null);
+    setPromptCategory('');
   };
 
   const handleCreateAndAdd = async () => {
@@ -106,8 +239,29 @@ export function SpeciesTagModal({
         speciesTagId: tagId,
       });
       
+      // Also add the category as a general tag
+      if (newTagCategory.trim()) {
+        try {
+          const categoryTagId = await invoke<number>('get_or_create_general_tag', {
+            name: newTagCategory.trim().toLowerCase(),
+          });
+          await invoke('add_general_tag_to_photos', {
+            photoIds: selectedPhotoIds,
+            generalTagId: categoryTagId,
+          });
+        } catch (error) {
+          logger.error('Failed to add category tag:', error);
+        }
+      }
+      
       onTagsAdded();
-      onClose();
+      
+      // Reload tags and reset form
+      await loadAllTags();
+      setNewTagName('');
+      setNewTagCategory('');
+      setNewTagScientific('');
+      setAppliedTagIds(prev => new Set([...prev, tagId]));
     } catch (error) {
       logger.error('Failed to create and add species tag:', error);
       alert('Failed to create species tag: ' + error);
@@ -119,26 +273,15 @@ export function SpeciesTagModal({
   const handleQuickCreate = async () => {
     if (!searchQuery.trim() || selectedPhotoIds.length === 0) return;
     
-    setIsLoading(true);
-    try {
-      const tagId = await invoke<number>('get_or_create_species_tag', {
-        name: searchQuery.trim(),
-        category: null,
-        scientificName: null,
-      });
-      
-      await invoke('add_species_tag_to_photos', {
-        photoIds: selectedPhotoIds,
-        speciesTagId: tagId,
-      });
-      
-      onTagsAdded();
-      onClose();
-    } catch (error) {
-      logger.error('Failed to create and add species tag:', error);
-      alert('Failed to create species tag: ' + error);
-    } finally {
-      setIsLoading(false);
+    // Pre-fill the detailed form with the search query
+    setNewTagName(searchQuery.trim());
+    setNewTagCategory('');
+    setNewTagScientific('');
+    
+    // Open the detailed create form
+    const details = document.querySelector('.create-form-details') as HTMLDetailsElement;
+    if (details) {
+      details.open = true;
     }
   };
 
@@ -149,6 +292,72 @@ export function SpeciesTagModal({
       onClose();
     }
   };
+
+  // Category prompt overlay
+  if (categoryPromptTag) {
+    return (
+      <div className="modal-backdrop" onClick={() => setCategoryPromptTag(null)}>
+        <div className="modal species-tag-modal category-prompt-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>Classify Species</h2>
+            <button className="modal-close" onClick={() => setCategoryPromptTag(null)}>
+              <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div className="modal-body">
+            <p className="category-prompt-info">
+              <strong>{categoryPromptTag.name}</strong> doesn't have a category yet. What type of creature is this?
+            </p>
+            
+            <div className="category-select-wrapper">
+              <select
+                className="category-select"
+                value={promptCategory}
+                onChange={(e) => setPromptCategory(e.target.value)}
+              >
+                <option value="">-- Select category --</option>
+                {categories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              
+              <span className="category-or">or</span>
+              
+              <input
+                type="text"
+                className="category-custom-input"
+                placeholder="Type new category..."
+                value={promptCategory}
+                onChange={(e) => setPromptCategory(e.target.value)}
+              />
+            </div>
+          </div>
+          
+          <div className="modal-footer">
+            <button 
+              type="button" 
+              className="btn btn-secondary" 
+              onClick={handleCategoryPromptSkip}
+              disabled={isLoading}
+            >
+              Skip
+            </button>
+            <button 
+              type="button" 
+              className="btn btn-primary" 
+              onClick={handleCategoryPromptSubmit}
+              disabled={isLoading}
+            >
+              {promptCategory ? 'Save & Add Tag' : 'Add Without Category'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-backdrop" onClick={handleBackdropClick}>
@@ -165,6 +374,9 @@ export function SpeciesTagModal({
         <div className="modal-body">
           <p className="tag-info">
             Adding species tag to <strong>{selectedPhotoIds.length}</strong> photo{selectedPhotoIds.length !== 1 ? 's' : ''}
+            {appliedTagIds.size > 0 && (
+              <span className="applied-count"> • {appliedTagIds.size} tag{appliedTagIds.size !== 1 ? 's' : ''} applied</span>
+            )}
           </p>
 
           <div className="search-input-wrapper">
@@ -201,10 +413,14 @@ export function SpeciesTagModal({
             {searchResults.map((tag) => (
               <button
                 key={tag.id}
-                className="tag-item"
+                className={`tag-item ${appliedTagIds.has(tag.id) ? 'applied' : ''} ${!tag.category ? 'needs-category' : ''}`}
                 onClick={() => handleSelectTag(tag)}
                 disabled={isLoading}
+                title={appliedTagIds.has(tag.id) ? 'Click to remove' : 'Click to add'}
               >
+                {appliedTagIds.has(tag.id) && (
+                  <span className="tag-checkmark">✓</span>
+                )}
                 <span className="tag-icon">🐠</span>
                 <div className="tag-details">
                   <span className="tag-name">{tag.name}</span>
@@ -212,8 +428,10 @@ export function SpeciesTagModal({
                     <span className="tag-scientific">{tag.scientific_name}</span>
                   )}
                 </div>
-                {tag.category && (
+                {tag.category ? (
                   <span className="tag-category">{tag.category}</span>
+                ) : (
+                  <span className="tag-category tag-category-missing">?</span>
                 )}
               </button>
             ))}
@@ -255,12 +473,32 @@ export function SpeciesTagModal({
               </div>
               <div className="form-group">
                 <label>Category</label>
-                <input
-                  type="text"
-                  value={newTagCategory}
-                  onChange={(e) => setNewTagCategory(e.target.value)}
-                  placeholder="e.g., Fish, Invertebrate, Coral"
-                />
+                <div className="category-input-group">
+                  <select
+                    className="category-select"
+                    value={categories.includes(newTagCategory) ? newTagCategory : '_custom'}
+                    onChange={(e) => {
+                      if (e.target.value !== '_custom') {
+                        setNewTagCategory(e.target.value);
+                      }
+                    }}
+                  >
+                    <option value="">-- Select category --</option>
+                    {categories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                    <option value="_custom">+ New category...</option>
+                  </select>
+                  {(!categories.includes(newTagCategory) && newTagCategory !== '') && (
+                    <input
+                      type="text"
+                      className="category-custom-input"
+                      value={newTagCategory}
+                      onChange={(e) => setNewTagCategory(e.target.value)}
+                      placeholder="e.g., Fish, Invertebrate, Coral"
+                    />
+                  )}
+                </div>
               </div>
               <button
                 className="btn btn-primary"

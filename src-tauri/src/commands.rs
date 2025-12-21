@@ -1133,6 +1133,65 @@ pub fn remove_species_tag_from_photo(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn remove_species_tag_from_photos(
+    state: State<AppState>,
+    photo_ids: Vec<i64>,
+    species_tag_id: i64,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.remove_species_tag_from_photos(&photo_ids, species_tag_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_distinct_species_categories(state: State<AppState>) -> Result<Vec<String>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_distinct_species_categories().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_species_tag_category(
+    state: State<AppState>,
+    species_tag_id: i64,
+    category: Option<String>,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.update_species_tag_category(species_tag_id, category.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_common_species_tags_for_photos(
+    state: State<AppState>,
+    photo_ids: Vec<i64>,
+) -> Result<Vec<SpeciesTag>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_common_species_tags_for_photos(&photo_ids)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_common_general_tags_for_photos(
+    state: State<AppState>,
+    photo_ids: Vec<i64>,
+) -> Result<Vec<GeneralTag>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.get_common_general_tags_for_photos(&photo_ids)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_general_tag_from_photos(
+    state: State<AppState>,
+    photo_ids: Vec<i64>,
+    general_tag_id: i64,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.remove_general_tag_from_photos(&photo_ids, general_tag_id)
+        .map_err(|e| e.to_string())
+}
+
 // Photo management commands
 
 #[tauri::command]
@@ -1981,6 +2040,35 @@ pub fn open_in_editor(file_path: String, editor_path: Option<String>) -> Result<
             }
         }
     }
+    
+    Ok(())
+}
+
+// ==================== Secure Settings Commands ====================
+
+use tauri_plugin_store::StoreExt;
+
+/// Get a secure setting from encrypted local storage
+#[tauri::command]
+pub fn get_secure_setting(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    
+    let value = store.get(&key)
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    
+    Ok(value)
+}
+
+/// Set a secure setting in encrypted local storage
+#[tauri::command]
+pub fn set_secure_setting(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    
+    store.set(&key, serde_json::json!(value));
+    store.save()
+        .map_err(|e| format!("Failed to save secure store: {}", e))?;
     
     Ok(())
 }

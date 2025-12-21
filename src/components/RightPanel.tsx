@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
 import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult } from '../types';
-import { useSettings } from './SettingsModal';
+import { useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import './RightPanel.css';
 
@@ -30,7 +30,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [identifyError, setIdentifyError] = useState<string | null>(null);
   const [showContextInput, setShowContextInput] = useState(false);
   const [additionalContext, setAdditionalContext] = useState('');
-  const settings = useSettings();
+  const { apiKey: geminiApiKey } = useGeminiApiKey();
 
   // Load tags when photo changes (separate from rating to avoid unnecessary reloads)
   useEffect(() => {
@@ -145,7 +145,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const handleIdentifyClick = () => {
     if (!photo) return;
     
-    if (!settings.geminiApiKey) {
+    if (!geminiApiKey) {
       setIdentifyError('Please set your Google Gemini API key in Settings');
       return;
     }
@@ -163,7 +163,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const handleIdentifySpecies = async (userContext?: string) => {
     if (!photo) return;
     
-    if (!settings.geminiApiKey) {
+    if (!geminiApiKey) {
       setIdentifyError('Please set your Google Gemini API key in Settings');
       return;
     }
@@ -201,7 +201,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       }
       
       const result = await invoke<IdentificationResult>('identify_species_in_photo', {
-        apiKey: settings.geminiApiKey,
+        apiKey: geminiApiKey,
         photoId: photo.id,
         locationContext,
       });
@@ -476,8 +476,8 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                 <button
                   className="btn-identify"
                   onClick={handleIdentifyClick}
-                  disabled={identifying || !settings.geminiApiKey}
-                  title={!settings.geminiApiKey ? 'Set API key in Settings first' : speciesTags.length > 0 ? 'Re-identify with additional context' : 'Use AI to identify species'}
+                  disabled={identifying || !geminiApiKey}
+                  title={!geminiApiKey ? 'Set API key in Settings first' : speciesTags.length > 0 ? 'Re-identify with additional context' : 'Use AI to identify species'}
                 >
                   {identifying ? '🔄' : '🤖'} {identifying ? 'Identifying...' : speciesTags.length > 0 ? 'Re-ID' : 'AI ID'}
                 </button>

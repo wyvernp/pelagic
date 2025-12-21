@@ -23,16 +23,18 @@ export function GeneralTagModal({
   const [allTags, setAllTags] = useState<GeneralTag[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showCreateNew, setShowCreateNew] = useState(false);
+  const [appliedTagIds, setAppliedTagIds] = useState<Set<number>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Load all tags when modal opens
   useEffect(() => {
     if (isOpen) {
       loadAllTags();
+      loadAppliedTags();
       setSearchQuery('');
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [isOpen]);
+  }, [isOpen, selectedPhotoIds]);
 
   // Search as user types
   useEffect(() => {
@@ -53,6 +55,21 @@ export function GeneralTagModal({
     }
   };
 
+  const loadAppliedTags = async () => {
+    if (selectedPhotoIds.length === 0) {
+      setAppliedTagIds(new Set());
+      return;
+    }
+    try {
+      const tags = await invoke<GeneralTag[]>('get_common_general_tags_for_photos', {
+        photoIds: selectedPhotoIds,
+      });
+      setAppliedTagIds(new Set(tags.map(t => t.id)));
+    } catch (error) {
+      logger.error('Failed to load applied tags:', error);
+    }
+  };
+
   const searchTags = async (query: string) => {
     try {
       const tags = await invoke<GeneralTag[]>('search_general_tags', { query });
@@ -70,16 +87,50 @@ export function GeneralTagModal({
   const handleSelectTag = async (tag: GeneralTag) => {
     if (selectedPhotoIds.length === 0) return;
     
+    // Check if tag is already applied - if so, toggle it off
+    if (appliedTagIds.has(tag.id)) {
+      await handleRemoveTag(tag);
+      return;
+    }
+    
     setIsLoading(true);
     try {
       await invoke('add_general_tag_to_photos', {
         photoIds: selectedPhotoIds,
         generalTagId: tag.id,
       });
+      
+      // Update applied tags
+      setAppliedTagIds(prev => new Set([...prev, tag.id]));
       onTagsAdded();
     } catch (error) {
       logger.error('Failed to add general tag:', error);
       alert('Failed to add tag: ' + error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRemoveTag = async (tag: GeneralTag) => {
+    if (selectedPhotoIds.length === 0) return;
+    
+    setIsLoading(true);
+    try {
+      await invoke('remove_general_tag_from_photos', {
+        photoIds: selectedPhotoIds,
+        generalTagId: tag.id,
+      });
+      
+      // Update applied tags
+      setAppliedTagIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(tag.id);
+        return newSet;
+      });
+      onTagsAdded();
+    } catch (error) {
+      logger.error('Failed to remove general tag:', error);
+      alert('Failed to remove tag: ' + error);
     } finally {
       setIsLoading(false);
     }
@@ -102,6 +153,7 @@ export function GeneralTagModal({
       // Reload tags
       await loadAllTags();
       setSearchQuery('');
+      setAppliedTagIds(prev => new Set([...prev, tagId]));
       onTagsAdded();
     } catch (error) {
       logger.error('Failed to create and add tag:', error);
@@ -134,6 +186,9 @@ export function GeneralTagModal({
         <div className="modal-body">
           <p className="tag-info">
             Adding tags to <strong>{selectedPhotoIds.length}</strong> photo{selectedPhotoIds.length !== 1 ? 's' : ''}
+            {appliedTagIds.size > 0 && (
+              <span className="applied-count"> • {appliedTagIds.size} tag{appliedTagIds.size !== 1 ? 's' : ''} applied</span>
+            )}
           </p>
 
           <div className="search-input-wrapper">
@@ -170,10 +225,14 @@ export function GeneralTagModal({
             {searchResults.map((tag) => (
               <button
                 key={tag.id}
-                className="tag-item"
+                className={`tag-item ${appliedTagIds.has(tag.id) ? 'applied' : ''}`}
                 onClick={() => handleSelectTag(tag)}
                 disabled={isLoading}
+                title={appliedTagIds.has(tag.id) ? 'Click to remove' : 'Click to add'}
               >
+                {appliedTagIds.has(tag.id) && (
+                  <span className="tag-checkmark">✓</span>
+                )}
                 <span className="tag-icon">🏷️</span>
                 <span className="tag-name">{tag.name}</span>
               </button>

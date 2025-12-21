@@ -2174,6 +2174,165 @@ impl Database {
         Ok(tags)
     }
     
+    /// Get distinct species categories (user-extensible)
+    /// Returns existing categories from database, merged with default suggestions
+    pub fn get_distinct_species_categories(&self) -> Result<Vec<String>> {
+        // Default categories to suggest if not already present
+        let defaults = vec![
+            "Fish", "Nudibranch", "Coral", "Invertebrate", "Cephalopod",
+            "Crustacean", "Mammal", "Reptile", "Shark/Ray", "Jellyfish", "Plant/Algae"
+        ];
+        
+        // Get existing categories from database
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT category FROM species_tags 
+             WHERE category IS NOT NULL AND category != ''
+             ORDER BY category"
+        )?;
+        
+        let db_categories: Vec<String> = stmt.query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        
+        // Merge defaults with existing, avoiding duplicates (case-insensitive)
+        let mut result: Vec<String> = db_categories.clone();
+        for default in defaults {
+            let default_lower = default.to_lowercase();
+            if !result.iter().any(|c| c.to_lowercase() == default_lower) {
+                result.push(default.to_string());
+            }
+        }
+        
+        // Sort alphabetically
+        result.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        
+        Ok(result)
+    }
+    
+    /// Update the category for a species tag
+    pub fn update_species_tag_category(&self, species_tag_id: i64, category: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE species_tags SET category = ? WHERE id = ?",
+            params![category, species_tag_id],
+        )?;
+        Ok(())
+    }
+    
+    /// Get species tags that are applied to ALL of the given photos (intersection)
+    pub fn get_common_species_tags_for_photos(&self, photo_ids: &[i64]) -> Result<Vec<SpeciesTag>> {
+        if photo_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let photo_count = photo_ids.len() as i64;
+        
+        // Find tags that appear in ALL photos (count matches photo count)
+        let query = format!(
+            "SELECT st.id, st.name, st.category, st.scientific_name
+             FROM species_tags st
+             JOIN photo_species_tags pst ON st.id = pst.species_tag_id
+             WHERE pst.photo_id IN ({})
+             GROUP BY st.id
+             HAVING COUNT(DISTINCT pst.photo_id) = ?
+             ORDER BY st.name",
+            placeholders
+        );
+        
+        let mut stmt = self.conn.prepare(&query)?;
+        
+        let mut params: Vec<&dyn rusqlite::ToSql> = photo_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        params.push(&photo_count);
+        
+        let tags = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(SpeciesTag {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                category: row.get(2)?,
+                scientific_name: row.get(3)?,
+            })
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        
+        Ok(tags)
+    }
+    
+    /// Get general tags that are applied to ALL of the given photos (intersection)
+    pub fn get_common_general_tags_for_photos(&self, photo_ids: &[i64]) -> Result<Vec<GeneralTag>> {
+        if photo_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let photo_count = photo_ids.len() as i64;
+        
+        let query = format!(
+            "SELECT gt.id, gt.name
+             FROM general_tags gt
+             JOIN photo_general_tags pgt ON gt.id = pgt.general_tag_id
+             WHERE pgt.photo_id IN ({})
+             GROUP BY gt.id
+             HAVING COUNT(DISTINCT pgt.photo_id) = ?
+             ORDER BY gt.name",
+            placeholders
+        );
+        
+        let mut stmt = self.conn.prepare(&query)?;
+        
+        let mut params: Vec<&dyn rusqlite::ToSql> = photo_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        params.push(&photo_count);
+        
+        let tags = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok(GeneralTag {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        
+        Ok(tags)
+    }
+    
+    /// Remove a species tag from multiple photos
+    pub fn remove_species_tag_from_photos(&self, photo_ids: &[i64], species_tag_id: i64) -> Result<i64> {
+        if photo_ids.is_empty() {
+            return Ok(0);
+        }
+        
+        let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "DELETE FROM photo_species_tags WHERE species_tag_id = ? AND photo_id IN ({})",
+            placeholders
+        );
+        
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&species_tag_id];
+        for id in photo_ids {
+            params.push(id);
+        }
+        
+        self.conn.execute(&query, rusqlite::params_from_iter(params))?;
+        Ok(self.conn.changes() as i64)
+    }
+    
+    /// Remove a general tag from multiple photos
+    pub fn remove_general_tag_from_photos(&self, photo_ids: &[i64], general_tag_id: i64) -> Result<i64> {
+        if photo_ids.is_empty() {
+            return Ok(0);
+        }
+        
+        let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "DELETE FROM photo_general_tags WHERE general_tag_id = ? AND photo_id IN ({})",
+            placeholders
+        );
+        
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&general_tag_id];
+        for id in photo_ids {
+            params.push(id);
+        }
+        
+        self.conn.execute(&query, rusqlite::params_from_iter(params))?;
+        Ok(self.conn.changes() as i64)
+    }
+    
     // Statistics functions
     
     /// Get overall statistics

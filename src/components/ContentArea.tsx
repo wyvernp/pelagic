@@ -4,7 +4,7 @@ import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirec
 import { DiveProfile } from './DiveProfile';
 import { ContentGrid } from './ContentGrid';
 import { StatsBar } from './StatsBar';
-import { useSettings } from './SettingsModal';
+import { useSettings, useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import { confirmDialog } from '../utils/dialogs';
 import './ContentArea.css';
@@ -75,6 +75,7 @@ export function ContentArea({
   const [batchIdentifying, setBatchIdentifying] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{current: number; total: number} | null>(null);
   const settings = useSettings();
+  const { apiKey: geminiApiKey } = useGeminiApiKey();
 
   // Open selected photo(s) in external editor
   const handleOpenInEditor = async () => {
@@ -126,7 +127,7 @@ export function ContentArea({
 
   // Batch AI species identification
   const handleBatchIdentify = async () => {
-    if (!settings.geminiApiKey) {
+    if (!geminiApiKey) {
       alert('Please set your Google Gemini API key in Settings first');
       return;
     }
@@ -161,7 +162,7 @@ export function ContentArea({
     
     try {
       const results = await invoke<IdentificationResult[]>('identify_species_batch', {
-        apiKey: settings.geminiApiKey,
+        apiKey: geminiApiKey,
         photoIds,
         locationContext,
       });
@@ -535,8 +536,8 @@ export function ContentArea({
             <button 
               className="toolbar-btn ai-btn"
               onClick={handleBatchIdentify}
-              disabled={batchIdentifying || !settings.geminiApiKey}
-              title={!settings.geminiApiKey ? 'Set API key in Settings first' : 'AI identify species in selected photos'}
+              disabled={batchIdentifying || !geminiApiKey}
+              title={!geminiApiKey ? 'Set API key in Settings first' : 'AI identify species in selected photos'}
             >
               <span className="btn-icon">{batchIdentifying ? '⏳' : '🤖'}</span>
               {batchIdentifying ? 'Identifying...' : 'AI ID All'}

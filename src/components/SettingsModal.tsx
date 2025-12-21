@@ -14,7 +14,7 @@ export interface AppSettings {
   thumbnailSize: 'small' | 'medium' | 'large';
   showFilenames: boolean;
   showRatings: boolean;
-  geminiApiKey: string;
+  // geminiApiKey is now stored securely via Tauri, not in localStorage
   defaultImageEditor: string; // Path to default editor, empty = system default
   diveNamePrefix: string; // Prefix for dive names, e.g., "Dive", "Plongée", etc.
   hasCompletedWelcome: boolean; // Whether user has completed the welcome setup
@@ -24,7 +24,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   thumbnailSize: 'medium',
   showFilenames: true,
   showRatings: true,
-  geminiApiKey: '',
   defaultImageEditor: '',
   diveNamePrefix: 'Dive',
   hasCompletedWelcome: false,
@@ -32,6 +31,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [saved, setSaved] = useState(false);
   const [rescanning, setRescanning] = useState(false);
   const [rescanResult, setRescanResult] = useState<string | null>(null);
@@ -51,14 +51,45 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const stored = localStorage.getItem('pelagic-settings');
     if (stored) {
       try {
-        setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+        const parsed = JSON.parse(stored);
+        // Extract geminiApiKey if it exists in old localStorage (for migration)
+        const { geminiApiKey: oldApiKey, ...otherSettings } = parsed;
+        setSettings({ ...DEFAULT_SETTINGS, ...otherSettings });
+        
+        // Migrate API key from localStorage to secure storage if present
+        if (oldApiKey) {
+          invoke('set_secure_setting', { key: 'geminiApiKey', value: oldApiKey })
+            .then(() => {
+              setGeminiApiKey(oldApiKey);
+              // Remove API key from localStorage after successful migration
+              const cleanSettings = { ...DEFAULT_SETTINGS, ...otherSettings };
+              localStorage.setItem('pelagic-settings', JSON.stringify(cleanSettings));
+              logger.info('Migrated API key to secure storage');
+            })
+            .catch((error) => {
+              logger.error('Failed to migrate API key to secure storage:', error);
+              // Still show the key in the UI so user doesn't lose it
+              setGeminiApiKey(oldApiKey);
+            });
+        }
       } catch {
         // Use defaults if parse fails
       }
     }
     
-    // Detect installed editors when modal opens
+    // Load API key from secure storage
     if (isOpen) {
+      invoke<string | null>('get_secure_setting', { key: 'geminiApiKey' })
+        .then((key) => {
+          if (key) {
+            setGeminiApiKey(key);
+          }
+        })
+        .catch((error) => {
+          logger.error('Failed to load API key from secure storage:', error);
+        });
+      
+      // Detect installed editors when modal opens
       setLoadingEditors(true);
       invoke<ImageEditor[]>('detect_image_editors')
         .then((editors) => {
@@ -148,8 +179,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     return parts[parts.length - 1] || path;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    // Save non-sensitive settings to localStorage
     localStorage.setItem('pelagic-settings', JSON.stringify(settings));
+    
+    // Save API key to secure storage
+    try {
+      await invoke('set_secure_setting', { key: 'geminiApiKey', value: geminiApiKey });
+    } catch (error) {
+      logger.error('Failed to save API key to secure storage:', error);
+    }
+    
     // Dispatch a custom event so useSettings hook can update in the same window
     window.dispatchEvent(new CustomEvent('pelagic-settings-changed'));
     setSaved(true);
@@ -366,8 +406,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <input
                 type="password"
                 className="setting-input"
-                value={settings.geminiApiKey}
-                onChange={(e) => handleChange('geminiApiKey', e.target.value)}
+                value={geminiApiKey}
+                onChange={(e) => setGeminiApiKey(e.target.value)}
                 placeholder="Enter API key..."
               />
             </div>
@@ -403,7 +443,10 @@ export function useSettings(): AppSettings {
     const stored = localStorage.getItem('pelagic-settings');
     if (stored) {
       try {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+        const parsed = JSON.parse(stored);
+        // Remove geminiApiKey from parsed settings (it's now stored securely)
+        const { geminiApiKey: _, ...cleanSettings } = parsed;
+        return { ...DEFAULT_SETTINGS, ...cleanSettings };
       } catch {
         return DEFAULT_SETTINGS;
       }
@@ -416,7 +459,10 @@ export function useSettings(): AppSettings {
       const stored = localStorage.getItem('pelagic-settings');
       if (stored) {
         try {
-          setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(stored) });
+          const parsed = JSON.parse(stored);
+          // Remove geminiApiKey from parsed settings (it's now stored securely)
+          const { geminiApiKey: _, ...cleanSettings } = parsed;
+          setSettings({ ...DEFAULT_SETTINGS, ...cleanSettings });
         } catch {
           // Use defaults
         }
@@ -435,4 +481,43 @@ export function useSettings(): AppSettings {
   }, []);
 
   return settings;
+}
+
+// Hook to get the Gemini API key from secure storage
+// Returns { apiKey, loading, error } - components should check loading state
+export function useGeminiApiKey(): { apiKey: string; loading: boolean; error: string | null } {
+  const [apiKey, setApiKey] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadApiKey = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const key = await invoke<string | null>('get_secure_setting', { key: 'geminiApiKey' });
+        setApiKey(key || '');
+      } catch (err) {
+        setError(String(err));
+        logger.error('Failed to load API key from secure storage:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadApiKey();
+
+    // Listen for settings changes to reload API key
+    const handleSettingsChanged = () => {
+      loadApiKey();
+    };
+
+    window.addEventListener('pelagic-settings-changed', handleSettingsChanged);
+    
+    return () => {
+      window.removeEventListener('pelagic-settings-changed', handleSettingsChanged);
+    };
+  }, []);
+
+  return { apiKey, loading, error };
 }
