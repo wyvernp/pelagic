@@ -437,6 +437,13 @@ export const ContentGrid = memo(function ContentGrid({
   // Check if we have content to display, or if we're still loading
   const isLoadingDives = viewMode === 'trip' && dives.length > 0 && divesWithDetails.length === 0;
   
+  // Memoize photo click handler to prevent recreation on each render
+  const handlePhotoClick = useCallback((photoId: number, e: React.MouseEvent) => {
+    // Multi-select with Ctrl/Cmd or Shift
+    const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
+    onSelectPhoto(photoId, multiSelect);
+  }, [onSelectPhoto]);
+
   // Early return for empty state - AFTER all hooks
   // Don't show empty state while loading
   if (!hasDives && !hasPhotos && !isLoadingDives) {
@@ -452,12 +459,6 @@ export const ContentGrid = memo(function ContentGrid({
       </div>
     );
   }
-
-  const handlePhotoClick = (photoId: number, e: React.MouseEvent) => {
-    // Multi-select with Ctrl/Cmd or Shift
-    const multiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
-    onSelectPhoto(photoId, multiSelect);
-  };
 
   const handleDiveCardClick = (diveId: number, e: React.MouseEvent) => {
     if (bulkEditMode && onToggleDiveSelection) {
@@ -554,7 +555,7 @@ export const ContentGrid = memo(function ContentGrid({
                         <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
                           <path d="M15 13V5c0-1.66-1.34-3-3-3S9 3.34 9 5v8c-1.21.91-2 2.37-2 4 0 2.76 2.24 5 5 5s5-2.24 5-5c0-1.63-.79-3.09-2-4z"/>
                         </svg>
-                        {dive.water_temp_c}°
+                        {dive.water_temp_c.toFixed(1)}°
                       </span>
                     )}
                     {photo_count > 0 && (

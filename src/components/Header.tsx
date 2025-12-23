@@ -22,20 +22,20 @@ export function Header({ onImportPhotos, onOpenStatistics, onOpenExport, onOpenS
       </div>
       
       <div className="header-actions">
-        <button className="header-btn header-btn-search" title="Search (Ctrl+K)" onClick={onOpenSearch}>
+        <button id="search-btn" className="header-btn header-btn-search" title="Search (Ctrl+K)" onClick={onOpenSearch}>
           <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
             <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
           </svg>
           <span>Search</span>
           <kbd className="header-kbd">Ctrl+K</kbd>
         </button>
-        <button className="header-btn header-btn-accent" title="Import Dives" onClick={onOpenDiveComputer}>
+        <button id="import-dives-btn" className="header-btn header-btn-accent" title="Import Dives" onClick={onOpenDiveComputer}>
           <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
             <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
           </svg>
           <span>Import Dives</span>
         </button>
-        <button className="header-btn" title="Import Photos" onClick={onImportPhotos}>
+        <button id="import-photos-btn" className="header-btn" title="Import Photos" onClick={onImportPhotos}>
           <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
             <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
           </svg>

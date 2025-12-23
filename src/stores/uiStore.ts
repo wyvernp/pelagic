@@ -35,6 +35,9 @@ interface UIState {
   modalContext: ModalContext;
   sidebarWidth: number;
   isResizing: boolean;
+  // Walkthrough tour state
+  isTourRunning: boolean;
+  hasCompletedTour: boolean;
 }
 
 interface UIActions {
@@ -44,6 +47,10 @@ interface UIActions {
   setSidebarWidth: (width: number) => void;
   setIsResizing: (isResizing: boolean) => void;
   saveSidebarWidth: () => void;
+  // Tour actions
+  startTour: () => void;
+  endTour: (completed: boolean) => void;
+  resetTour: () => void;
 }
 
 type UIStore = UIState & UIActions;
@@ -54,16 +61,34 @@ const getInitialSidebarWidth = (): number => {
   return saved ? parseInt(saved, 10) : 280;
 };
 
+const getHasCompletedTour = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const saved = localStorage.getItem('pelagic-settings');
+  if (saved) {
+    try {
+      const settings = JSON.parse(saved);
+      return settings.hasCompletedTour === true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+};
+
 export const useUIStore = create<UIStore>((set, get) => ({
   activeModal: null,
   modalContext: {},
   sidebarWidth: getInitialSidebarWidth(),
   isResizing: false,
+  isTourRunning: false,
+  hasCompletedTour: getHasCompletedTour(),
 
   openModal: (name, context) =>
     set((state) => ({
       activeModal: name,
       modalContext: context ? { ...state.modalContext, ...context } : state.modalContext,
+      // Pause tour when modal opens
+      isTourRunning: false,
     })),
 
   closeModal: () =>
@@ -83,6 +108,29 @@ export const useUIStore = create<UIStore>((set, get) => ({
   saveSidebarWidth: () => {
     const { sidebarWidth } = get();
     localStorage.setItem('pelagic-sidebar-width', sidebarWidth.toString());
+  },
+
+  startTour: () =>
+    set({ isTourRunning: true }),
+
+  endTour: (completed: boolean) => {
+    set({ isTourRunning: false, hasCompletedTour: completed });
+    if (completed) {
+      // Save to localStorage
+      const saved = localStorage.getItem('pelagic-settings');
+      const settings = saved ? JSON.parse(saved) : {};
+      settings.hasCompletedTour = true;
+      localStorage.setItem('pelagic-settings', JSON.stringify(settings));
+    }
+  },
+
+  resetTour: () => {
+    // Clear the hasCompletedTour flag from localStorage
+    const saved = localStorage.getItem('pelagic-settings');
+    const settings = saved ? JSON.parse(saved) : {};
+    settings.hasCompletedTour = false;
+    localStorage.setItem('pelagic-settings', JSON.stringify(settings));
+    set({ hasCompletedTour: false, isTourRunning: true });
   },
 }));
 

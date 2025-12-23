@@ -27,11 +27,15 @@ import { SearchBar } from './components/SearchBar';
 import { BatchOperationsModal } from './components/BatchOperationsModal';
 import { SettingsModal, type AppSettings } from './components/SettingsModal';
 import { WelcomeModal } from './components/WelcomeModal';
+import { WalkthroughTour } from './components/WalkthroughTour';
 import { MapView } from './components/MapView';
 import { DiveComputerModal } from './components/DiveComputerModal';
 import { EquipmentModal } from './components/EquipmentModal';
 import { BulkEditDiveModal, type BulkDiveFormData } from './components/BulkEditDiveModal';
 import type { Photo } from './types';
+
+// Check if we're in dev mode
+const isDev = import.meta.env.DEV;
 
 function App() {
   // Navigation store
@@ -91,12 +95,16 @@ function App() {
     modalContext,
     sidebarWidth,
     isResizing,
+    isTourRunning,
+    hasCompletedTour,
     openModal,
     closeModal,
     updateModalContext,
     setSidebarWidth,
     setIsResizing,
     saveSidebarWidth,
+    startTour,
+    endTour,
   } = useUIStore();
 
   // Sidebar resize handlers
@@ -190,18 +198,24 @@ function App() {
   }, [loadTrips]);
 
   // Check if we need to show welcome modal on first boot
+  // In dev mode, always show the tour (but not the welcome modal if already completed)
   useEffect(() => {
     const savedSettings = localStorage.getItem('pelagic-settings');
     if (savedSettings) {
       const settings = JSON.parse(savedSettings) as AppSettings;
       if (!settings.hasCompletedWelcome) {
         openModal('welcome');
+      } else if (isDev) {
+        // In dev mode, auto-start tour even if welcome is completed
+        setTimeout(() => {
+          startTour();
+        }, 500);
       }
     } else {
       // No settings at all, definitely first boot
       openModal('welcome');
     }
-  }, [openModal]);
+  }, [openModal, startTour]);
 
   // Regenerate thumbnails in background ONE AT A TIME (non-blocking)
   useEffect(() => {
@@ -704,7 +718,27 @@ function App() {
     localStorage.setItem('pelagic-settings', JSON.stringify(settings));
     window.dispatchEvent(new Event('pelagic-settings-changed'));
     closeModal();
-  }, [closeModal]);
+    
+    // Start the walkthrough tour after welcome modal
+    // In dev mode: always show tour
+    // In production: only show if not completed before
+    if (isDev || !hasCompletedTour) {
+      // Small delay to let the modal close animation complete
+      setTimeout(() => {
+        startTour();
+      }, 300);
+    }
+  }, [closeModal, hasCompletedTour, startTour]);
+
+  const handleTourComplete = useCallback(() => {
+    // In dev mode, don't persist completion so it shows every time
+    endTour(!isDev);
+  }, [endTour]);
+
+  const handleTourSkip = useCallback(() => {
+    // Even when skipped, mark as completed (except in dev mode)
+    endTour(!isDev);
+  }, [endTour]);
 
   const handleMapSelectDive = useCallback((tripId: number, diveId: number) => {
     handleSelectTrip(tripId);
@@ -920,6 +954,11 @@ function App() {
         selectedDiveIds={Array.from(selectedDiveIds)}
         onClose={closeModal}
         onSubmit={handleBulkEditSubmit}
+      />
+      <WalkthroughTour
+        run={isTourRunning}
+        onComplete={handleTourComplete}
+        onSkip={handleTourSkip}
       />
     </div>
   );

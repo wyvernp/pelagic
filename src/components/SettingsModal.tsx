@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { logger } from '../utils/logger';
+import { useUIStore } from '../stores/uiStore';
 import type { ImageEditor } from '../types';
 import './SettingsModal.css';
 
@@ -45,6 +46,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [rescanResult, setRescanResult] = useState<string | null>(null);
   const [detectedEditors, setDetectedEditors] = useState<ImageEditor[]>([]);
   const [loadingEditors, setLoadingEditors] = useState(false);
+  
+  const resetTour = useUIStore((state) => state.resetTour);
 
   const openExternalUrl = async (url: string) => {
     try {
@@ -419,6 +422,26 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 onChange={(e) => setGeminiApiKey(e.target.value)}
                 placeholder="Enter API key..."
               />
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Help</h3>
+            
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">App Tutorial</span>
+                <span className="setting-desc">Restart the walkthrough tour to learn about Pelagic's features</span>
+              </label>
+              <button 
+                className="btn btn-secondary"
+                onClick={() => {
+                  resetTour();
+                  onClose();
+                }}
+              >
+                🎓 Restart Tutorial
+              </button>
             </div>
           </div>
 

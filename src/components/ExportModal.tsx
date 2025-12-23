@@ -106,7 +106,7 @@ export function ExportModal({ isOpen, onClose, selectedTrip, selectedPhotoIds = 
           time: d.dive.time,
           duration: formatDuration(d.dive.duration_seconds),
           maxDepth: `${d.dive.max_depth_m.toFixed(1)}m`,
-          waterTemp: d.dive.water_temp_c ? `${d.dive.water_temp_c}°C` : null,
+          waterTemp: d.dive.water_temp_c ? `${d.dive.water_temp_c.toFixed(1)}°C` : null,
           location: d.dive.location,
           buddy: d.dive.buddy,
           comments: d.dive.comments,
