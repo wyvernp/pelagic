@@ -2245,7 +2245,14 @@ pub struct ImageEditor {
 
 /// Detect installed image editors on the system
 #[tauri::command]
-pub fn detect_image_editors() -> Result<Vec<ImageEditor>, String> {
+pub async fn detect_image_editors() -> Result<Vec<ImageEditor>, String> {
+    // Run the detection in a blocking task to avoid blocking the main thread
+    tokio::task::spawn_blocking(detect_image_editors_sync)
+        .await
+        .map_err(|e| format!("Failed to detect editors: {}", e))?
+}
+
+fn detect_image_editors_sync() -> Result<Vec<ImageEditor>, String> {
     let mut editors = Vec::new();
     
     #[cfg(target_os = "windows")]

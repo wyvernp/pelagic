@@ -87,7 +87,8 @@ export const useDataStore = create<DataStore>((set, get) => ({
 
   loadPhotosForDive: async (diveId) => {
     const { photosCache, currentDiveId } = get();
-    const cacheKey = `dive_${diveId}`;
+    // Use negative diveId as cache key to distinguish from trip IDs (positive)
+    const cacheKey = -diveId;
     
     // If already viewing this dive with photos loaded, skip fetch
     if (currentDiveId === diveId && get().photos.length > 0) {
@@ -95,7 +96,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
     }
     
     // Check cache first
-    const cached = photosCache.get(cacheKey as unknown as number);
+    const cached = photosCache.get(cacheKey);
     if (cached) {
       logger.debug(`Using cached photos for dive ${diveId}`);
       set({ photos: cached, currentDiveId: diveId });
@@ -104,10 +105,9 @@ export const useDataStore = create<DataStore>((set, get) => ({
     
     try {
       const result = await invoke<Photo[]>('get_photos_for_dive', { diveId });
-      // Update cache and state - use string key stored as entry
+      // Update cache and state
       const newCache = new Map(get().photosCache);
-      // Store with numeric key for dive (negative to distinguish from trip)
-      newCache.set(-diveId, result);
+      newCache.set(cacheKey, result);
       set({ photos: result, photosCache: newCache, currentDiveId: diveId });
     } catch (error) {
       logger.error('Failed to load photos:', error);
