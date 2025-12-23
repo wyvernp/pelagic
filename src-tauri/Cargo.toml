@@ -28,6 +28,8 @@ tauri-plugin-fs = "2.0"
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
 
 # XML parsing for .ssrf files
 quick-xml = { version = "0.36", features = ["serialize"] }
@@ -38,11 +40,12 @@ fitparser = "0.10"
 # Image processing
 image = "0.25"
 
-# RAW image processing (DNG, CR2, NEF, etc.)
+# RAW image processing (DNG, CR2, NEF, etc.) for thumbnail/viewing
 rawloader = "0.37"
 imagepipe = "0.5"
+rawler = "0.7"  # Fallback decoder with CR3 support (from dnglab)
 
-# EXIF metadata
+# EXIF metadata extraction
 kamadak-exif = "0.5"
 
 # Date/time

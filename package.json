@@ -1,6 +1,6 @@
 {
   "name": "pelagic",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "description": "Dive photo manager for organizing underwater photography by trips and dives",
   "type": "module",
   "scripts": {
@@ -26,7 +26,8 @@
     "leaflet": "^1.9.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-window": "^2.2.3"
+    "react-window": "^2.2.3",
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4",

@@ -263,9 +263,15 @@
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 16px;
+  margin-bottom: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-color);
+}
+
+.section-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 12px 0;
 }
 
 .section-icon {
@@ -283,7 +289,8 @@
 }
 
 .species-grid,
-.tags-grid {
+.tags-grid,
+.dive-sites-grid {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
@@ -307,12 +314,14 @@
 }
 
 .species-card,
-.tag-card {
+.tag-card,
+.dive-site-card {
   cursor: default;
 }
 
 .species-card:hover,
-.tag-card:hover {
+.tag-card:hover,
+.dive-site-card:hover {
   transform: none;
   border-color: var(--border-color);
 }

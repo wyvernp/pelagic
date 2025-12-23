@@ -1,12 +1,20 @@
 use fitparser::{self, FitDataRecord, Value};
 use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::io::BufReader;
 
 fn main() {
-    let path = "../garmin2025-09-16-11-19-18.fit";
+    let args: Vec<String> = env::args().collect();
+    let path = if args.len() > 1 {
+        args[1].clone()
+    } else {
+        "../garmin2025-09-16-11-19-18.fit".to_string()
+    };
     
-    let file = File::open(path).expect("Failed to open FIT file");
+    println!("Reading FIT file: {}\n", path);
+    
+    let file = File::open(&path).expect("Failed to open FIT file");
     let mut reader = BufReader::new(file);
     
     let records = fitparser::from_reader(&mut reader).expect("Failed to parse FIT file");

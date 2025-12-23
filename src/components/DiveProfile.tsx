@@ -7,7 +7,7 @@ import { AxisBottom, AxisLeft, AxisRight } from '@visx/axis';
 import { GridRows } from '@visx/grid';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
-import type { Dive, TankPressure } from '../types';
+import type { Dive, TankPressure, DiveTank } from '../types';
 import './DiveProfile.css';
 
 interface DiveSample {
@@ -62,18 +62,23 @@ export function DiveProfile({
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 220 });
   const [tankPressures, setTankPressures] = useState<TankPressure[]>([]);
+  const [diveTanks, setDiveTanks] = useState<DiveTank[]>([]);
 
-  // Fetch tank pressures from database
+  // Fetch tank pressures and dive tanks from database
   useEffect(() => {
-    async function fetchTankPressures() {
+    async function fetchTankData() {
       try {
-        const pressures = await invoke<TankPressure[]>('get_tank_pressures', { diveId: dive.id });
+        const [pressures, tanks] = await Promise.all([
+          invoke<TankPressure[]>('get_tank_pressures', { diveId: dive.id }),
+          invoke<DiveTank[]>('get_dive_tanks', { diveId: dive.id }),
+        ]);
         setTankPressures(pressures);
+        setDiveTanks(tanks);
       } catch (e) {
-        logger.error('Failed to fetch tank pressures:', e);
+        logger.error('Failed to fetch tank data:', e);
       }
     }
-    fetchTankPressures();
+    fetchTankData();
   }, [dive.id]);
 
   // Responsive sizing
@@ -245,9 +250,17 @@ export function DiveProfile({
             <span className="stat-label">Air Used</span>
           </div>
         )}
-        {dive.nitrox_o2_percent && dive.nitrox_o2_percent > 21 && (
+        {diveTanks.length > 0 && diveTanks.some(t => t.o2_percent && t.o2_percent !== 21) && (
           <div className="stat">
-            <span className="stat-value">EAN{dive.nitrox_o2_percent.toFixed(0)}</span>
+            <span className="stat-value">
+              {diveTanks.map(t => {
+                if (!t.o2_percent || t.o2_percent === 21) return null;
+                if (t.he_percent && t.he_percent > 0) {
+                  return `TX${t.o2_percent}/${t.he_percent}`;
+                }
+                return `EAN${t.o2_percent}`;
+              }).filter(Boolean).join(', ')}
+            </span>
             <span className="stat-label">Gas</span>
           </div>
         )}

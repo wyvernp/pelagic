@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { format } from 'date-fns';
 import type { Trip, Dive } from '../types';
 import { useSettings } from './SettingsModal';
+import { formatDiveName } from '../utils/diveNames';
 import './Sidebar.css';
 
 interface SidebarProps {
@@ -136,8 +137,8 @@ export function Sidebar({
                               )}
                               <div className="dive-text">
                                 <span className={`dive-number ${!settings.diveNamePrefix ? 'number-only' : ''}`}>
-                                  {settings.diveNamePrefix ? `${settings.diveNamePrefix} ${dive.dive_number}` : dive.dive_number}
-                                  {dive.location && <span className="dive-location">{settings.diveNamePrefix ? ` (${dive.location})` : ` ${dive.location}`}</span>}
+                                  {formatDiveName(settings.diveNamePrefix, dive.dive_number)}
+                                  {dive.location && <span className="dive-location"> {dive.location}</span>}
                                 </span>
                               </div>
                               <span className="dive-depth">{dive.max_depth_m.toFixed(1)}m</span>

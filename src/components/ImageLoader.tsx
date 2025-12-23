@@ -2,9 +2,15 @@ import { useState, useEffect, memo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 
-// LRU Cache for image data URLs to avoid re-fetching on scroll
-const IMAGE_CACHE_MAX_SIZE = 300;
+// LRU Cache for image data URLs
+// Thumbnails are typically ~5-20KB each as base64
+// With 500 entries and 150MB limit, we can cache multiple trips worth of thumbnails
+const IMAGE_CACHE_MAX_SIZE = 500;
 const imageCache = new Map<string, string>();
+
+// Track approximate cache memory usage
+let cacheMemoryBytes = 0;
+const MAX_CACHE_MEMORY_BYTES = 150 * 1024 * 1024; // 150MB limit
 
 function getCachedImage(filePath: string): string | undefined {
   const cached = imageCache.get(filePath);
@@ -17,14 +23,44 @@ function getCachedImage(filePath: string): string | undefined {
 }
 
 function setCachedImage(filePath: string, dataUrl: string): void {
-  // Evict oldest entries if at capacity
-  if (imageCache.size >= IMAGE_CACHE_MAX_SIZE) {
+  // Don't re-add if already cached
+  if (imageCache.has(filePath)) {
+    return;
+  }
+  
+  const entrySize = dataUrl.length * 2; // Approximate bytes (UTF-16)
+  
+  // Evict entries if we're over memory limit or entry count limit
+  while (
+    (cacheMemoryBytes + entrySize > MAX_CACHE_MEMORY_BYTES || imageCache.size >= IMAGE_CACHE_MAX_SIZE) 
+    && imageCache.size > 0
+  ) {
     const firstKey = imageCache.keys().next().value;
     if (firstKey) {
+      const evicted = imageCache.get(firstKey);
+      if (evicted) {
+        cacheMemoryBytes -= evicted.length * 2;
+      }
       imageCache.delete(firstKey);
     }
   }
+  
   imageCache.set(filePath, dataUrl);
+  cacheMemoryBytes += entrySize;
+}
+
+// Export function to clear cache (only call on explicit user action or memory pressure)
+export function clearImageCache(): void {
+  imageCache.clear();
+  cacheMemoryBytes = 0;
+}
+
+// Export cache stats for debugging
+export function getImageCacheStats(): { size: number; memoryMB: number } {
+  return {
+    size: imageCache.size,
+    memoryMB: Math.round(cacheMemoryBytes / 1024 / 1024 * 10) / 10,
+  };
 }
 
 interface ImageLoaderProps {
@@ -44,18 +80,21 @@ export const ImageLoader = memo(function ImageLoader({
   className,
   placeholderClassName,
 }: ImageLoaderProps) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // Initialize with cached value if available (synchronous, no loading state)
+  const initialCached = filePath ? getCachedImage(filePath) : null;
+  const [dataUrl, setDataUrl] = useState<string | null>(initialCached ?? null);
+  const [loading, setLoading] = useState(!initialCached && !!filePath);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     if (!filePath) {
       setDataUrl(null);
+      setLoading(false);
       setError(false);
       return;
     }
 
-    // Check cache first
+    // Check cache first (in case filePath changed)
     const cached = getCachedImage(filePath);
     if (cached) {
       setDataUrl(cached);

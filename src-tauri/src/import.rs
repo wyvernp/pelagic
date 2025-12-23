@@ -1,7 +1,7 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::path::Path;
-use crate::db::{Dive, DiveSample, DiveEvent, Database, TankPressure};
+use crate::db::{Dive, DiveSample, DiveEvent, Db, TankPressure, DiveTank};
 
 #[derive(Debug)]
 pub struct ImportedDive {
@@ -9,6 +9,7 @@ pub struct ImportedDive {
     pub samples: Vec<DiveSample>,
     pub events: Vec<DiveEvent>,
     pub tank_pressures: Vec<TankPressure>,
+    pub tanks: Vec<DiveTank>,
 }
 
 #[derive(Debug)]
@@ -50,8 +51,10 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
     let mut current_dive: Option<Dive> = None;
     let mut current_samples: Vec<DiveSample> = Vec::new();
     let mut current_events: Vec<DiveEvent> = Vec::new();
+    let mut current_tank_pressures: Vec<TankPressure> = Vec::new();
+    let mut current_tanks: Vec<DiveTank> = Vec::new();
     let mut in_divecomputer = false;
-    let mut current_o2_percent: Option<f64> = None;
+    let mut cylinder_index: i32 = 0;
     
     let mut buf = Vec::new();
     
@@ -74,7 +77,6 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                             surface_pressure_bar: None,
                             otu: None,
                             cns_percent: None,
-                            nitrox_o2_percent: None,
                             dive_computer_model: None,
                             dive_computer_serial: None,
                             location: None,
@@ -126,15 +128,52 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                         current_dive = Some(dive);
                         current_samples.clear();
                         current_events.clear();
-                        current_o2_percent = None;
+                        current_tank_pressures.clear();
+                        current_tanks.clear();
+                        cylinder_index = 0;
                     }
                     b"cylinder" => {
+                        // Parse cylinder/tank with gas mix info
+                        let mut o2_percent: Option<f64> = None;
+                        let mut he_percent: Option<f64> = None;
+                        let mut start_pressure: Option<f64> = None;
+                        let mut end_pressure: Option<f64> = None;
+                        
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"o2" {
-                                let o2_str = String::from_utf8_lossy(&attr.value);
-                                current_o2_percent = o2_str.trim_end_matches('%').parse().ok();
+                            match attr.key.as_ref() {
+                                b"o2" => {
+                                    let o2_str = String::from_utf8_lossy(&attr.value);
+                                    o2_percent = o2_str.trim_end_matches('%').parse().ok();
+                                }
+                                b"he" => {
+                                    let he_str = String::from_utf8_lossy(&attr.value);
+                                    he_percent = he_str.trim_end_matches('%').parse().ok();
+                                }
+                                b"start" => {
+                                    start_pressure = Some(parse_pressure(&String::from_utf8_lossy(&attr.value)));
+                                }
+                                b"end" => {
+                                    end_pressure = Some(parse_pressure(&String::from_utf8_lossy(&attr.value)));
+                                }
+                                _ => {}
                             }
                         }
+                        
+                        // Create DiveTank entry
+                        current_tanks.push(DiveTank {
+                            id: 0,
+                            dive_id: 0,
+                            sensor_id: cylinder_index as i64,
+                            sensor_name: None,
+                            gas_index: cylinder_index,
+                            o2_percent,
+                            he_percent,
+                            start_pressure_bar: start_pressure,
+                            end_pressure_bar: end_pressure,
+                            volume_used_liters: None,
+                        });
+                        
+                        cylinder_index += 1;
                     }
                     b"divecomputer" => {
                         in_divecomputer = true;
@@ -219,9 +258,12 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                             ndl_seconds: None,
                             rbt_seconds: None,
                         };
+                        // Support multiple tank pressures (pressure0, pressure1, pressure2, etc.)
+                        let mut tank_pressures_in_sample: Vec<(i64, f64)> = Vec::new();
                         
                         for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
+                            let key = attr.key.as_ref();
+                            match key {
                                 b"time" => {
                                     sample.time_seconds = parse_duration(&String::from_utf8_lossy(&attr.value));
                                 }
@@ -231,18 +273,40 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                                 b"temp" => {
                                     sample.temp_c = Some(parse_temp(&String::from_utf8_lossy(&attr.value)));
                                 }
-                                b"pressure0" => {
-                                    sample.pressure_bar = Some(parse_pressure(&String::from_utf8_lossy(&attr.value)));
-                                }
                                 b"ndl" => {
                                     sample.ndl_seconds = Some(parse_duration(&String::from_utf8_lossy(&attr.value)));
                                 }
                                 b"rbt" => {
                                     sample.rbt_seconds = Some(parse_duration(&String::from_utf8_lossy(&attr.value)));
                                 }
-                                _ => {}
+                                _ => {
+                                    // Check for pressure0, pressure1, pressure2, etc.
+                                    let key_str = String::from_utf8_lossy(key);
+                                    if key_str.starts_with("pressure") {
+                                        if let Some(idx_str) = key_str.strip_prefix("pressure") {
+                                            let sensor_id: i64 = idx_str.parse().unwrap_or(0);
+                                            let pressure = parse_pressure(&String::from_utf8_lossy(&attr.value));
+                                            if pressure > 0.0 {
+                                                tank_pressures_in_sample.push((sensor_id, pressure));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
+                        
+                        // Add tank pressures to the collection
+                        for (sensor_id, pressure) in tank_pressures_in_sample {
+                            current_tank_pressures.push(TankPressure {
+                                id: 0,
+                                dive_id: 0,
+                                sensor_id,
+                                sensor_name: None,
+                                time_seconds: sample.time_seconds,
+                                pressure_bar: pressure,
+                            });
+                        }
+                        
                         current_samples.push(sample);
                     }
                     b"event" if in_divecomputer => {
@@ -285,13 +349,13 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
             Ok(Event::End(ref e)) => {
                 match e.name().as_ref() {
                     b"dive" => {
-                        if let Some(mut dive) = current_dive.take() {
-                            dive.nitrox_o2_percent = current_o2_percent;
+                        if let Some(dive) = current_dive.take() {
                             dives.push(ImportedDive {
                                 dive,
                                 samples: std::mem::take(&mut current_samples),
                                 events: std::mem::take(&mut current_events),
-                                tank_pressures: Vec::new(),
+                                tank_pressures: std::mem::take(&mut current_tank_pressures),
+                                tanks: std::mem::take(&mut current_tanks),
                             });
                         }
                     }
@@ -361,7 +425,7 @@ fn parse_pressure(s: &str) -> f64 {
 
 /// Import dives from .ssrf file into database
 /// If trip_id is provided, add dives to existing trip; otherwise create a new trip
-pub fn import_to_database(db: &Database, mut result: ImportResult, existing_trip_id: Option<i64>) -> Result<i64, String> {
+pub fn import_to_database(db: &Db, mut result: ImportResult, existing_trip_id: Option<i64>) -> Result<i64, String> {
     // Sort dives by date and time before importing
     result.dives.sort_by(|a, b| {
         let date_cmp = a.dive.date.cmp(&b.dive.date);
@@ -422,6 +486,12 @@ pub fn import_to_database(db: &Database, mut result: ImportResult, existing_trip
         if !imported.tank_pressures.is_empty() {
             db.insert_tank_pressures_batch(dive_id, &imported.tank_pressures)
                 .map_err(|e| format!("Failed to insert tank pressures: {}", e))?;
+        }
+        
+        // Insert dive tanks (gas mix and summary data)
+        if !imported.tanks.is_empty() {
+            db.insert_dive_tanks_batch(dive_id, &imported.tanks)
+                .map_err(|e| format!("Failed to insert dive tanks: {}", e))?;
         }
     }
     
@@ -697,11 +767,37 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
         .and_then(|d| d.number_in_series)
         .unwrap_or(1);
     
-    // Get gas info (O2 percentage and tank pressures)
-    let gas_info = diving.as_ref().and_then(|d| d.gases.as_ref()).and_then(|g| g.first());
-    let nitrox_o2 = gas_info
-        .and_then(|g| g.oxygen)
-        .map(|o2| if o2 <= 1.0 { o2 * 100.0 } else { o2 });
+    // Parse ALL gases into DiveTank entries
+    let gases = diving.as_ref().and_then(|d| d.gases.as_ref());
+    let mut dive_tanks: Vec<DiveTank> = Vec::new();
+    
+    if let Some(gas_list) = gases {
+        for (index, gas) in gas_list.iter().enumerate() {
+            let o2_percent = gas.oxygen.map(|o2| if o2 <= 1.0 { o2 * 100.0 } else { o2 });
+            let he_percent = gas.helium.map(|he| if he <= 1.0 { he * 100.0 } else { he });
+            let start_pressure = gas.start_pressure.map(|p| p / 100000.0);  // Pa to bar
+            let end_pressure = gas.end_pressure.map(|p| p / 100000.0);  // Pa to bar
+            
+            // Use transmitter_id as sensor_name if available
+            let sensor_name = gas.transmitter_id.clone();
+            
+            dive_tanks.push(DiveTank {
+                id: 0,
+                dive_id: 0,
+                sensor_id: index as i64,
+                sensor_name,
+                gas_index: index as i32,
+                o2_percent,
+                he_percent,
+                start_pressure_bar: start_pressure,
+                end_pressure_bar: end_pressure,
+                volume_used_liters: None,
+            });
+        }
+    }
+    
+    // Get first gas info for tank pressure extraction
+    let gas_info = gases.and_then(|g| g.first());
     
     let start_tank_pressure = gas_info
         .and_then(|g| g.start_pressure)
@@ -710,23 +806,23 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
         .and_then(|g| g.end_pressure)
         .map(|p| p / 100000.0);  // Pa to bar
     
-    log::info!("Tank pressure: start={:?} bar, end={:?} bar", start_tank_pressure, end_tank_pressure);
+    log::info!("Parsed {} gas mixes, primary tank pressure: start={:?} bar, end={:?} bar", dive_tanks.len(), start_tank_pressure, end_tank_pressure);
     
     // Get CNS/OTU from end tissue
     let tissue = diving.as_ref().and_then(|d| d.end_tissue.as_ref());
     let cns = tissue.and_then(|t| t.cns).map(|c| if c <= 1.0 { c * 100.0 } else { c });
     let otu = tissue.and_then(|t| t.otu).map(|o| o as i32);
     
-    // Parse samples
+    // Parse samples and tank pressures
     let sample_interval = header.sample_interval.unwrap_or(10.0) as i32;
-    let samples = parse_suunto_device_samples(
+    let (samples, tank_pressures) = parse_suunto_device_samples(
         device_log.samples.unwrap_or_default(),
         sample_interval,
         start_tank_pressure,
         end_tank_pressure,
     );
     
-    log::info!("Parsed {} samples from DeviceLog", samples.len());
+    log::info!("Parsed {} samples and {} tank pressures from DeviceLog", samples.len(), tank_pressures.len());
     
     let dive = Dive {
         id: 0,
@@ -742,7 +838,6 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
         surface_pressure_bar: surface_pressure,
         otu,
         cns_percent: cns,
-        nitrox_o2_percent: nitrox_o2,
         dive_computer_model: device_model,
         dive_computer_serial: device_serial,
         location: None,
@@ -770,7 +865,8 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
         dive,
         samples,
         events: Vec::new(),
-        tank_pressures: Vec::new(),
+        tank_pressures,
+        tanks: dive_tanks,
     }];
     
     // Determine trip info
@@ -786,14 +882,15 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
     })
 }
 
-/// Parse samples from DeviceLog format
+/// Parse samples from DeviceLog format - returns (samples, tank_pressures)
 fn parse_suunto_device_samples(
     samples: Vec<SuuntoDeviceSample>,
     sample_interval: i32,
     start_pressure: Option<f64>,
     end_pressure: Option<f64>,
-) -> Vec<DiveSample> {
-    let mut result = Vec::new();
+) -> (Vec<DiveSample>, Vec<TankPressure>) {
+    let mut dive_samples = Vec::new();
+    let mut tank_pressures = Vec::new();
     let total_samples = samples.len();
     
     // Calculate pressure drop per sample for interpolation if we have start/end pressures
@@ -801,6 +898,9 @@ fn parse_suunto_device_samples(
         (Some(start), Some(end), n) if n > 1 => Some((start - end) / (n as f64 - 1.0)),
         _ => None,
     };
+    
+    // Use sensor_id 0 for Suunto single-tank data
+    const SUUNTO_DEFAULT_SENSOR_ID: i64 = 0;
     
     for (idx, sample) in samples.iter().enumerate() {
         let time_seconds = sample.time
@@ -833,19 +933,33 @@ fn parse_suunto_device_samples(
                 idx, time_seconds, depth_m, temp_c, pressure_bar);
         }
         
-        result.push(DiveSample {
+        // Add tank pressure to tank_pressures table if we have pressure data
+        if let Some(pressure) = pressure_bar {
+            tank_pressures.push(TankPressure {
+                id: 0,
+                dive_id: 0,
+                sensor_id: SUUNTO_DEFAULT_SENSOR_ID,
+                sensor_name: None,
+                time_seconds,
+                pressure_bar: pressure,
+            });
+        }
+        
+        dive_samples.push(DiveSample {
             id: 0,
             dive_id: 0,
             time_seconds,
             depth_m,
             temp_c,
-            pressure_bar,
+            pressure_bar: None,  // Tank pressure now in tank_pressures table
             ndl_seconds: None,
             rbt_seconds: None,
         });
     }
     
-    result
+    log::info!("Parsed {} dive samples and {} tank pressure readings", dive_samples.len(), tank_pressures.len());
+    
+    (dive_samples, tank_pressures)
 }
 
 /// Parse the older DiveLog/Dives format
@@ -866,15 +980,29 @@ fn parse_suunto_dives_format(suunto_dives: Vec<SuuntoDive>) -> Result<ImportResu
         let surface_pressure = suunto_dive.surface_pressure
             .map(|p| if p > 10000.0 { p / 100000.0 } else { p });  // Pa to bar
         
-        // Get O2 percentage from cylinders
-        let nitrox_o2 = suunto_dive.cylinders
-            .as_ref()
-            .and_then(|c| c.first())
-            .and_then(|c| c.oxygen)
-            .map(|o2| if o2 <= 1.0 { o2 * 100.0 } else { o2 });  // fraction to percentage
+        // Parse ALL cylinders into DiveTank entries
+        let mut dive_tanks: Vec<DiveTank> = Vec::new();
+        if let Some(ref cylinders) = suunto_dive.cylinders {
+            for (index, cyl) in cylinders.iter().enumerate() {
+                let o2_percent = cyl.oxygen.map(|o2| if o2 <= 1.0 { o2 * 100.0 } else { o2 });
+                
+                dive_tanks.push(DiveTank {
+                    id: 0,
+                    dive_id: 0,
+                    sensor_id: index as i64,
+                    sensor_name: None,
+                    gas_index: index as i32,
+                    o2_percent,
+                    he_percent: None,  // Suunto DiveLog cylinder doesn't have helium
+                    start_pressure_bar: None,  // Not available in SuuntoCylinder struct
+                    end_pressure_bar: None,
+                    volume_used_liters: None,
+                });
+            }
+        }
         
-        // Parse samples before moving fields from suunto_dive
-        let samples = parse_suunto_samples(&suunto_dive);
+        // Parse samples and tank pressures before moving fields from suunto_dive
+        let (samples, tank_pressures) = parse_suunto_samples(&suunto_dive);
         
         let dive = Dive {
             id: 0,
@@ -890,7 +1018,6 @@ fn parse_suunto_dives_format(suunto_dives: Vec<SuuntoDive>) -> Result<ImportResu
             surface_pressure_bar: surface_pressure,
             otu: suunto_dive.otu.map(|o| o as i32),
             cns_percent: suunto_dive.cns.map(|c| if c > 1.0 { c } else { c * 100.0 }),
-            nitrox_o2_percent: nitrox_o2,
             dive_computer_model: suunto_dive.device_model,
             dive_computer_serial: suunto_dive.device_serial,
             location: suunto_dive.dive_site,
@@ -918,7 +1045,8 @@ fn parse_suunto_dives_format(suunto_dives: Vec<SuuntoDive>) -> Result<ImportResu
             dive,
             samples,
             events: Vec::new(),
-            tank_pressures: Vec::new(),
+            tank_pressures,
+            tanks: dive_tanks,
         });
         
         dive_number_counter += 1;
@@ -960,32 +1088,46 @@ fn parse_suunto_datetime(datetime_str: Option<&str>) -> (String, String) {
     }
 }
 
-fn parse_suunto_samples(dive: &SuuntoDive) -> Vec<DiveSample> {
+/// Parse samples from older DiveLog/Dives format - returns (samples, tank_pressures)
+fn parse_suunto_samples(dive: &SuuntoDive) -> (Vec<DiveSample>, Vec<TankPressure>) {
     let mut samples = Vec::new();
+    let mut tank_pressures = Vec::new();
     let mut pressure_count = 0;
+    
+    // Use sensor_id 0 for Suunto single-tank data
+    const SUUNTO_DEFAULT_SENSOR_ID: i64 = 0;
     
     // Try DiveSamples first
     if let Some(ref suunto_samples) = dive.samples {
         for s in suunto_samples {
             let temp = s.temperature.map(|t| if t > 200.0 { t - 273.15 } else { t });
             let pressure = s.pressure.map(|p| if p > 10000.0 { p / 100000.0 } else { p });
+            let time_seconds = s.time.map(|t| t as i32).unwrap_or(0);
             
-            if pressure.is_some() {
+            if let Some(pressure_bar) = pressure {
                 pressure_count += 1;
+                tank_pressures.push(TankPressure {
+                    id: 0,
+                    dive_id: 0,
+                    sensor_id: SUUNTO_DEFAULT_SENSOR_ID,
+                    sensor_name: None,
+                    time_seconds,
+                    pressure_bar,
+                });
             }
             
             samples.push(DiveSample {
                 id: 0,
                 dive_id: 0,
-                time_seconds: s.time.map(|t| t as i32).unwrap_or(0),
+                time_seconds,
                 depth_m: s.depth.unwrap_or(0.0),
                 temp_c: temp,
-                pressure_bar: pressure,
+                pressure_bar: None,  // Tank pressure now in tank_pressures table
                 ndl_seconds: s.ndl.map(|n| n as i32),
                 rbt_seconds: None,
             });
         }
-        log::info!("Suunto JSON: parsed {} samples, {} with pressure data", samples.len(), pressure_count);
+        log::info!("Suunto JSON: parsed {} samples, {} tank pressure readings", samples.len(), pressure_count);
     }
     // Try DiveProfile as fallback
     else if let Some(ref profile) = dive.dive_profile {
@@ -1003,7 +1145,7 @@ fn parse_suunto_samples(dive: &SuuntoDive) -> Vec<DiveSample> {
         }
     }
     
-    samples
+    (samples, tank_pressures)
 }
 
 // ============================================================================
@@ -1046,13 +1188,19 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     // Format: (timestamp_or_index, pressure_bar, sensor_id, has_timestamp) - sensor_id distinguishes multiple tanks
     let mut tank_pressures: Vec<(i64, f64, i64, bool)> = Vec::new();
     
+    // Collect gas mix records: (message_index, o2_percent, he_percent)
+    let mut gas_mixes: Vec<(i64, Option<f64>, Option<f64>)> = Vec::new();
+    
+    // Collect tank summary records: (sensor_id, start_pressure, end_pressure, volume_used)
+    let mut tank_summaries: Vec<(i64, Option<f64>, Option<f64>, Option<f64>)> = Vec::new();
+    
     for record in &records {
         let kind = record.kind().to_string();
         
         // Track all record types we see
         if !record_types.contains(&kind) {
             record_types.push(kind.clone());
-            log::info!("FIT record type: {}", kind);
+            log::info!("FIT record type: '{}' (len={})", kind, kind.len());
             
             // Log all fields for this record type (first occurrence only)
             for field in record.fields() {
@@ -1060,38 +1208,87 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
             }
         }
         
+        // DEBUG: Check if this is a gas record
+        if kind.to_lowercase().contains("gas") {
+            log::info!("FOUND GAS RECORD: kind='{}', matching against 'DiveGas' | 'dive_gas'", kind);
+        }
+        
         // Collect data from various record types
         match kind.as_str() {
             // Session-level data (common in Garmin files)
-            "Session" | "Activity" | "Lap" | "Sport" => {
+            "Session" | "Activity" | "Lap" | "Sport" | "session" | "activity" | "lap" | "sport" => {
                 for field in record.fields() {
                     all_data.insert(field.name().to_string(), field.value().clone());
+                    // Capture dive start time from session (more accurate than file time_created)
+                    if field.name() == "start_time" {
+                        if let Value::Timestamp(ts) = field.value() {
+                            start_timestamp = Some(ts.with_timezone(&chrono::Utc));
+                            log::info!("Captured dive start_time from Session: {:?}", start_timestamp);
+                        }
+                    }
                 }
             }
             // Dive-specific records (Garmin Descent, etc.)
-            "DiveSummary" | "DiveSettings" | "DiveGas" | "DiveApneaSummary" => {
+            "DiveSummary" | "dive_summary" | "DiveSettings" | "dive_settings" | "DiveApneaSummary" | "dive_apnea_summary" => {
                 for field in record.fields() {
                     all_data.insert(field.name().to_string(), field.value().clone());
                 }
             }
-            // File identification
-            "FileId" => {
+            // Gas mix records - parse explicitly to capture multi-gas setups
+            "DiveGas" | "dive_gas" => {
+                let mut message_index: i64 = gas_mixes.len() as i64;  // Default to next index
+                let mut o2_percent: Option<f64> = None;
+                let mut he_percent: Option<f64> = None;
+                
+                for field in record.fields() {
+                    let name = field.name().to_lowercase();
+                    all_data.insert(field.name().to_string(), field.value().clone());
+                    
+                    if name == "message_index" {
+                        message_index = extract_float(field.value()).map(|f| f as i64).unwrap_or(message_index);
+                    } else if name == "oxygen_content" {
+                        o2_percent = extract_float(field.value());
+                    } else if name == "helium_content" {
+                        he_percent = extract_float(field.value());
+                    }
+                }
+                
+                log::info!("FIT dive_gas: index={}, O2={:?}%, He={:?}%", message_index, o2_percent, he_percent);
+                gas_mixes.push((message_index, o2_percent, he_percent));
+            }
+            // File identification - use time_created as fallback only
+            "FileId" | "file_id" => {
                 for field in record.fields() {
                     all_data.insert(format!("file_{}", field.name()), field.value().clone());
-                    // Capture start time
-                    if field.name() == "time_created" {
+                    // Only use time_created if we don't have a start_time from Session yet
+                    if field.name() == "time_created" && start_timestamp.is_none() {
                         if let Value::Timestamp(ts) = field.value() {
                             start_timestamp = Some(ts.with_timezone(&chrono::Utc));
+                            log::info!("Using file time_created as fallback: {:?}", start_timestamp);
                         }
                     }
                 }
             }
             // Sample/record data points - try multiple record types that might have depth
-            "Record" | "DiveAlarm" | "Length" => {
+            // Note: fitparser may return lowercase record type names
+            "Record" | "record" | "DiveAlarm" | "dive_alarm" | "Length" | "length" => {
                 // Log first few records to debug
                 if sample_time_offset < 3 {
                     let fields: Vec<String> = record.fields().iter().map(|f| format!("{}={:?}", f.name(), f.value())).collect();
                     log::info!("Record #{} fields: {:?}", sample_time_offset, fields);
+                }
+                
+                // Capture timestamp from first record as dive start if not already set
+                if start_timestamp.is_none() {
+                    for field in record.fields() {
+                        if field.name() == "timestamp" {
+                            if let Value::Timestamp(ts) = field.value() {
+                                start_timestamp = Some(ts.with_timezone(&chrono::Utc));
+                                log::info!("Captured dive start from first record timestamp: {:?}", start_timestamp);
+                                break;
+                            }
+                        }
+                    }
                 }
                 
                 let sample = parse_fit_record_to_sample(record, sample_time_offset, start_timestamp);
@@ -1102,9 +1299,9 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
             }
             // Tank pressure records - Garmin and other dive computers often send these separately
             // Note: fitparser returns lowercase record type names like "tank_update", "tank_summary"
-            "TankUpdate" | "TankSummary" | "Tank" | "tank_update" | "tank_summary" | "tank" => {
+            "TankUpdate" | "tank_update" => {
                 let fields: Vec<String> = record.fields().iter().map(|f| format!("{}={:?}", f.name(), f.value())).collect();
-                log::info!("Tank record fields: {:?}", fields);
+                log::info!("Tank update fields: {:?}", fields);
                 
                 let mut pressure: Option<f64> = None;
                 let mut tank_timestamp: Option<i64> = None;
@@ -1145,6 +1342,34 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
                     log::info!("Tank pressure: {} bar at time {} (has_ts={}) from sensor {}", p, time_value, has_ts, sid);
                 }
             }
+            // Tank summary records - contain start/end pressure and volume used per tank
+            "TankSummary" | "tank_summary" | "Tank" | "tank" => {
+                let fields: Vec<String> = record.fields().iter().map(|f| format!("{}={:?}", f.name(), f.value())).collect();
+                log::info!("Tank summary fields: {:?}", fields);
+                
+                let mut sensor_id: Option<i64> = None;
+                let mut start_pressure: Option<f64> = None;
+                let mut end_pressure: Option<f64> = None;
+                let mut volume_used: Option<f64> = None;
+                
+                for field in record.fields() {
+                    let name = field.name().to_lowercase();
+                    
+                    if name == "sensor" {
+                        sensor_id = extract_float(field.value()).map(|f| f as i64);
+                    } else if name == "start_pressure" {
+                        start_pressure = extract_float(field.value());
+                    } else if name == "end_pressure" {
+                        end_pressure = extract_float(field.value());
+                    } else if name == "volume_used" {
+                        volume_used = extract_float(field.value());
+                    }
+                }
+                
+                let sid = sensor_id.unwrap_or(tank_summaries.len() as i64);
+                log::info!("Tank summary: sensor={}, start={:?}, end={:?}, volume={:?}", sid, start_pressure, end_pressure, volume_used);
+                tank_summaries.push((sid, start_pressure, end_pressure, volume_used));
+            }
             // Events
             "Event" => {
                 let event = parse_fit_event(record);
@@ -1183,6 +1408,36 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     log::info!("Total data fields collected: {}", all_data.len());
     log::info!("Total depth samples: {}", current_samples.len());
     log::info!("Total tank pressure readings: {}", tank_pressures.len());
+    log::info!("Final start_timestamp: {:?}", start_timestamp);
+    
+    // ========================================================================
+    // IMPORTANT: FIT files have Session.start_time at the END of the file,
+    // but samples are parsed BEFORE we see it. We need to recalculate sample
+    // time_seconds now that we have the correct start_timestamp.
+    // ========================================================================
+    
+    // First, we need to get sample timestamps to recalculate. We stored them
+    // using time_offset initially - we need to find the actual timestamps.
+    // The simplest approach: use the dive duration from dive_summary or session.
+    let dive_duration_from_metadata = all_data.get("total_elapsed_time")
+        .or_else(|| all_data.get("total_timer_time"))
+        .and_then(|v| extract_float(v))
+        .map(|f| f as i32);
+    
+    // If samples have bad time_seconds (negative or based on wrong start), recalculate
+    // by spreading them evenly across the dive duration
+    if let Some(duration) = dive_duration_from_metadata {
+        let sample_count = current_samples.len();
+        if sample_count > 1 {
+            for (i, sample) in current_samples.iter_mut().enumerate() {
+                sample.time_seconds = (i as i32 * duration) / (sample_count as i32 - 1);
+            }
+            log::info!("Recalculated {} sample times over {} seconds", sample_count, duration);
+        }
+    }
+    
+    let dive_duration = current_samples.last().map(|s| s.time_seconds).unwrap_or(0);
+    log::info!("Dive duration from samples: {} seconds", dive_duration);
     
     // Merge tank pressure data into samples if we have separate tank records
     if !tank_pressures.is_empty() && !current_samples.is_empty() {
@@ -1204,29 +1459,22 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
                 readings.last().map(|r| r.1).unwrap_or(0.0));
         }
         
-        // Get dive parameters for time calculation
-        // Use the first sample timestamp as reference if available, otherwise first tank reading
-        let first_sample_ts = current_samples.first()
-            .and_then(|s| {
-                // Samples already have relative time_seconds, we need the absolute timestamp
-                // from the start_timestamp
-                start_timestamp.map(|st| st.timestamp())
-            });
-        
-        let first_tank_ts = tank_pressures.iter()
-            .filter(|(_, _, _, has_ts)| *has_ts)
-            .map(|(ts, _, _, _)| *ts)
-            .min();
-        
-        let dive_start_ts = first_sample_ts
-            .or_else(|| start_timestamp.map(|ts| ts.timestamp()))
-            .or(first_tank_ts)
+        // Get dive start timestamp for calculating relative tank pressure times
+        // Priority: start_timestamp (from Session.start_time) > first tank timestamp
+        // Note: start_timestamp should already be set from Session.start_time which is the true dive start
+        let dive_start_ts = start_timestamp
+            .map(|ts| ts.timestamp())
+            .or_else(|| {
+                // Fallback: use earliest tank timestamp if no session start_time
+                tank_pressures.iter()
+                    .filter(|(_, _, _, has_ts)| *has_ts)
+                    .map(|(ts, _, _, _)| *ts)
+                    .min()
+            })
             .unwrap_or(0);
         
-        let dive_duration = current_samples.last().map(|s| s.time_seconds).unwrap_or(0);
-        
-        log::info!("Dive start timestamp: {}, dive duration: {} seconds, first_tank_ts: {:?}", 
-            dive_start_ts, dive_duration, first_tank_ts);
+        log::info!("Tank time calculation - dive_start_ts: {}, dive_duration: {} seconds", 
+            dive_start_ts, dive_duration);
         
         // Create TankPressure records for each sensor
         for (idx, (sensor_id, readings)) in sensors.iter().enumerate() {
@@ -1265,6 +1513,65 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
             current_tank_pressures.len(), sensors.len());
     }
     
+    // Build DiveTank entries from gas_mixes and tank_summaries
+    // Strategy: Create a tank for EACH tank summary (physical tank), and associate gas mix if available
+    // FIT files can have multiple tank summaries (2 tanks) but only 1 gas mix (both tanks use same gas)
+    // The gas_mix message_index indicates which gas in dive_gas records, but for single-gas diving
+    // with multiple tanks, all tanks use the same gas
+    let mut dive_tanks: Vec<DiveTank> = Vec::new();
+    
+    log::info!("Building dive tanks from {} gas mixes and {} tank summaries", gas_mixes.len(), tank_summaries.len());
+    
+    // Get the primary gas mix (index 0) if available - this is the main breathing gas
+    let primary_gas: Option<(Option<f64>, Option<f64>)> = gas_mixes.first().map(|(_, o2, he)| (*o2, *he));
+    
+    if !tank_summaries.is_empty() {
+        // Create a tank entry for each physical tank (tank summary)
+        for (idx, (sid, sp, ep, vu)) in tank_summaries.iter().enumerate() {
+            // Try to find a specific gas mix for this tank by index
+            // If not found, use the primary gas (all tanks typically use same gas in recreational diving)
+            let (o2, he) = if idx < gas_mixes.len() {
+                (gas_mixes[idx].1, gas_mixes[idx].2)
+            } else {
+                // Use primary gas for additional tanks (sidemount/twinset scenarios)
+                primary_gas.unwrap_or((None, None))
+            };
+            
+            log::info!("Creating tank {}: sensor={}, gas O2={:?}% He={:?}%", idx, sid, o2, he);
+            
+            dive_tanks.push(DiveTank {
+                id: 0,
+                dive_id: 0,
+                sensor_id: *sid,
+                sensor_name: None,
+                gas_index: idx as i32,
+                o2_percent: o2,
+                he_percent: he,
+                start_pressure_bar: *sp,
+                end_pressure_bar: *ep,
+                volume_used_liters: *vu,
+            });
+        }
+    } else if !gas_mixes.is_empty() {
+        // Have gas mixes but no tank summaries (rare) - create tanks from gas mixes alone
+        for (_idx, (msg_idx, o2, he)) in gas_mixes.iter().enumerate() {
+            dive_tanks.push(DiveTank {
+                id: 0,
+                dive_id: 0,
+                sensor_id: *msg_idx,
+                sensor_name: None,
+                gas_index: *msg_idx as i32,
+                o2_percent: *o2,
+                he_percent: *he,
+                start_pressure_bar: None,
+                end_pressure_bar: None,
+                volume_used_liters: None,
+            });
+        }
+    }
+    
+    log::info!("Created {} dive tanks", dive_tanks.len());
+    
     // Build dive from all collected data
     let dive = build_dive_from_fit_data(&all_data, dive_number, start_timestamp);
     
@@ -1282,6 +1589,7 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
             samples: current_samples,
             events: current_events,
             tank_pressures: current_tank_pressures,
+            tanks: dive_tanks,
         });
     }
     
@@ -1332,7 +1640,6 @@ fn create_empty_dive(dive_number: i32) -> Dive {
         surface_pressure_bar: None,
         otu: None,
         cns_percent: None,
-        nitrox_o2_percent: None,
         dive_computer_model: None,
         dive_computer_serial: None,
         location: None,
@@ -1424,10 +1731,10 @@ fn build_dive_from_fit_data(
                 dive.longitude = Some(lon);
             }
         }
-        // O2 content
-        else if key_lower.contains("o2") || key_lower.contains("oxygen") {
-            if let Some(o2) = extract_float(value) {
-                dive.nitrox_o2_percent = Some(if o2 <= 1.0 { o2 * 100.0 } else { o2 });
+        // O2 toxicity (OTU)
+        else if key_lower.contains("o2_toxicity") || key_lower.contains("otu") {
+            if let Some(otu) = extract_float(value) {
+                dive.otu = Some(otu as i32);
             }
         }
         // CNS

@@ -161,8 +161,8 @@
 }
 
 .dive-location {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: inherit;
+  color: inherit;
   font-weight: normal;
 }
 

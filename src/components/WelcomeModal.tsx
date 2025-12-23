@@ -7,14 +7,20 @@ interface WelcomeModalProps {
 }
 
 const PRESET_OPTIONS = [
-  { prefix: 'Dive', language: 'English' },
-  { prefix: 'Plongée', language: 'French' },
-  { prefix: 'Tauchgang', language: 'German' },
-  { prefix: 'Buceo', language: 'Spanish' },
-  { prefix: 'Duik', language: 'Dutch' },
-  { prefix: 'Immersione', language: 'Italian' },
-  { prefix: '', language: 'Number only' },
+  { prefix: 'Dive', language: 'English', example: 'Dive 1' },
+  { prefix: '#', language: 'Hash', example: '#1' },
+  { prefix: 'No.', language: 'Numbered', example: 'No. 1' },
+  { prefix: '.', language: 'Period suffix', example: '1.' },
+  { prefix: '', language: 'Number only', example: '1' },
 ];
+
+// Format dive name based on prefix type
+function formatDivePreview(prefix: string, num: number): string {
+  if (!prefix) return String(num);
+  if (prefix === '#') return `#${num}`;
+  if (prefix === '.') return `${num}.`;
+  return `${prefix} ${num}`;
+}
 
 export function WelcomeModal({ isOpen, onComplete }: WelcomeModalProps) {
   const [selectedPrefix, setSelectedPrefix] = useState('Dive');
@@ -63,7 +69,7 @@ export function WelcomeModal({ isOpen, onComplete }: WelcomeModalProps) {
                   className={`prefix-option ${!useCustom && selectedPrefix === option.prefix ? 'selected' : ''}`}
                   onClick={() => handlePresetClick(option.prefix)}
                 >
-                  <span className="prefix-name">{option.prefix ? `${option.prefix} 1` : '1'}</span>
+                  <span className="prefix-name">{option.example}</span>
                   <span className="prefix-language">{option.language}</span>
                 </button>
               ))}
@@ -81,7 +87,7 @@ export function WelcomeModal({ isOpen, onComplete }: WelcomeModalProps) {
 
             <div className="preview-box">
               <span>
-                Your dives will appear as: <strong>{effectivePrefix ? `${effectivePrefix} 1` : '1'}</strong>, <strong>{effectivePrefix ? `${effectivePrefix} 2` : '2'}</strong>, <strong>{effectivePrefix ? `${effectivePrefix} 3` : '3'}</strong>...
+                Your dives will appear as: <strong>{formatDivePreview(effectivePrefix, 1)}</strong>, <strong>{formatDivePreview(effectivePrefix, 2)}</strong>, <strong>{formatDivePreview(effectivePrefix, 3)}</strong>...
               </span>
             </div>
           </div>

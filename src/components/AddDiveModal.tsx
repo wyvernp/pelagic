@@ -1,14 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
+import type { DiveSite } from '../types';
 import './AddTripModal.css'; // Reuse modal styles
-
-interface DiveSite {
-  id: number;
-  name: string;
-  lat: number;
-  lon: number;
-}
 
 export interface NewDiveFormData {
   // Computer-like fields (normally from dive computer)
@@ -21,7 +15,6 @@ export interface NewDiveFormData {
   air_temp_c: number | null;
   surface_pressure_bar: number | null;
   cns_percent: number | null;
-  nitrox_o2_percent: number | null;
   
   // User-editable fields
   location: string;
@@ -117,7 +110,7 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
     }
   }, [isOpen]);
   
-  // Search dive sites when location changes
+  // Search dive sites when location changes (server-side search)
   const handleLocationChange = (value: string) => {
     setLocation(value);
     
@@ -128,12 +121,10 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
     if (value.trim().length >= 2) {
       const timeout = setTimeout(async () => {
         try {
-          const sites = await invoke<DiveSite[]>('get_dive_sites');
-          const filtered = sites.filter(site => 
-            site.name.toLowerCase().includes(value.toLowerCase())
-          ).slice(0, 10);
-          setDiveSites(filtered);
-          setShowSuggestions(filtered.length > 0);
+          // Use server-side search instead of fetching all sites
+          const sites = await invoke<DiveSite[]>('search_dive_sites', { query: value });
+          setDiveSites(sites.slice(0, 15)); // Limit display to 15
+          setShowSuggestions(sites.length > 0);
         } catch (error) {
           logger.error('Failed to search dive sites:', error);
         }
@@ -190,7 +181,6 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
       air_temp_c: airTemp ? parseFloat(airTemp) : null,
       surface_pressure_bar: surfacePressure ? parseFloat(surfacePressure) : null,
       cns_percent: cnsPercent ? parseFloat(cnsPercent) : null,
-      nitrox_o2_percent: nitroxO2 ? parseFloat(nitroxO2) : null,
       location: location.trim(),
       ocean: ocean.trim(),
       visibility_m: visibility ? parseFloat(visibility) : null,
@@ -403,7 +393,7 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
                         >
                           <div className="suggestion-name">{site.name}</div>
                           <div className="suggestion-coords">
-                            {site.lat.toFixed(4)}, {site.lon.toFixed(4)}
+                            {site.lat.toFixed(6)}, {site.lon.toFixed(6)}
                           </div>
                         </div>
                       ))}
@@ -462,7 +452,7 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
                   placeholder="e.g., -8.5069"
                   min="-90"
                   max="90"
-                  step="0.0001"
+                  step="any"
                 />
               </div>
               
@@ -476,7 +466,7 @@ export function AddDiveModal({ isOpen, tripId: _tripId, onClose, onSubmit }: Add
                   placeholder="e.g., 115.2624"
                   min="-180"
                   max="180"
-                  step="0.0001"
+                  step="any"
                 />
               </div>
             </div>

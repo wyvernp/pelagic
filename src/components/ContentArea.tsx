@@ -1,12 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirection, SearchResults, IdentificationResult } from '../types';
+import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirection, SearchResults, IdentificationResult, DiveSite } from '../types';
 import { DiveProfile } from './DiveProfile';
 import { ContentGrid } from './ContentGrid';
 import { StatsBar } from './StatsBar';
+import { DiveSiteModal } from './DiveSiteModal';
 import { useSettings, useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import { confirmDialog } from '../utils/dialogs';
+import { formatDiveName } from '../utils/diveNames';
 import './ContentArea.css';
 
 interface ContentAreaProps {
@@ -38,6 +40,8 @@ interface ContentAreaProps {
   onToggleDiveSelection?: (diveId: number) => void;
   onSelectAllDives?: () => void;
   onOpenBulkEditModal?: () => void;
+  // All trip photos callback
+  onAllTripPhotosLoaded?: (photos: Photo[]) => void;
 }
 
 export function ContentArea({
@@ -68,12 +72,14 @@ export function ContentArea({
   onToggleDiveSelection,
   onSelectAllDives,
   onOpenBulkEditModal,
+  onAllTripPhotosLoaded,
 }: ContentAreaProps) {
   const [samples, setSamples] = useState<DiveSample[]>([]);
   const [sortField, setSortField] = useState<PhotoSortField>('capture_time');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [batchIdentifying, setBatchIdentifying] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{current: number; total: number} | null>(null);
+  const [editingDiveSite, setEditingDiveSite] = useState<DiveSite | null>(null);
   const settings = useSettings();
   const { apiKey: geminiApiKey } = useGeminiApiKey();
 
@@ -274,7 +280,7 @@ export function ContentArea({
   if (viewMode === 'search' && searchResults) {
     const totalResults = searchResults.trips.length + searchResults.dives.length + 
                          searchResults.photos.length + searchResults.species.length + 
-                         searchResults.tags.length;
+                         searchResults.tags.length + searchResults.dive_sites.length;
     
     return (
       <div className="content">
@@ -330,7 +336,7 @@ export function ContentArea({
                     onClick={() => onSelectDive(diveItem.id)}
                   >
                     <div className="card-title">
-                      {settings.diveNamePrefix ? `${settings.diveNamePrefix} #${diveItem.dive_number}` : `#${diveItem.dive_number}`} - {diveItem.location || 'Unknown'}
+                      {formatDiveName(settings.diveNamePrefix, diveItem.dive_number)} - {diveItem.location || 'Unknown'}
                     </div>
                     <div className="card-meta">
                       {diveItem.date} • {diveItem.max_depth_m?.toFixed(1)}m max
@@ -367,6 +373,7 @@ export function ContentArea({
                 <span className="section-icon">🐠</span>
                 Species ({searchResults.species.length})
               </h3>
+              <p className="section-hint">Species found in your photos. Click a species to see associated dives above.</p>
               <div className="results-grid species-grid">
                 {searchResults.species.map((speciesItem) => (
                   <div key={speciesItem.id} className="result-card species-card">
@@ -390,6 +397,7 @@ export function ContentArea({
                 <span className="section-icon">🏷️</span>
                 Tags ({searchResults.tags.length})
               </h3>
+              <p className="section-hint">Tags found in your photos. Click a tag to see associated dives above.</p>
               <div className="results-grid tags-grid">
                 {searchResults.tags.map((tagItem) => (
                   <div key={tagItem.id} className="result-card tag-card">
@@ -399,6 +407,41 @@ export function ContentArea({
               </div>
             </div>
           )}
+          
+          {/* Dive Sites Section */}
+          {searchResults.dive_sites.length > 0 && (
+            <div className="search-results-section">
+              <h3 className="section-title">
+                <span className="section-icon">📍</span>
+                Dive Sites ({searchResults.dive_sites.length})
+              </h3>
+              <div className="results-grid dive-sites-grid">
+                {searchResults.dive_sites.map((site) => (
+                  <div 
+                    key={site.id} 
+                    className="result-card dive-site-card"
+                    onDoubleClick={() => setEditingDiveSite(site)}
+                    style={{ cursor: 'pointer' }}
+                    title="Double-click to edit"
+                  >
+                    <div className="card-title">{site.name}</div>
+                    <div className="card-meta">
+                      {site.lat.toFixed(6)}°, {site.lon.toFixed(6)}°
+                      {site.is_user_created && <span style={{ marginLeft: '0.5rem', opacity: 0.7 }}>👤</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          <DiveSiteModal
+            isOpen={editingDiveSite !== null}
+            onClose={() => setEditingDiveSite(null)}
+            diveSite={editingDiveSite}
+            onSave={onClearSearch}
+            onDelete={onClearSearch}
+          />
           
           {totalResults === 0 && (
             <div className="empty-state">
@@ -426,7 +469,7 @@ export function ContentArea({
   }
 
   const title = dive 
-    ? `${settings.diveNamePrefix ? `${settings.diveNamePrefix} ${dive.dive_number}` : dive.dive_number} - ${dive.location || 'Unnamed Dive'}`
+    ? `${formatDiveName(settings.diveNamePrefix, dive.dive_number)} - ${dive.location || 'Unnamed Dive'}`
     : trip?.name || 'Trip';
 
   const hasSelection = selectedPhotoIds.size > 0;
@@ -610,6 +653,7 @@ export function ContentArea({
       <div className="content-body">
         <ContentGrid
           viewMode={viewMode}
+          tripId={trip?.id}
           dives={viewMode === 'trip' ? dives : []}
           photos={sortedPhotos}
           selectedPhotoIds={selectedPhotoIds}
@@ -619,6 +663,7 @@ export function ContentArea({
           bulkEditMode={bulkEditMode}
           selectedDiveIds={selectedDiveIds}
           onToggleDiveSelection={onToggleDiveSelection}
+          onAllTripPhotosLoaded={onAllTripPhotosLoaded}
         />
       </div>
     </div>

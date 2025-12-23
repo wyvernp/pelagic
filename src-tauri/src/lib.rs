@@ -3,23 +3,22 @@ mod import;
 mod commands;
 mod photos;
 mod ai;
+mod validation;
 
 use db::Database;
-use std::sync::Mutex;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use tauri::Manager;
 
+pub type DbPool = Pool<SqliteConnectionManager>;
+
 pub struct AppState {
-    pub db: Mutex<Database>,
+    pub db: DbPool,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let db = Database::new().expect("Failed to initialize database");
-    
     tauri::Builder::default()
-        .manage(AppState {
-            db: Mutex::new(db),
-        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -32,21 +31,60 @@ pub fn run() {
                 )?;
             }
             
+            // Initialize database connection pool
+            let startup_start = std::time::Instant::now();
+            let db_path = Database::get_db_path();
+            
+            // Create parent directory if it doesn't exist
+            if let Some(parent) = db_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            
+            // Create connection manager and pool
+            let manager = SqliteConnectionManager::file(&db_path);
+            let pool = Pool::builder()
+                .max_size(10)  // Allow up to 10 concurrent connections
+                .build(manager)
+                .expect("Failed to create database connection pool");
+            
+            let pool_time = startup_start.elapsed();
+            log::info!("Database pool created in {:?}", pool_time);
+            
+            // Initialize schema and run migrations on first connection
+            {
+                let schema_start = std::time::Instant::now();
+                let conn = pool.get().expect("Failed to get connection from pool");
+                Database::init_schema_on_conn(&conn).expect("Failed to initialize schema");
+                log::info!("Schema init took {:?}", schema_start.elapsed());
+                
+                let migration_start = std::time::Instant::now();
+                Database::run_migrations_on_conn(&conn).expect("Failed to run migrations");
+                log::info!("Migrations took {:?}", migration_start.elapsed());
+                
+                // Enable WAL mode for better concurrent read/write performance
+                conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+                    .expect("Failed to enable WAL mode");
+            }
+            
             // Auto-import dive sites on first run
-            let app_state: tauri::State<AppState> = app.state();
-            if let Ok(db) = app_state.db.lock() {
-                if let Ok(true) = db.dive_sites_empty() {
+            {
+                let sites_start = std::time::Instant::now();
+                let conn = pool.get().expect("Failed to get connection from pool");
+                if let Ok(true) = Database::dive_sites_empty_on_conn(&conn) {
                     // Try to load bundled dive sites CSV
                     if let Ok(resource_path) = app.path().resolve("divesites_filtered.csv", tauri::path::BaseDirectory::Resource) {
                         if let Ok(csv_content) = std::fs::read_to_string(&resource_path) {
-                            match db.import_dive_sites_from_csv(&csv_content) {
-                                Ok(count) => println!("Auto-imported {} dive sites", count),
-                                Err(e) => eprintln!("Failed to auto-import dive sites: {}", e),
+                            match Database::import_dive_sites_from_csv_on_conn(&conn, &csv_content) {
+                                Ok(count) => log::info!("Auto-imported {} dive sites in {:?}", count, sites_start.elapsed()),
+                                Err(e) => log::error!("Failed to auto-import dive sites: {}", e),
                             }
                         }
                     }
                 }
             }
+            
+            log::info!("Total startup time: {:?}", startup_start.elapsed());
+            app.manage(AppState { db: pool });
             
             Ok(())
         })
@@ -63,6 +101,7 @@ pub fn run() {
             commands::bulk_update_dives,
             commands::get_dive_samples,
             commands::get_tank_pressures,
+            commands::get_dive_tanks,
             commands::insert_dive_samples,
             commands::insert_tank_pressures,
             commands::import_ssrf_file,
@@ -77,6 +116,7 @@ pub fn run() {
             commands::get_all_photos_for_trip,
             commands::get_dive_thumbnail_photos,
             commands::get_dive_stats,
+            commands::get_dives_with_details,
             commands::get_photo,
             commands::scan_photos_for_import,
             commands::import_photos,
@@ -135,6 +175,12 @@ pub fn run() {
             // Dive sites commands
             commands::get_dive_sites,
             commands::import_dive_sites_csv,
+            commands::search_dive_sites,
+            commands::create_dive_site,
+            commands::update_dive_site,
+            commands::delete_dive_site,
+            commands::find_or_create_dive_site,
+            commands::get_dive_site,
             // Map commands
             commands::get_dive_map_points,
             // AI species identification

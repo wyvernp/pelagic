@@ -1,16 +1,19 @@
 use tauri::{State, Emitter};
 use std::path::Path;
-use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveStats}, import, photos};
+use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveTank, DiveStats, DiveWithDetails, Db}, import, photos};
+use crate::validation::{Validator, MAX_NAME_LENGTH, MAX_LOCATION_LENGTH, MAX_BATCH_SIZE};
 
 #[tauri::command]
 pub fn get_trips(state: State<AppState>) -> Result<Vec<Trip>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
     db.get_all_trips().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_trip(state: State<AppState>, id: i64) -> Result<Option<Trip>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
     db.get_trip(id).map_err(|e| e.to_string())
 }
 
@@ -22,7 +25,18 @@ pub fn create_trip(
     date_start: String,
     date_end: String,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_name("name", &name);
+    v.validate_string_optional("location", Some(&location), MAX_LOCATION_LENGTH);
+    v.validate_date("date_start", &date_start);
+    v.validate_date("date_end", &date_end);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
     db.create_trip(&name, &location, &date_start, &date_end)
         .map_err(|e| e.to_string())
 }
@@ -38,14 +52,29 @@ pub fn update_trip(
     date_end: String,
     notes: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("id", id);
+    v.validate_name("name", &name);
+    v.validate_string_optional("location", Some(&location), MAX_LOCATION_LENGTH);
+    v.validate_name_optional("resort", resort.as_deref());
+    v.validate_date("date_start", &date_start);
+    v.validate_date("date_end", &date_end);
+    v.validate_notes("notes", notes.as_deref());
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
     db.update_trip(id, &name, &location, resort.as_deref(), &date_start, &date_end, notes.as_deref())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_trip(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
     db.delete_trip(id).map_err(|e| e.to_string())
 }
 
@@ -63,13 +92,30 @@ pub fn update_dive(
     comments: Option<String>,
     latitude: Option<f64>,
     longitude: Option<f64>,
+    dive_site_id: Option<i64>,
     is_fresh_water: bool,
     is_boat_dive: bool,
     is_drift_dive: bool,
     is_night_dive: bool,
     is_training_dive: bool,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("id", id);
+    v.validate_string_optional("location", location.as_deref(), MAX_LOCATION_LENGTH);
+    v.validate_string_optional("ocean", ocean.as_deref(), MAX_NAME_LENGTH);
+    v.validate_depth_optional("visibility_m", visibility_m); // Visibility in meters, same range as depth
+    v.validate_name_optional("buddy", buddy.as_deref());
+    v.validate_name_optional("divemaster", divemaster.as_deref());
+    v.validate_name_optional("guide", guide.as_deref());
+    v.validate_name_optional("instructor", instructor.as_deref());
+    v.validate_notes("comments", comments.as_deref());
+    v.validate_gps_optional(latitude, longitude);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_dive(
         id,
         location.as_deref(),
@@ -82,6 +128,7 @@ pub fn update_dive(
         comments.as_deref(),
         latitude,
         longitude,
+        dive_site_id,
         is_fresh_water,
         is_boat_dive,
         is_drift_dive,
@@ -92,7 +139,7 @@ pub fn update_dive(
 
 #[tauri::command]
 pub fn delete_dive(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.delete_dive(id).map_err(|e| e.to_string())
 }
 
@@ -113,7 +160,34 @@ pub fn bulk_update_dives(
     is_fresh_water: Option<bool>,
     is_training_dive: Option<bool>,
 ) -> Result<usize, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_array_required("dive_ids", &dive_ids);
+    v.validate_array_size("dive_ids", &dive_ids, MAX_BATCH_SIZE);
+    v.validate_id_array("dive_ids", &dive_ids);
+    if let Some(Some(ref loc)) = location {
+        v.validate_string_optional("location", Some(loc), MAX_LOCATION_LENGTH);
+    }
+    if let Some(Some(ref o)) = ocean {
+        v.validate_string_optional("ocean", Some(o), MAX_NAME_LENGTH);
+    }
+    if let Some(Some(ref b)) = buddy {
+        v.validate_name_optional("buddy", Some(b));
+    }
+    if let Some(Some(ref dm)) = divemaster {
+        v.validate_name_optional("divemaster", Some(dm));
+    }
+    if let Some(Some(ref g)) = guide {
+        v.validate_name_optional("guide", Some(g));
+    }
+    if let Some(Some(ref i)) = instructor {
+        v.validate_name_optional("instructor", Some(i));
+    }
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.bulk_update_dives(
         &dive_ids,
         location.as_ref().map(|o| o.as_deref()),
@@ -132,26 +206,32 @@ pub fn bulk_update_dives(
 
 #[tauri::command]
 pub fn get_dives_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Dive>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_dive(state: State<AppState>, id: i64) -> Result<Option<Dive>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dive(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_dive_samples(state: State<AppState>, dive_id: i64) -> Result<Vec<DiveSample>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dive_samples(dive_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_tank_pressures(state: State<AppState>, dive_id: i64) -> Result<Vec<TankPressure>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_tank_pressures_for_dive(dive_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_dive_tanks(state: State<AppState>, dive_id: i64) -> Result<Vec<DiveTank>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
+    db.get_dive_tanks(dive_id).map_err(|e| e.to_string())
 }
 
 /// Insert samples for a dive (from dive computer data) - uses batch insert for performance
@@ -161,7 +241,7 @@ pub fn insert_dive_samples(
     dive_id: i64,
     samples: Vec<DiveSample>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     let count = db.insert_dive_samples_batch(dive_id, &samples)
         .map_err(|e| e.to_string())?;
     Ok(count as i64)
@@ -174,7 +254,7 @@ pub fn insert_tank_pressures(
     dive_id: i64,
     pressures: Vec<ParsedTankPressure>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     // Convert ParsedTankPressure to TankPressure
     let tank_pressures: Vec<TankPressure> = pressures.into_iter().map(|p| TankPressure {
@@ -201,7 +281,7 @@ pub fn import_ssrf_file(state: State<AppState>, file_path: String, trip_id: Opti
     
     let result = import::parse_ssrf_file(path)?;
     
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     import::import_to_database(&db, result, trip_id)
 }
 
@@ -217,7 +297,7 @@ pub fn import_dive_file(state: State<AppState>, file_path: String, trip_id: Opti
     // Auto-detect format and parse
     let result = import::parse_dive_file(path)?;
     
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     import::import_to_database(&db, result, trip_id)
 }
 
@@ -240,7 +320,7 @@ pub fn import_dive_file_data(state: State<AppState>, file_name: String, file_dat
     // Auto-detect format and parse
     let result = import::parse_dive_file(&path)?;
     
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     import::import_to_database(&db, result, trip_id)
 }
 
@@ -257,6 +337,18 @@ pub struct ParsedDivePreview {
     pub dive_computer_model: Option<String>,
     pub samples: Vec<ParsedDiveSample>,
     pub tank_pressures: Vec<ParsedTankPressure>,
+    pub tanks: Vec<ParsedTank>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct ParsedTank {
+    pub sensor_id: i64,
+    pub gas_index: i32,
+    pub o2_percent: Option<f64>,
+    pub he_percent: Option<f64>,
+    pub start_pressure_bar: Option<f64>,
+    pub end_pressure_bar: Option<f64>,
+    pub volume_used_liters: Option<f64>,
 }
 
 #[derive(serde::Serialize)]
@@ -303,11 +395,23 @@ pub struct BulkDiveData {
     pub cns_percent: Option<f64>,
     pub dive_computer_model: Option<String>,
     pub dive_computer_serial: Option<String>,
-    pub nitrox_o2_percent: Option<f64>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub samples: Vec<BulkDiveSample>,
     pub tank_pressures: Vec<ParsedTankPressure>,
+    #[serde(default)]
+    pub tanks: Vec<BulkDiveTank>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct BulkDiveTank {
+    pub sensor_id: i64,
+    pub gas_index: i32,
+    pub o2_percent: Option<f64>,
+    pub he_percent: Option<f64>,
+    pub start_pressure_bar: Option<f64>,
+    pub end_pressure_bar: Option<f64>,
+    pub volume_used_liters: Option<f64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -337,6 +441,7 @@ pub struct BulkImportResult {
     pub dives_imported: i64,
     pub samples_imported: i64,
     pub tank_pressures_imported: i64,
+    pub tanks_imported: i64,
     pub created_trip_ids: Vec<i64>,
 }
 
@@ -347,12 +452,48 @@ pub fn bulk_import_dives(
     state: State<AppState>,
     groups: Vec<BulkImportGroup>,
 ) -> Result<BulkImportResult, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate all groups and dives upfront
+    let mut v = Validator::new();
+    v.validate_array_required("groups", &groups);
+    
+    for (group_idx, group) in groups.iter().enumerate() {
+        // Validate group-level fields
+        if let Some(trip_id) = group.trip_id {
+            v.validate_id(&format!("groups[{}].trip_id", group_idx), trip_id);
+        }
+        if let Some(ref name) = group.new_trip_name {
+            v.validate_name_optional(&format!("groups[{}].new_trip_name", group_idx), Some(name));
+        }
+        v.validate_date(&format!("groups[{}].date_start", group_idx), &group.date_start);
+        v.validate_date(&format!("groups[{}].date_end", group_idx), &group.date_end);
+        
+        // Validate each dive in the group
+        for (dive_idx, dive) in group.dives.iter().enumerate() {
+            let prefix = format!("groups[{}].dives[{}]", group_idx, dive_idx);
+            v.validate_date(&format!("{}.date", prefix), &dive.date);
+            v.validate_time(&format!("{}.time", prefix), &dive.time);
+            v.validate_duration(&format!("{}.duration_seconds", prefix), dive.duration_seconds);
+            v.validate_depth(&format!("{}.max_depth_m", prefix), dive.max_depth_m);
+            v.validate_depth(&format!("{}.mean_depth_m", prefix), dive.mean_depth_m);
+            v.validate_water_temp_optional(&format!("{}.water_temp_c", prefix), dive.water_temp_c);
+            v.validate_air_temp_optional(&format!("{}.air_temp_c", prefix), dive.air_temp_c);
+            v.validate_surface_pressure_optional(&format!("{}.surface_pressure_bar", prefix), dive.surface_pressure_bar);
+            v.validate_cns_percent_optional(&format!("{}.cns_percent", prefix), dive.cns_percent);
+            v.validate_gps_optional(dive.latitude, dive.longitude);
+        }
+    }
+    
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     let mut trips_created: i64 = 0;
     let mut dives_imported: i64 = 0;
     let mut samples_imported: i64 = 0;
     let mut tank_pressures_imported: i64 = 0;
+    let mut tanks_imported: i64 = 0;
     let mut created_trip_ids: Vec<i64> = Vec::new();
     
     // Process all groups - each group becomes a trip
@@ -398,7 +539,6 @@ pub fn bulk_import_dives(
                 dive_data.cns_percent,
                 dive_data.dive_computer_model.as_deref(),
                 dive_data.dive_computer_serial.as_deref(),
-                dive_data.nitrox_o2_percent,
                 dive_data.latitude,
                 dive_data.longitude,
             ).map_err(|e| format!("Failed to create dive: {}", e))?;
@@ -439,6 +579,26 @@ pub fn bulk_import_dives(
                     .map_err(|e| format!("Failed to insert tank pressures: {}", e))?;
                 tank_pressures_imported += count as i64;
             }
+            
+            // Insert dive tanks (gas mix metadata)
+            if !dive_data.tanks.is_empty() {
+                let tanks: Vec<DiveTank> = dive_data.tanks.iter().map(|t| DiveTank {
+                    id: 0,
+                    dive_id,
+                    sensor_id: t.sensor_id,
+                    sensor_name: None,
+                    gas_index: t.gas_index,
+                    o2_percent: t.o2_percent,
+                    he_percent: t.he_percent,
+                    start_pressure_bar: t.start_pressure_bar,
+                    end_pressure_bar: t.end_pressure_bar,
+                    volume_used_liters: t.volume_used_liters,
+                }).collect();
+                
+                let count = db.insert_dive_tanks_batch(dive_id, &tanks)
+                    .map_err(|e| format!("Failed to insert dive tanks: {}", e))?;
+                tanks_imported += count as i64;
+            }
         }
     }
     
@@ -447,6 +607,7 @@ pub fn bulk_import_dives(
         dives_imported,
         samples_imported,
         tank_pressures_imported,
+        tanks_imported,
         created_trip_ids,
     })
 }
@@ -491,6 +652,15 @@ pub fn parse_dive_file_data(file_name: String, file_data: Vec<u8>) -> Result<Par
                 time_seconds: tp.time_seconds,
                 pressure_bar: tp.pressure_bar,
             }).collect(),
+            tanks: imported.tanks.into_iter().map(|t| ParsedTank {
+                sensor_id: t.sensor_id,
+                gas_index: t.gas_index,
+                o2_percent: t.o2_percent,
+                he_percent: t.he_percent,
+                start_pressure_bar: t.start_pressure_bar,
+                end_pressure_bar: t.end_pressure_bar,
+                volume_used_liters: t.volume_used_liters,
+            }).collect(),
         }
     }).collect();
     
@@ -518,11 +688,29 @@ pub fn create_dive_from_computer(
     cns_percent: Option<f64>,
     dive_computer_model: Option<String>,
     dive_computer_serial: Option<String>,
-    nitrox_o2_percent: Option<f64>,
     latitude: Option<f64>,
     longitude: Option<f64>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("trip_id", trip_id);
+    v.validate_date("date", &date);
+    v.validate_time("time", &time);
+    v.validate_duration("duration_seconds", duration_seconds);
+    v.validate_depth("max_depth_m", max_depth_m);
+    v.validate_depth("mean_depth_m", mean_depth_m);
+    v.validate_water_temp_optional("water_temp_c", water_temp_c);
+    v.validate_air_temp_optional("air_temp_c", air_temp_c);
+    v.validate_surface_pressure_optional("surface_pressure_bar", surface_pressure_bar);
+    v.validate_cns_percent_optional("cns_percent", cns_percent);
+    v.validate_name_optional("dive_computer_model", dive_computer_model.as_deref());
+    v.validate_name_optional("dive_computer_serial", dive_computer_serial.as_deref());
+    v.validate_gps_optional(latitude, longitude);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     // Get current dive count for numbering
     let existing_dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
@@ -542,7 +730,6 @@ pub fn create_dive_from_computer(
         cns_percent,
         dive_computer_model.as_deref(),
         dive_computer_serial.as_deref(),
-        nitrox_o2_percent,
         latitude,
         longitude,
     ).map_err(|e| e.to_string())
@@ -562,7 +749,6 @@ pub fn create_manual_dive(
     air_temp_c: Option<f64>,
     surface_pressure_bar: Option<f64>,
     cns_percent: Option<f64>,
-    nitrox_o2_percent: Option<f64>,
     // User-editable fields
     location: Option<String>,
     ocean: Option<String>,
@@ -580,7 +766,32 @@ pub fn create_manual_dive(
     is_night_dive: bool,
     is_training_dive: bool,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("trip_id", trip_id);
+    v.validate_date("date", &date);
+    v.validate_time("time", &time);
+    v.validate_duration("duration_seconds", duration_seconds);
+    v.validate_depth("max_depth_m", max_depth_m);
+    v.validate_depth("mean_depth_m", mean_depth_m);
+    v.validate_water_temp_optional("water_temp_c", water_temp_c);
+    v.validate_air_temp_optional("air_temp_c", air_temp_c);
+    v.validate_surface_pressure_optional("surface_pressure_bar", surface_pressure_bar);
+    v.validate_cns_percent_optional("cns_percent", cns_percent);
+    v.validate_string_optional("location", location.as_deref(), MAX_LOCATION_LENGTH);
+    v.validate_string_optional("ocean", ocean.as_deref(), MAX_NAME_LENGTH);
+    v.validate_depth_optional("visibility_m", visibility_m);
+    v.validate_name_optional("buddy", buddy.as_deref());
+    v.validate_name_optional("divemaster", divemaster.as_deref());
+    v.validate_name_optional("guide", guide.as_deref());
+    v.validate_name_optional("instructor", instructor.as_deref());
+    v.validate_notes("comments", comments.as_deref());
+    v.validate_gps_optional(latitude, longitude);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     // Get current dive count for numbering
     let existing_dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
@@ -598,7 +809,6 @@ pub fn create_manual_dive(
         air_temp_c,
         surface_pressure_bar,
         cns_percent,
-        nitrox_o2_percent,
         location.as_deref(),
         ocean.as_deref(),
         visibility_m,
@@ -619,33 +829,42 @@ pub fn create_manual_dive(
 
 #[tauri::command]
 pub fn get_photos_for_dive(state: State<AppState>, dive_id: i64) -> Result<Vec<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_photos_for_dive(dive_id).map_err(|e| e.to_string())
 }
 
 /// Get top photos for a dive for thumbnail display (prioritizes processed versions and high ratings)
 #[tauri::command]
 pub fn get_dive_thumbnail_photos(state: State<AppState>, dive_id: i64, limit: i64) -> Result<Vec<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dive_thumbnail_photos(dive_id, limit).map_err(|e| e.to_string())
 }
 
 /// Get photo count and species count for a dive
 #[tauri::command]
 pub fn get_dive_stats(state: State<AppState>, dive_id: i64) -> Result<DiveStats, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dive_stats(dive_id).map_err(|e| e.to_string())
+}
+
+/// Get all dives for a trip with their stats and thumbnails in a single batch call
+/// This replaces multiple get_dive_stats + get_dive_thumbnail_photos calls
+#[tauri::command]
+pub fn get_dives_with_details(state: State<AppState>, trip_id: i64, thumbnail_limit: Option<i64>) -> Result<Vec<DiveWithDetails>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
+    let limit = thumbnail_limit.unwrap_or(4);
+    db.get_dives_with_details(trip_id, limit).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_photos_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_photos_for_trip(trip_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_all_photos_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_all_photos_for_trip(trip_id).map_err(|e| e.to_string())
 }
 
@@ -656,7 +875,7 @@ pub fn scan_photos_for_import(
     trip_id: i64,
     gap_minutes: Option<i64>,
 ) -> Result<photos::PhotoImportPreview, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     let dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
     
     let gap = gap_minutes.unwrap_or(60); // Default 60 min gap between groups
@@ -672,13 +891,13 @@ pub fn import_photos(
 ) -> Result<i64, String> {
     let overwrite_flag = overwrite.unwrap_or(false);
     log::info!("import_photos called with overwrite={}", overwrite_flag);
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     photos::import_photos(&db, trip_id, assignments, overwrite_flag)
 }
 
 #[tauri::command]
 pub fn get_photo(state: State<AppState>, id: i64) -> Result<Option<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_photo(id).map_err(|e| e.to_string())
 }
 
@@ -689,7 +908,7 @@ pub async fn regenerate_thumbnails(
 ) -> Result<i64, String> {
     // Get photos needing thumbnails while holding lock briefly
     let photos_needing_thumbs = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.get_photos_without_thumbnails().map_err(|e| e.to_string())?
     };
     
@@ -707,7 +926,7 @@ pub async fn regenerate_thumbnails(
             }).await.map_err(|e| e.to_string())?;
             
             if let Some(thumb_path) = thumb_result {
-                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
                 db.update_photo_thumbnail(photo_id, &thumb_path)
                     .map_err(|e| format!("Failed to update thumbnail: {}", e))?;
                 count += 1;
@@ -728,7 +947,7 @@ pub async fn regenerate_thumbnails(
 /// Get list of photo IDs that need thumbnails
 #[tauri::command]
 pub fn get_photos_needing_thumbnails(state: State<AppState>) -> Result<Vec<i64>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     let photos = db.get_photos_without_thumbnails()
         .map_err(|e| e.to_string())?;
     Ok(photos.iter().map(|p| p.id).collect())
@@ -738,7 +957,7 @@ pub fn get_photos_needing_thumbnails(state: State<AppState>) -> Result<Vec<i64>,
 #[tauri::command]
 pub async fn generate_single_thumbnail(state: State<'_, AppState>, photo_id: i64) -> Result<Option<String>, String> {
     let photo = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.get_photo(photo_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Photo not found".to_string())?
@@ -755,7 +974,7 @@ pub async fn generate_single_thumbnail(state: State<'_, AppState>, photo_id: i64
     }).await.map_err(|e| e.to_string())?;
     
     if let Some(ref thumb_path) = thumb_result {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.update_photo_thumbnail(photo_id, thumb_path)
             .map_err(|e| format!("Failed to update thumbnail: {}", e))?;
     }
@@ -767,7 +986,7 @@ pub async fn generate_single_thumbnail(state: State<'_, AppState>, photo_id: i64
 #[tauri::command]
 pub async fn rescan_photo_exif(state: State<'_, AppState>, photo_id: i64) -> Result<bool, String> {
     let photo = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.get_photo(photo_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Photo not found".to_string())?
@@ -793,8 +1012,13 @@ pub async fn rescan_photo_exif(state: State<'_, AppState>, photo_id: i64) -> Res
         println!("  focal: {:?}", scanned.focal_length_mm);
         println!("  make: {:?}", scanned.camera_make);
         println!("  model: {:?}", scanned.camera_model);
+        println!("  exposure_comp: {:?}", scanned.exposure_compensation);
+        println!("  white_balance: {:?}", scanned.white_balance);
+        println!("  flash: {:?}", scanned.flash_fired);
+        println!("  metering: {:?}", scanned.metering_mode);
+        println!("  gps: {:?}, {:?}", scanned.gps_latitude, scanned.gps_longitude);
         
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.update_photo_exif(
             photo_id,
             scanned.capture_time.as_deref(),
@@ -805,6 +1029,12 @@ pub async fn rescan_photo_exif(state: State<'_, AppState>, photo_id: i64) -> Res
             scanned.aperture,
             scanned.shutter_speed.as_deref(),
             scanned.iso,
+            scanned.exposure_compensation,
+            scanned.white_balance.as_deref(),
+            scanned.flash_fired,
+            scanned.metering_mode.as_deref(),
+            scanned.gps_latitude,
+            scanned.gps_longitude,
         ).map_err(|e| e.to_string())?;
         
         println!("Database updated!");
@@ -818,7 +1048,7 @@ pub async fn rescan_photo_exif(state: State<'_, AppState>, photo_id: i64) -> Res
 /// Debug: dump all EXIF tags from a photo file
 #[tauri::command]
 pub fn debug_dump_exif(state: State<AppState>, photo_id: i64) -> Result<Vec<String>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     let photo = db.get_photo(photo_id)
         .map_err(|e| e.to_string())?
@@ -893,7 +1123,7 @@ pub fn debug_dump_exif(state: State<AppState>, photo_id: i64) -> Result<Vec<Stri
 #[tauri::command]
 pub async fn rescan_trip_exif(state: State<'_, AppState>, trip_id: i64) -> Result<i64, String> {
     let photos = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.get_photos_for_trip(trip_id).map_err(|e| e.to_string())?
     };
     
@@ -909,7 +1139,7 @@ pub async fn rescan_trip_exif(state: State<'_, AppState>, trip_id: i64) -> Resul
             }).await.map_err(|e| e.to_string())?;
             
             if let Some(scanned) = scanned {
-                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
                 db.update_photo_exif(
                     photo_id,
                     scanned.capture_time.as_deref(),
@@ -920,6 +1150,12 @@ pub async fn rescan_trip_exif(state: State<'_, AppState>, trip_id: i64) -> Resul
                     scanned.aperture,
                     scanned.shutter_speed.as_deref(),
                     scanned.iso,
+                    scanned.exposure_compensation,
+                    scanned.white_balance.as_deref(),
+                    scanned.flash_fired,
+                    scanned.metering_mode.as_deref(),
+                    scanned.gps_latitude,
+                    scanned.gps_longitude,
                 ).map_err(|e| e.to_string())?;
                 count += 1;
             }
@@ -937,7 +1173,7 @@ pub async fn rescan_all_exif(
 ) -> Result<i64, String> {
     // Get all photos while holding lock briefly
     let all_photos = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.get_all_photos().map_err(|e| e.to_string())?
     };
     
@@ -963,7 +1199,7 @@ pub async fn rescan_all_exif(
                         filename, scanned.aperture, scanned.iso, scanned.shutter_speed);
                 }
                 
-                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
                 db.update_photo_exif(
                     photo_id,
                     scanned.capture_time.as_deref(),
@@ -974,6 +1210,12 @@ pub async fn rescan_all_exif(
                     scanned.aperture,
                     scanned.shutter_speed.as_deref(),
                     scanned.iso,
+                    scanned.exposure_compensation,
+                    scanned.white_balance.as_deref(),
+                    scanned.flash_fired,
+                    scanned.metering_mode.as_deref(),
+                    scanned.gps_latitude,
+                    scanned.gps_longitude,
                 ).map_err(|e| e.to_string())?;
                 count += 1;
             }
@@ -995,6 +1237,7 @@ pub async fn rescan_all_exif(
 
 /// Read an image file and return it as base64-encoded data URL
 /// For RAW files (DNG, CR2, etc.), decodes the raw sensor data into a viewable image
+/// For JPEG files, reads directly without re-encoding (fast path for thumbnails)
 /// Uses spawn_blocking to avoid blocking the async runtime on CPU-intensive decoding
 #[tauri::command]
 pub async fn get_image_data(file_path: String) -> Result<String, String> {
@@ -1006,18 +1249,36 @@ pub async fn get_image_data(file_path: String) -> Result<String, String> {
     
     // Run image decoding in blocking thread pool since it's CPU-intensive
     let result = tokio::task::spawn_blocking(move || {
+        // Check file extension
+        let ext_lower = path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase())
+            .unwrap_or_default();
+        
+        // FAST PATH: If it's already a JPEG, just read the bytes directly - no decoding needed!
+        // This is ~10-50x faster for thumbnails which are pre-generated JPEGs
+        if ext_lower == "jpg" || ext_lower == "jpeg" {
+            let jpeg_data = std::fs::read(&path)
+                .map_err(|e| format!("Failed to read JPEG file: {}", e))?;
+            let base64_data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &jpeg_data);
+            return Ok(format!("data:image/jpeg;base64,{}", base64_data));
+        }
+        
         // Check if this is a RAW file that needs decoding
         let raw_extensions = ["raw", "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "raf", "pef"];
-        let is_raw = path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| raw_extensions.contains(&ext.to_lowercase().as_str()))
-            .unwrap_or(false);
+        let is_raw = raw_extensions.contains(&ext_lower.as_str());
         
         let jpeg_data = if is_raw {
-            // Decode RAW file using rawloader + imagepipe
-            photos::decode_raw_to_jpeg(&path)?
+            // CR3 fast path: rawloader doesn't support CR3, skip directly to rawler
+            if ext_lower == "cr3" {
+                log::info!("CR3 file detected, using rawler directly: {}", path.display());
+                decode_raw_with_fallbacks(&path, true)
+            } else {
+                // For other RAW formats, try rawloader first, then fallback chain
+                decode_raw_with_fallbacks(&path, false)
+            }?
         } else {
-            // Regular image - just read and re-encode as JPEG if needed
+            // Other image formats (PNG, TIFF, etc.) - decode and re-encode as JPEG
             let img = image::open(&path)
                 .map_err(|e| format!("Failed to open image: {}", e))?;
             
@@ -1035,17 +1296,67 @@ pub async fn get_image_data(file_path: String) -> Result<String, String> {
     result
 }
 
+/// Decode RAW file with fallback chain:
+/// 1. rawloader + imagepipe (unless skip_rawloader is true)
+/// 2. rawler (supports CR3 and other formats)
+/// 3. Embedded JPEG extraction (last resort)
+fn decode_raw_with_fallbacks(path: &std::path::Path, skip_rawloader: bool) -> Result<Vec<u8>, String> {
+    let mut last_error = String::new();
+    
+    // Step 1: Try rawloader + imagepipe (unless skipping for CR3)
+    if !skip_rawloader {
+        match photos::decode_raw_to_jpeg(path) {
+            Ok(data) => {
+                log::info!("RAW decoded with rawloader: {}", path.display());
+                return Ok(data);
+            }
+            Err(e) => {
+                log::warn!("rawloader failed for {}: {}", path.display(), e);
+                last_error = e;
+            }
+        }
+    }
+    
+    // Step 2: Try rawler (supports CR3, newer cameras)
+    match photos::decode_raw_with_rawler(path) {
+        Ok(data) => {
+            log::info!("RAW decoded with rawler: {}", path.display());
+            return Ok(data);
+        }
+        Err(e) => {
+            log::warn!("rawler failed for {}: {}", path.display(), e);
+            last_error = e;
+        }
+    }
+    
+    // Step 3: Last resort - extract embedded JPEG preview
+    log::warn!("Falling back to embedded JPEG extraction for: {}", path.display());
+    let file_data = std::fs::read(path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    
+    if let Some(jpeg_data) = photos::extract_embedded_jpeg(&file_data) {
+        log::info!("Extracted embedded JPEG from: {}", path.display());
+        return Ok(jpeg_data);
+    }
+    
+    // All methods failed
+    Err(format!(
+        "Failed to decode RAW file with all methods. Last error: {}",
+        last_error
+    ))
+}
+
 /// Get the processed version of a RAW photo (if exists)
 #[tauri::command]
 pub fn get_processed_version(state: State<AppState>, photo_id: i64) -> Result<Option<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_processed_version(photo_id).map_err(|e| e.to_string())
 }
 
 /// Get the RAW version of a processed photo
 #[tauri::command]
 pub fn get_raw_version(state: State<AppState>, photo_id: i64) -> Result<Option<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_raw_version(photo_id).map_err(|e| e.to_string())
 }
 
@@ -1053,7 +1364,7 @@ pub fn get_raw_version(state: State<AppState>, photo_id: i64) -> Result<Option<P
 /// Use this when showing thumbnails and full-size images
 #[tauri::command]
 pub fn get_display_version(state: State<AppState>, photo_id: i64) -> Result<Photo, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_display_version(photo_id).map_err(|e| e.to_string())
 }
 
@@ -1061,7 +1372,7 @@ pub fn get_display_version(state: State<AppState>, photo_id: i64) -> Result<Phot
 /// Call this to fix data imported before automatic linking was added
 #[tauri::command]
 pub fn link_orphan_processed_photos(state: State<AppState>) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.link_orphan_processed_photos().map_err(|e| e.to_string())
 }
 
@@ -1071,13 +1382,13 @@ use crate::db::SpeciesTag;
 
 #[tauri::command]
 pub fn get_all_species_tags(state: State<AppState>) -> Result<Vec<SpeciesTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_all_species_tags().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn search_species_tags(state: State<AppState>, query: String) -> Result<Vec<SpeciesTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.search_species_tags(&query).map_err(|e| e.to_string())
 }
 
@@ -1088,7 +1399,16 @@ pub fn create_species_tag(
     category: Option<String>,
     scientific_name: Option<String>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_name("name", &name);
+    v.validate_name_optional("category", category.as_deref());
+    v.validate_name_optional("scientific_name", scientific_name.as_deref());
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.create_species_tag(&name, category.as_deref(), scientific_name.as_deref())
         .map_err(|e| e.to_string())
 }
@@ -1100,14 +1420,14 @@ pub fn get_or_create_species_tag(
     category: Option<String>,
     scientific_name: Option<String>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_or_create_species_tag(&name, category.as_deref(), scientific_name.as_deref())
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_species_tags_for_photo(state: State<AppState>, photo_id: i64) -> Result<Vec<SpeciesTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_species_tags_for_photo(photo_id).map_err(|e| e.to_string())
 }
 
@@ -1117,7 +1437,7 @@ pub fn add_species_tag_to_photos(
     photo_ids: Vec<i64>,
     species_tag_id: i64,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.add_species_tag_to_photos(&photo_ids, species_tag_id)
         .map_err(|e| e.to_string())
 }
@@ -1128,7 +1448,7 @@ pub fn remove_species_tag_from_photo(
     photo_id: i64,
     species_tag_id: i64,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_species_tag_from_photo(photo_id, species_tag_id)
         .map_err(|e| e.to_string())
 }
@@ -1139,14 +1459,14 @@ pub fn remove_species_tag_from_photos(
     photo_ids: Vec<i64>,
     species_tag_id: i64,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_species_tag_from_photos(&photo_ids, species_tag_id)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_distinct_species_categories(state: State<AppState>) -> Result<Vec<String>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_distinct_species_categories().map_err(|e| e.to_string())
 }
 
@@ -1156,7 +1476,7 @@ pub fn update_species_tag_category(
     species_tag_id: i64,
     category: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_species_tag_category(species_tag_id, category.as_deref())
         .map_err(|e| e.to_string())
 }
@@ -1166,7 +1486,7 @@ pub fn get_common_species_tags_for_photos(
     state: State<AppState>,
     photo_ids: Vec<i64>,
 ) -> Result<Vec<SpeciesTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_common_species_tags_for_photos(&photo_ids)
         .map_err(|e| e.to_string())
 }
@@ -1176,7 +1496,7 @@ pub fn get_common_general_tags_for_photos(
     state: State<AppState>,
     photo_ids: Vec<i64>,
 ) -> Result<Vec<GeneralTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_common_general_tags_for_photos(&photo_ids)
         .map_err(|e| e.to_string())
 }
@@ -1187,7 +1507,7 @@ pub fn remove_general_tag_from_photos(
     photo_ids: Vec<i64>,
     general_tag_id: i64,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_general_tag_from_photos(&photo_ids, general_tag_id)
         .map_err(|e| e.to_string())
 }
@@ -1196,19 +1516,46 @@ pub fn remove_general_tag_from_photos(
 
 #[tauri::command]
 pub fn delete_photos(state: State<AppState>, photo_ids: Vec<i64>) -> Result<u64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_array_required("photo_ids", &photo_ids);
+    v.validate_array_size("photo_ids", &photo_ids, MAX_BATCH_SIZE);
+    v.validate_id_array("photo_ids", &photo_ids);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.delete_photos(&photo_ids).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn update_photo_rating(state: State<AppState>, photo_id: i64, rating: i32) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("photo_id", photo_id);
+    v.validate_rating(rating);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_photo_rating(photo_id, rating).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn update_photos_rating(state: State<AppState>, photo_ids: Vec<i64>, rating: i32) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_array_required("photo_ids", &photo_ids);
+    v.validate_array_size("photo_ids", &photo_ids, MAX_BATCH_SIZE);
+    v.validate_id_array("photo_ids", &photo_ids);
+    v.validate_rating(rating);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_photos_rating(&photo_ids, rating).map_err(|e| e.to_string())
 }
 
@@ -1218,25 +1565,25 @@ use crate::db::GeneralTag;
 
 #[tauri::command]
 pub fn get_all_general_tags(state: State<AppState>) -> Result<Vec<GeneralTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_all_general_tags().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn search_general_tags(state: State<AppState>, query: String) -> Result<Vec<GeneralTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.search_general_tags(&query).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_or_create_general_tag(state: State<AppState>, name: String) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_or_create_general_tag(&name).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_general_tags_for_photo(state: State<AppState>, photo_id: i64) -> Result<Vec<GeneralTag>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_general_tags_for_photo(photo_id).map_err(|e| e.to_string())
 }
 
@@ -1246,7 +1593,7 @@ pub fn add_general_tag_to_photos(
     photo_ids: Vec<i64>,
     general_tag_id: i64,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.add_general_tag_to_photos(&photo_ids, general_tag_id)
         .map_err(|e| e.to_string())
 }
@@ -1257,7 +1604,7 @@ pub fn remove_general_tag_from_photo(
     photo_id: i64,
     general_tag_id: i64,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_general_tag_from_photo(photo_id, general_tag_id)
         .map_err(|e| e.to_string())
 }
@@ -1268,31 +1615,31 @@ use crate::db::{Statistics, SpeciesCount, CameraStat, YearlyStat};
 
 #[tauri::command]
 pub fn get_statistics(state: State<AppState>) -> Result<Statistics, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_statistics().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_species_with_counts(state: State<AppState>) -> Result<Vec<SpeciesCount>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_species_with_counts().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_camera_stats(state: State<AppState>) -> Result<Vec<CameraStat>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_camera_stats().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_yearly_stats(state: State<AppState>) -> Result<Vec<YearlyStat>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_yearly_stats().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_trip_species_count(state: State<AppState>, trip_id: i64) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_trip_species_count(trip_id).map_err(|e| e.to_string())
 }
 
@@ -1302,13 +1649,13 @@ use crate::db::{TripExport, SpeciesExport};
 
 #[tauri::command]
 pub fn get_trip_export(state: State<AppState>, trip_id: i64) -> Result<TripExport, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_trip_export(trip_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_species_export(state: State<AppState>) -> Result<Vec<SpeciesExport>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_species_export().map_err(|e| e.to_string())
 }
 
@@ -1319,7 +1666,17 @@ pub fn export_photos(
     destination_folder: String,
     include_processed: bool,
 ) -> Result<Vec<String>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_array_required("photo_ids", &photo_ids);
+    v.validate_array_size("photo_ids", &photo_ids, MAX_BATCH_SIZE);
+    v.validate_id_array("photo_ids", &photo_ids);
+    v.validate_path(&destination_folder);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     // Get photo details
     let photos = db.get_photos_for_export(&photo_ids).map_err(|e| e.to_string())?;
@@ -1379,13 +1736,13 @@ use crate::db::{SearchResults, PhotoFilter};
 
 #[tauri::command]
 pub fn search(state: State<AppState>, query: String) -> Result<SearchResults, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.search(&query).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn filter_photos(state: State<AppState>, filter: PhotoFilter) -> Result<Vec<Photo>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.filter_photos(&filter).map_err(|e| e.to_string())
 }
 
@@ -1397,7 +1754,7 @@ pub fn move_photos_to_dive(
     photo_ids: Vec<i64>,
     dive_id: Option<i64>,
 ) -> Result<usize, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.move_photos_to_dive(&photo_ids, dive_id).map_err(|e| e.to_string())
 }
 
@@ -1407,7 +1764,7 @@ use crate::db::DiveSite;
 
 #[tauri::command]
 pub fn get_dive_sites(state: State<AppState>) -> Result<Vec<DiveSite>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_all_dive_sites().map_err(|e| e.to_string())
 }
 
@@ -1418,7 +1775,7 @@ pub fn import_dive_sites_csv(state: State<AppState>, csv_path: String) -> Result
     
     let file = File::open(&csv_path).map_err(|e| format!("Failed to open CSV file: {}", e))?;
     let reader = BufReader::new(file);
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     let mut count = 0;
     let mut lines = reader.lines();
@@ -1444,13 +1801,61 @@ pub fn import_dive_sites_csv(state: State<AppState>, csv_path: String) -> Result
     Ok(count)
 }
 
+/// Search dive sites by name (server-side filtering)
+#[tauri::command]
+pub fn search_dive_sites(state: State<AppState>, query: String) -> Result<Vec<DiveSite>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.search_dive_sites(&query).map_err(|e| e.to_string())
+}
+
+/// Create a new user dive site
+#[tauri::command]
+pub fn create_dive_site(state: State<AppState>, name: String, lat: f64, lon: f64) -> Result<i64, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.create_dive_site(&name, lat, lon).map_err(|e| e.to_string())
+}
+
+/// Update a dive site
+#[tauri::command]
+pub fn update_dive_site(state: State<AppState>, id: i64, name: String, lat: f64, lon: f64) -> Result<bool, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.update_dive_site(id, &name, lat, lon).map_err(|e| e.to_string())
+}
+
+/// Delete a user-created dive site (imported sites cannot be deleted)
+#[tauri::command]
+pub fn delete_dive_site(state: State<AppState>, id: i64) -> Result<bool, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.delete_dive_site(id).map_err(|e| e.to_string())
+}
+
+/// Find or create a dive site - matches by name or nearby location, creates if not found
+#[tauri::command]
+pub fn find_or_create_dive_site(state: State<AppState>, name: String, lat: f64, lon: f64) -> Result<i64, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.find_or_create_dive_site(&name, lat, lon).map_err(|e| e.to_string())
+}
+
+/// Get a single dive site by ID
+#[tauri::command]
+pub fn get_dive_site(state: State<AppState>, id: i64) -> Result<Option<DiveSite>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.get_dive_site(id).map_err(|e| e.to_string())
+}
+
 // Map commands
 
 use crate::db::DiveMapPoint;
 
 #[tauri::command]
 pub fn get_dive_map_points(state: State<AppState>) -> Result<Vec<DiveMapPoint>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dives_with_coordinates().map_err(|e| e.to_string())
 }
 
@@ -1475,7 +1880,7 @@ pub async fn identify_species_in_photo(
 ) -> Result<IdentificationResult, String> {
     // Get photo info from database
     let photo = {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
         db.get_photo(photo_id)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Photo not found".to_string())?
@@ -1515,7 +1920,7 @@ pub async fn identify_species_batch(
     for photo_id in photo_ids {
         // Get photo info from database
         let photo = {
-            let db = state.db.lock().map_err(|e| e.to_string())?;
+            let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
             match db.get_photo(photo_id) {
                 Ok(Some(p)) => p,
                 Ok(None) => {
@@ -1603,7 +2008,7 @@ use crate::db::{EquipmentCategory, Equipment, EquipmentWithCategory, EquipmentSe
 
 #[tauri::command]
 pub fn get_equipment_categories(state: State<AppState>) -> Result<Vec<EquipmentCategory>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment_categories().map_err(|e| e.to_string())
 }
 
@@ -1614,7 +2019,7 @@ pub fn create_equipment_category(
     icon: Option<String>,
     sort_order: i32,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.create_equipment_category(&name, icon.as_deref(), sort_order)
         .map_err(|e| e.to_string())
 }
@@ -1627,14 +2032,14 @@ pub fn update_equipment_category(
     icon: Option<String>,
     sort_order: i32,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_equipment_category(id, &name, icon.as_deref(), sort_order)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_equipment_category(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.delete_equipment_category(id).map_err(|e| e.to_string())
 }
 
@@ -1642,19 +2047,19 @@ pub fn delete_equipment_category(state: State<AppState>, id: i64) -> Result<(), 
 
 #[tauri::command]
 pub fn get_all_equipment(state: State<AppState>) -> Result<Vec<EquipmentWithCategory>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_all_equipment().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_equipment_by_category(state: State<AppState>, category_id: i64) -> Result<Vec<Equipment>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment_by_category(category_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_equipment(state: State<AppState>, id: i64) -> Result<Option<EquipmentWithCategory>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment(id).map_err(|e| e.to_string())
 }
 
@@ -1669,7 +2074,20 @@ pub fn create_equipment(
     purchase_date: Option<String>,
     notes: Option<String>,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("category_id", category_id);
+    v.validate_name("name", &name);
+    v.validate_name_optional("brand", brand.as_deref());
+    v.validate_name_optional("model", model.as_deref());
+    v.validate_name_optional("serial_number", serial_number.as_deref());
+    v.validate_date_optional("purchase_date", purchase_date.as_deref());
+    v.validate_notes("notes", notes.as_deref());
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.create_equipment(
         category_id,
         &name,
@@ -1694,7 +2112,7 @@ pub fn update_equipment(
     notes: Option<String>,
     is_retired: bool,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_equipment(
         id,
         category_id,
@@ -1710,7 +2128,7 @@ pub fn update_equipment(
 
 #[tauri::command]
 pub fn delete_equipment(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.delete_equipment(id).map_err(|e| e.to_string())
 }
 
@@ -1718,19 +2136,19 @@ pub fn delete_equipment(state: State<AppState>, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_equipment_sets(state: State<AppState>) -> Result<Vec<EquipmentSet>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment_sets().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_equipment_sets_by_type(state: State<AppState>, set_type: String) -> Result<Vec<EquipmentSet>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment_sets_by_type(&set_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_equipment_set_with_items(state: State<AppState>, id: i64) -> Result<Option<EquipmentSetWithItems>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment_set_with_items(id).map_err(|e| e.to_string())
 }
 
@@ -1742,7 +2160,7 @@ pub fn create_equipment_set(
     set_type: String,
     is_default: bool,
 ) -> Result<i64, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.create_equipment_set(&name, description.as_deref(), &set_type, is_default)
         .map_err(|e| e.to_string())
 }
@@ -1756,32 +2174,32 @@ pub fn update_equipment_set(
     set_type: String,
     is_default: bool,
 ) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.update_equipment_set(id, &name, description.as_deref(), &set_type, is_default)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn delete_equipment_set(state: State<AppState>, id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.delete_equipment_set(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn add_equipment_to_set(state: State<AppState>, set_id: i64, equipment_id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.add_equipment_to_set(set_id, equipment_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn remove_equipment_from_set(state: State<AppState>, set_id: i64, equipment_id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_equipment_from_set(set_id, equipment_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_equipment_set_items(state: State<AppState>, set_id: i64, equipment_ids: Vec<i64>) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.set_equipment_set_items(set_id, &equipment_ids).map_err(|e| e.to_string())
 }
 
@@ -1789,31 +2207,31 @@ pub fn set_equipment_set_items(state: State<AppState>, set_id: i64, equipment_id
 
 #[tauri::command]
 pub fn get_equipment_sets_for_dive(state: State<AppState>, dive_id: i64) -> Result<Vec<EquipmentSet>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_equipment_sets_for_dive(dive_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn add_equipment_set_to_dive(state: State<AppState>, dive_id: i64, set_id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.add_equipment_set_to_dive(dive_id, set_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn remove_equipment_set_from_dive(state: State<AppState>, dive_id: i64, set_id: i64) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_equipment_set_from_dive(dive_id, set_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn set_dive_equipment_sets(state: State<AppState>, dive_id: i64, set_ids: Vec<i64>) -> Result<(), String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.set_dive_equipment_sets(dive_id, &set_ids).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_default_equipment_set(state: State<AppState>, set_type: String) -> Result<Option<EquipmentSet>, String> {
-    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_default_equipment_set(&set_type).map_err(|e| e.to_string())
 }
 
@@ -2072,3 +2490,4 @@ pub fn set_secure_setting(app: tauri::AppHandle, key: String, value: String) -> 
     
     Ok(())
 }
+

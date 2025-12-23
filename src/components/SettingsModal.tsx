@@ -16,7 +16,7 @@ export interface AppSettings {
   showRatings: boolean;
   // geminiApiKey is now stored securely via Tauri, not in localStorage
   defaultImageEditor: string; // Path to default editor, empty = system default
-  diveNamePrefix: string; // Prefix for dive names, e.g., "Dive", "Plongée", etc.
+  diveNamePrefix: string; // Prefix for dive names, e.g., "Dive", "#", ".", etc.
   hasCompletedWelcome: boolean; // Whether user has completed the welcome setup
 }
 
@@ -28,6 +28,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   diveNamePrefix: 'Dive',
   hasCompletedWelcome: false,
 };
+
+// Format dive name based on prefix type
+function formatDivePreview(prefix: string, num: number): string {
+  if (!prefix) return String(num);
+  if (prefix === '#') return `#${num}`;
+  if (prefix === '.') return `${num}.`;
+  return `${prefix} ${num}`;
+}
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -267,29 +275,30 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <div className="setting-row">
               <label className="setting-label">
                 <span className="setting-name">Dive Name Prefix</span>
-                <span className="setting-desc">How to label your dives (e.g., "Dive 1", "Plongée 1")</span>
+                <span className="setting-desc">How to label your dives (e.g., "Dive 1", "1.", "#1")</span>
               </label>
               <select
                 className="setting-select"
-                value={['Dive', 'Plongée', 'Tauchgang', 'Buceo', 'Duik', 'Immersione', ''].includes(settings.diveNamePrefix) ? settings.diveNamePrefix : '_custom'}
+                value={['Dive', '#', 'No.', '.', ''].includes(settings.diveNamePrefix) ? settings.diveNamePrefix : '_custom'}
                 onChange={(e) => {
-                  if (e.target.value !== '_custom') {
+                  if (e.target.value === '_custom') {
+                    // Set to a placeholder to show the custom input field
+                    handleChange('diveNamePrefix', 'Custom');
+                  } else {
                     handleChange('diveNamePrefix', e.target.value);
                   }
                 }}
               >
-                <option value="Dive">Dive (English)</option>
-                <option value="Plongée">Plongée (French)</option>
-                <option value="Tauchgang">Tauchgang (German)</option>
-                <option value="Buceo">Buceo (Spanish)</option>
-                <option value="Duik">Duik (Dutch)</option>
-                <option value="Immersione">Immersione (Italian)</option>
-                <option value="">Number only (1, 2, 3...)</option>
+                <option value="Dive">Dive 1, Dive 2...</option>
+                <option value="#">#1, #2...</option>
+                <option value="No.">No. 1, No. 2...</option>
+                <option value=".">1., 2., 3....</option>
+                <option value="">1, 2, 3...</option>
                 <option value="_custom">Custom...</option>
               </select>
             </div>
 
-            {!['Dive', 'Plongée', 'Tauchgang', 'Buceo', 'Duik', 'Immersione', ''].includes(settings.diveNamePrefix) && (
+            {!['Dive', '#', 'No.', '.', ''].includes(settings.diveNamePrefix) && (
               <div className="setting-row">
                 <label className="setting-label">
                   <span className="setting-name">Custom Prefix</span>
@@ -306,7 +315,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             )}
 
             <div className="setting-hint">
-              Preview: <strong>{settings.diveNamePrefix ? `${settings.diveNamePrefix} 1` : '1'}</strong>, <strong>{settings.diveNamePrefix ? `${settings.diveNamePrefix} 2` : '2'}</strong>, etc.
+              Preview: <strong>{formatDivePreview(settings.diveNamePrefix, 1)}</strong>, <strong>{formatDivePreview(settings.diveNamePrefix, 2)}</strong>, etc.
             </div>
           </div>
 

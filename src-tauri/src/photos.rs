@@ -6,7 +6,7 @@ use exif::{In, Tag, Reader as ExifReader};
 use serde::{Deserialize, Serialize};
 use image::{ImageFormat, DynamicImage};
 use rexif::ExifTag;
-use crate::db::{Database, Dive};
+use crate::db::{Db, Dive};
 
 /// Represents a scanned photo file with its metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,9 +356,13 @@ fn read_exif_from_cr3(path: &Path) -> ExifData {
         }
     };
     
-    // CR3 files contain EXIF data in a TIFF format block
-    // Look for TIFF header (II for little-endian or MM for big-endian)
-    // followed by 0x002A (42) which indicates TIFF
+    // CR3 files contain multiple TIFF blocks with different data:
+    // - Block at ~320: Make, Model, DateTime
+    // - Block at ~840: Full EXIF with exposure data, lens info
+    // We merge data from all valid blocks to get complete EXIF.
+    
+    let mut result = ExifData::default();
+    let mut blocks_found = 0;
     
     // Search for embedded TIFF/EXIF data
     for i in 0..data.len().saturating_sub(8) {
@@ -372,129 +376,140 @@ fn read_exif_from_cr3(path: &Path) -> ExifData {
             let end = std::cmp::min(i + 65536, data.len());
             let tiff_data = &data[i..end];
             
-            match rexif::parse_buffer(tiff_data) {
-                Ok(exif) => {
-                    // Check if this has meaningful EXIF data (camera make/model or datetime)
-                    let has_camera_info = exif.entries.iter().any(|e| 
-                        matches!(e.tag, ExifTag::Make | ExifTag::Model | ExifTag::DateTimeOriginal)
-                    );
-                    
-                    if has_camera_info {
-                        log::info!("Found EXIF in CR3 at offset {} with {} entries", i, exif.entries.len());
-                        
-                        let mut result = ExifData::default();
-                        
-                        for entry in &exif.entries {
-                            match entry.tag {
-                                ExifTag::DateTimeOriginal | ExifTag::DateTime => {
-                                    if result.capture_time.is_none() {
-                                        result.capture_time = parse_exif_datetime(&entry.value_more_readable);
-                                    }
-                                }
-                                ExifTag::Make => {
-                                    result.camera_make = Some(entry.value_more_readable.trim().to_string());
-                                }
-                                ExifTag::Model => {
-                                    result.camera_model = Some(entry.value_more_readable.trim().to_string());
-                                }
-                                ExifTag::LensModel => {
-                                    result.lens_info = Some(entry.value_more_readable.trim().to_string());
-                                }
-                                ExifTag::FocalLength => {
-                                    let val = entry.value_more_readable.replace(" mm", "").replace("mm", "");
-                                    if let Some(focal) = parse_rational_or_float(&val) {
-                                        result.focal_length_mm = Some(focal);
-                                    }
-                                }
-                                ExifTag::FocalLengthIn35mmFilm => {
-                                    let val = entry.value_more_readable
-                                        .trim()
-                                        .replace(" mm", "")
-                                        .replace("mm", "");
-                                    if let Some(focal) = parse_rational_or_float(&val) {
-                                        result.focal_length_mm = Some(focal);
-                                    }
-                                }
-                                ExifTag::FNumber => {
-                                    let val = entry.value_more_readable
-                                        .trim()
-                                        .trim_start_matches("f/")
-                                        .trim_start_matches("F/");
-                                    if let Some(aperture) = parse_rational_or_float(val) {
+            if let Ok(exif) = rexif::parse_buffer(tiff_data) {
+                blocks_found += 1;
+                
+                // Merge data from this block, only filling in missing fields
+                for entry in &exif.entries {
+                    match entry.tag {
+                        ExifTag::DateTimeOriginal => {
+                            if result.capture_time.is_none() {
+                                result.capture_time = parse_exif_datetime(&entry.value_more_readable);
+                            }
+                        }
+                        ExifTag::DateTime => {
+                            if result.capture_time.is_none() {
+                                result.capture_time = parse_exif_datetime(&entry.value_more_readable);
+                            }
+                        }
+                        ExifTag::Make => {
+                            if result.camera_make.is_none() {
+                                result.camera_make = Some(entry.value_more_readable.trim().to_string());
+                            }
+                        }
+                        ExifTag::Model => {
+                            if result.camera_model.is_none() {
+                                result.camera_model = Some(entry.value_more_readable.trim().to_string());
+                            }
+                        }
+                        ExifTag::LensModel => {
+                            if result.lens_info.is_none() {
+                                result.lens_info = Some(entry.value_more_readable.trim().to_string());
+                            }
+                        }
+                        ExifTag::FocalLength => {
+                            if result.focal_length_mm.is_none() {
+                                let val = entry.value_more_readable.replace(" mm", "").replace("mm", "");
+                                result.focal_length_mm = parse_rational_or_float(&val);
+                            }
+                        }
+                        ExifTag::FocalLengthIn35mmFilm => {
+                            if result.focal_length_mm.is_none() {
+                                let val = entry.value_more_readable.trim().replace(" mm", "").replace("mm", "");
+                                result.focal_length_mm = parse_rational_or_float(&val);
+                            }
+                        }
+                        ExifTag::FNumber => {
+                            if result.aperture.is_none() {
+                                let val = entry.value_more_readable.trim()
+                                    .trim_start_matches("f/").trim_start_matches("F/");
+                                if let Some(aperture) = parse_rational_or_float(val) {
+                                    if aperture >= 0.7 && aperture <= 64.0 {
                                         result.aperture = Some(aperture);
                                     }
                                 }
-                                ExifTag::ApertureValue => {
-                                    if result.aperture.is_none() {
-                                        if let Some(apex) = parse_rational_or_float(&entry.value_more_readable) {
-                                            let fnumber = (2.0_f64).powf(apex / 2.0);
-                                            result.aperture = Some((fnumber * 10.0).round() / 10.0);
-                                        }
-                                    }
-                                }
-                                ExifTag::ExposureTime => {
-                                    let val = entry.value_more_readable
-                                        .trim()
-                                        .trim_end_matches(" s")
-                                        .trim_end_matches("s");
-                                    result.shutter_speed = Some(val.to_string());
-                                }
-                                ExifTag::ShutterSpeedValue => {
-                                    if result.shutter_speed.is_none() {
-                                        if let Some(apex) = parse_rational_or_float(&entry.value_more_readable) {
-                                            let time = 1.0 / (2.0_f64).powf(apex);
-                                            if time >= 1.0 {
-                                                result.shutter_speed = Some(format!("{:.1}s", time));
-                                            } else {
-                                                let denom = (1.0 / time).round() as i32;
-                                                result.shutter_speed = Some(format!("1/{}", denom));
-                                            }
-                                        }
-                                    }
-                                }
-                                ExifTag::ISOSpeedRatings => {
-                                    let val = entry.value_more_readable
-                                        .trim()
-                                        .trim_start_matches("ISO ")
-                                        .trim_start_matches("ISO");
-                                    if let Ok(iso) = val.trim().parse::<i32>() {
-                                        result.iso = Some(iso);
-                                    }
-                                }
-                                ExifTag::ExposureBiasValue => {
-                                    if let Some(ev) = parse_rational_or_float(&entry.value_more_readable) {
-                                        result.exposure_compensation = Some(ev);
-                                    }
-                                }
-                                ExifTag::LightSource => {
-                                    result.white_balance = Some(entry.value_more_readable.trim().to_string());
-                                }
-                                ExifTag::Flash => {
-                                    let flash_str = entry.value_more_readable.to_lowercase();
-                                    result.flash_fired = Some(flash_str.contains("fired") || flash_str.contains("yes") || flash_str.contains("on"));
-                                }
-                                ExifTag::MeteringMode => {
-                                    result.metering_mode = Some(entry.value_more_readable.trim().to_string());
-                                }
-                                ExifTag::GPSLatitude => {
-                                    if let Some(lat) = parse_gps_coordinate(&entry.value_more_readable) {
-                                        result.gps_latitude = Some(lat);
-                                    }
-                                }
-                                ExifTag::GPSLongitude => {
-                                    if let Some(lon) = parse_gps_coordinate(&entry.value_more_readable) {
-                                        result.gps_longitude = Some(lon);
-                                    }
-                                }
-                                _ => {}
                             }
                         }
-                        
-                        return result;
+                        ExifTag::ApertureValue => {
+                            if result.aperture.is_none() {
+                                if let Some(apex) = parse_rational_or_float(&entry.value_more_readable) {
+                                    let fnumber = (2.0_f64).powf(apex / 2.0);
+                                    if fnumber >= 0.7 && fnumber <= 64.0 {
+                                        result.aperture = Some((fnumber * 10.0).round() / 10.0);
+                                    }
+                                }
+                            }
+                        }
+                        ExifTag::ExposureTime => {
+                            if result.shutter_speed.is_none() {
+                                let val = entry.value_more_readable.trim()
+                                    .trim_end_matches(" s").trim_end_matches("s");
+                                result.shutter_speed = Some(val.to_string());
+                            }
+                        }
+                        ExifTag::ShutterSpeedValue => {
+                            if result.shutter_speed.is_none() {
+                                if let Some(apex) = parse_rational_or_float(&entry.value_more_readable) {
+                                    let time = 1.0 / (2.0_f64).powf(apex);
+                                    if time >= 1.0 {
+                                        result.shutter_speed = Some(format!("{:.1}s", time));
+                                    } else {
+                                        let denom = (1.0 / time).round() as i32;
+                                        result.shutter_speed = Some(format!("1/{}", denom));
+                                    }
+                                }
+                            }
+                        }
+                        ExifTag::ISOSpeedRatings => {
+                            if result.iso.is_none() {
+                                let val = entry.value_more_readable.trim()
+                                    .trim_start_matches("ISO ").trim_start_matches("ISO");
+                                result.iso = val.trim().parse::<i32>().ok();
+                            }
+                        }
+                        ExifTag::ExposureBiasValue => {
+                            if result.exposure_compensation.is_none() {
+                                result.exposure_compensation = parse_rational_or_float(&entry.value_more_readable);
+                            }
+                        }
+                        ExifTag::WhiteBalanceMode => {
+                            if result.white_balance.is_none() {
+                                result.white_balance = Some(entry.value_more_readable.trim().to_string());
+                            }
+                        }
+                        ExifTag::LightSource => {
+                            if result.white_balance.is_none() {
+                                result.white_balance = Some(entry.value_more_readable.trim().to_string());
+                            }
+                        }
+                        ExifTag::Flash => {
+                            if result.flash_fired.is_none() {
+                                let flash_str = entry.value_more_readable.to_lowercase();
+                                result.flash_fired = Some(flash_str.contains("fired") || flash_str.contains("yes") || flash_str.contains("on"));
+                            }
+                        }
+                        ExifTag::MeteringMode => {
+                            if result.metering_mode.is_none() {
+                                result.metering_mode = Some(entry.value_more_readable.trim().to_string());
+                            }
+                        }
+                        ExifTag::GPSLatitude => {
+                            if result.gps_latitude.is_none() {
+                                result.gps_latitude = parse_gps_coordinate(&entry.value_more_readable);
+                            }
+                        }
+                        ExifTag::GPSLongitude => {
+                            if result.gps_longitude.is_none() {
+                                result.gps_longitude = parse_gps_coordinate(&entry.value_more_readable);
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                Err(_) => {
-                    // Not valid EXIF at this offset, continue searching
+                
+                // Stop after finding enough blocks (first 5 should have all we need)
+                if blocks_found >= 5 {
+                    break;
                 }
             }
         }
@@ -505,16 +520,198 @@ fn read_exif_from_cr3(path: &Path) -> ExifData {
         }
     }
     
+    if blocks_found > 0 {
+        log::info!("CR3 EXIF merged from {} blocks: make={:?}, model={:?}, aperture={:?}", 
+            blocks_found, result.camera_make, result.camera_model, result.aperture);
+        return result;
+    }
+    
     log::warn!("No EXIF data found in CR3 file {:?}", path);
     ExifData::default()
 }
 
+/// Read EXIF data from ORF files (Olympus RAW)
+/// ORF files use a modified TIFF structure with "IIRO" header instead of "II*\0"
+/// We patch the header in memory to make it parseable as TIFF
+fn read_exif_from_orf(path: &Path) -> Option<ExifData> {
+    let mut data = std::fs::read(path).ok()?;
+    
+    // Check for ORF signature: "II" followed by "RO" (0x49 0x49 0x52 0x4F)
+    if data.len() < 8 || data[0..4] != [0x49, 0x49, 0x52, 0x4F] {
+        log::warn!("Not a valid ORF file: {:?}", path);
+        return None;
+    }
+    
+    // Patch header to standard TIFF: replace "RO" (0x52 0x4F) with "*\0" (0x2A 0x00)
+    data[2] = 0x2A;
+    data[3] = 0x00;
+    
+    log::info!("Patched ORF header for {:?}", path.file_name());
+    
+    // Try to parse with kamadak-exif first (it handles TIFF better for our needs)
+    let mut cursor = std::io::Cursor::new(&data);
+    if let Ok(exif) = ExifReader::new().read_from_container(&mut cursor) {
+        log::info!("kamadak-exif found {} fields in ORF", exif.fields().count());
+        
+        let mut result = ExifData::default();
+        
+        // Get capture time
+        result.capture_time = get_field_any_ifd(&exif, Tag::DateTimeOriginal)
+            .or_else(|| get_field_any_ifd(&exif, Tag::DateTimeDigitized))
+            .or_else(|| get_field_any_ifd(&exif, Tag::DateTime))
+            .and_then(|f| parse_exif_datetime(&f.display_value().to_string()));
+        
+        // Camera info
+        result.camera_make = get_field_any_ifd(&exif, Tag::Make)
+            .map(|f| clean_exif_string(&f.display_value().to_string()));
+        result.camera_model = get_field_any_ifd(&exif, Tag::Model)
+            .map(|f| clean_exif_string(&f.display_value().to_string()));
+        result.lens_info = get_field_any_ifd(&exif, Tag::LensModel)
+            .map(|f| clean_exif_string(&f.display_value().to_string()));
+        
+        // Focal length
+        result.focal_length_mm = get_field_any_ifd(&exif, Tag::FocalLengthIn35mmFilm)
+            .or_else(|| get_field_any_ifd(&exif, Tag::FocalLength))
+            .and_then(|f| {
+                let val = f.display_value().to_string();
+                val.split_whitespace().next().and_then(|s| s.parse::<f64>().ok())
+            });
+        
+        // Aperture
+        result.aperture = get_field_any_ifd(&exif, Tag::FNumber)
+            .and_then(|f| {
+                let val = f.display_value().to_string();
+                val.trim_start_matches("f/").split_whitespace().next()
+                    .and_then(|s| s.parse::<f64>().ok())
+            });
+        
+        // Shutter speed
+        result.shutter_speed = get_field_any_ifd(&exif, Tag::ExposureTime)
+            .map(|f| {
+                let val = f.display_value().to_string();
+                val.trim_end_matches(" s").trim_end_matches("s").trim().to_string()
+            });
+        
+        // ISO - use PhotographicSensitivity for kamadak-exif
+        result.iso = get_field_any_ifd(&exif, Tag::PhotographicSensitivity)
+            .and_then(|f| {
+                let val = f.display_value().to_string();
+                val.trim().parse::<i32>().ok()
+            });
+        
+        // Exposure compensation
+        result.exposure_compensation = get_field_any_ifd(&exif, Tag::ExposureBiasValue)
+            .and_then(|f| {
+                let val = f.display_value().to_string();
+                // Format might be "0 EV" or just a number
+                val.split_whitespace().next().and_then(|s| s.parse::<f64>().ok())
+            });
+        
+        // White balance
+        result.white_balance = get_field_any_ifd(&exif, Tag::WhiteBalance)
+            .map(|f| f.display_value().to_string().trim_matches('"').trim().to_string());
+        
+        // Flash
+        result.flash_fired = get_field_any_ifd(&exif, Tag::Flash)
+            .map(|f| {
+                let val = f.display_value().to_string().to_lowercase();
+                val.contains("fired") || val.contains("yes") || val.contains("on")
+            });
+        
+        // Metering mode
+        result.metering_mode = get_field_any_ifd(&exif, Tag::MeteringMode)
+            .map(|f| f.display_value().to_string().trim_matches('"').trim().to_string());
+        
+        // GPS coordinates
+        result.gps_latitude = get_field_any_ifd(&exif, Tag::GPSLatitude)
+            .and_then(|f| parse_gps_coordinate(&f.display_value().to_string()));
+        result.gps_longitude = get_field_any_ifd(&exif, Tag::GPSLongitude)
+            .and_then(|f| parse_gps_coordinate(&f.display_value().to_string()));
+        
+        // If we got any useful data, return it
+        if result.capture_time.is_some() || result.aperture.is_some() || result.iso.is_some() {
+            log::info!("ORF EXIF: aperture={:?}, shutter={:?}, iso={:?}", 
+                result.aperture, result.shutter_speed, result.iso);
+            return Some(result);
+        }
+    }
+    
+    // Fallback: try rexif with the patched buffer
+    if let Ok(exif) = rexif::parse_buffer(&data) {
+        log::info!("rexif found {} entries in patched ORF", exif.entries.len());
+        
+        let mut result = ExifData::default();
+        
+        for entry in &exif.entries {
+            match entry.tag {
+                ExifTag::DateTimeOriginal | ExifTag::DateTime => {
+                    if result.capture_time.is_none() {
+                        result.capture_time = parse_exif_datetime(&entry.value_more_readable);
+                    }
+                }
+                ExifTag::Make => {
+                    result.camera_make = Some(entry.value_more_readable.trim().to_string());
+                }
+                ExifTag::Model => {
+                    result.camera_model = Some(entry.value_more_readable.trim().to_string());
+                }
+                ExifTag::LensModel => {
+                    result.lens_info = Some(entry.value_more_readable.trim().to_string());
+                }
+                ExifTag::FocalLength | ExifTag::FocalLengthIn35mmFilm => {
+                    if result.focal_length_mm.is_none() {
+                        let val = entry.value_more_readable.replace(" mm", "").replace("mm", "");
+                        result.focal_length_mm = parse_rational_or_float(&val);
+                    }
+                }
+                ExifTag::FNumber => {
+                    let val = entry.value_more_readable.trim()
+                        .trim_start_matches("f/").trim_start_matches("F/");
+                    result.aperture = parse_rational_or_float(val);
+                }
+                ExifTag::ExposureTime => {
+                    let val = entry.value_more_readable.trim()
+                        .trim_end_matches(" s").trim_end_matches("s");
+                    result.shutter_speed = Some(val.to_string());
+                }
+                ExifTag::ISOSpeedRatings => {
+                    let val = entry.value_more_readable.trim()
+                        .trim_start_matches("ISO ").trim_start_matches("ISO");
+                    result.iso = val.trim().parse::<i32>().ok();
+                }
+                ExifTag::ExposureBiasValue => {
+                    result.exposure_compensation = parse_rational_or_float(&entry.value_more_readable);
+                }
+                ExifTag::Flash => {
+                    let val = entry.value_more_readable.to_lowercase();
+                    result.flash_fired = Some(val.contains("fired") || val.contains("yes") || val.contains("on"));
+                }
+                ExifTag::MeteringMode => {
+                    result.metering_mode = Some(entry.value_more_readable.trim().to_string());
+                }
+                _ => {}
+            }
+        }
+        
+        if result.capture_time.is_some() || result.aperture.is_some() || result.iso.is_some() {
+            return Some(result);
+        }
+    }
+    
+    log::warn!("Failed to extract EXIF from ORF file {:?}", path);
+    None
+}
 
 /// Parse GPS coordinates from EXIF (handles various formats)
 fn parse_gps_coordinate(s: &str) -> Option<f64> {
     // Try direct float parse first
     if let Ok(coord) = s.trim().parse::<f64>() {
-        return Some(coord);
+        // Validate: latitude must be -90 to 90, longitude -180 to 180
+        // Use wider range to cover both
+        if coord.abs() <= 180.0 {
+            return Some(coord);
+        }
+        return None; // Invalid coordinate
     }
     
     // Try to parse DMS format (degrees/minutes/seconds)
@@ -527,11 +724,21 @@ fn parse_gps_coordinate(s: &str) -> Option<f64> {
         let minutes = parse_rational_or_float(parts[1])?;
         let seconds = parse_rational_or_float(parts[2])?;
         
-        let decimal = degrees + minutes / 60.0 + seconds / 3600.0;
+        // Sanity check the components
+        if degrees.abs() > 180.0 || minutes < 0.0 || minutes >= 60.0 || seconds < 0.0 || seconds >= 60.0 {
+            return None;
+        }
+        
+        let decimal = degrees.abs() + minutes / 60.0 + seconds / 3600.0;
+        
+        // Validate final result
+        if decimal > 180.0 {
+            return None;
+        }
         
         // Check for direction (S and W are negative)
         let direction = parts.last().unwrap_or(&"").to_uppercase();
-        if direction == "S" || direction == "W" {
+        if direction == "S" || direction == "W" || degrees < 0.0 {
             return Some(-decimal);
         }
         return Some(decimal);
@@ -557,16 +764,25 @@ fn parse_rational_or_float(s: &str) -> Option<f64> {
 }
 
 fn read_exif_data(path: &Path) -> ExifData {
-    // Check if this is a CR3 file (Canon RAW)
-    if path.extension()
+    let ext = path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_lowercase() == "cr3")
-        .unwrap_or(false)
-    {
+        .map(|ext| ext.to_lowercase())
+        .unwrap_or_default();
+    
+    // Check if this is a CR3 file (Canon RAW)
+    if ext == "cr3" {
         let cr3_data = read_exif_from_cr3(path);
         // If we got good data from CR3 parsing, use it
         if cr3_data.capture_time.is_some() || cr3_data.aperture.is_some() || cr3_data.iso.is_some() {
             return cr3_data;
+        }
+    }
+    
+    // Check if this is an ORF file (Olympus RAW) - needs special handling
+    // ORF files have "IIRO" header instead of "II*\0" so we patch it in memory
+    if ext == "orf" {
+        if let Some(orf_data) = read_exif_from_orf(path) {
+            return orf_data;
         }
     }
     
@@ -733,6 +949,29 @@ fn read_exif_data(path: &Path) -> ExifData {
         gps_latitude,
         gps_longitude,
     }
+}
+
+/// Clean an EXIF string by removing null bytes, control characters, garbage, and trimming quotes
+/// Also handles cases where multiple empty strings are concatenated (e.g., "value", "", "", "")
+fn clean_exif_string(s: &str) -> String {
+    // First, if it looks like a quoted array of strings, extract just the first non-empty one
+    let s = if s.contains("\", \"") {
+        // Split by ", " and take the first non-empty value
+        s.split("\", \"")
+            .next()
+            .unwrap_or(s)
+    } else {
+        s
+    };
+    
+    s.trim_matches('"')
+        .trim()
+        // Remove null bytes and other control characters
+        .chars()
+        .filter(|c| !c.is_control() || *c == ' ')
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 fn parse_exif_datetime(exif_date: &str) -> Option<String> {
@@ -1019,7 +1258,7 @@ pub fn find_embedded_jpeg(data: &[u8]) -> Option<&[u8]> {
 /// Import photos to the database with the given assignments
 /// If overwrite is true, existing photos with the same file_path will be deleted first
 pub fn import_photos(
-    db: &Database,
+    db: &Db,
     trip_id: i64,
     assignments: Vec<PhotoAssignment>,
     overwrite: bool,
@@ -1181,6 +1420,36 @@ pub fn decode_raw_to_jpeg(path: &Path) -> Result<Vec<u8>, String> {
     ).ok_or_else(|| "Failed to create image from processed data".to_string())?;
     
     let dynamic_img = DynamicImage::ImageRgb8(img);
+    
+    // Encode to JPEG
+    let mut jpeg_bytes = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+    dynamic_img.write_to(&mut cursor, ImageFormat::Jpeg)
+        .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+    
+    Ok(jpeg_bytes)
+}
+
+/// Decode a RAW file using rawler library (supports CR3 and other formats rawloader doesn't)
+/// This is used as a fallback when rawloader fails
+pub fn decode_raw_with_rawler(path: &Path) -> Result<Vec<u8>, String> {
+    use rawler::imgop::develop::RawDevelop;
+    
+    // Decode RAW file (supports CR3, ORF, ARW, NEF, DNG, etc.)
+    let raw_image = rawler::decode_file(path)
+        .map_err(|e| format!("Rawler failed to decode RAW file: {:?}", e))?;
+    
+    // Create developer with default processing pipeline
+    // (includes demosaic, color correction, gamma, sRGB conversion)
+    let developer = RawDevelop::default();
+    
+    // Process to intermediate format (handles all sensor types)
+    let intermediate = developer.develop_intermediate(&raw_image)
+        .map_err(|e| format!("Rawler failed to process RAW: {:?}", e))?;
+    
+    // Convert to DynamicImage (rawler has built-in conversion)
+    let dynamic_img = intermediate.to_dynamic_image()
+        .ok_or_else(|| "Rawler failed to convert to display image".to_string())?;
     
     // Encode to JPEG
     let mut jpeg_bytes = Vec::new();

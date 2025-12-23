@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { confirmDialog } from '../utils/dialogs';
 import { logger } from '../utils/logger';
 import { useSettings } from './SettingsModal';
+import { formatDiveName } from '../utils/diveNames';
 import type { Dive } from '../types';
 import './BatchOperationsModal.css';
 
@@ -194,7 +195,7 @@ export function BatchOperationsModal({
                   .filter((d) => d.id !== currentDiveId)
                   .map((dive) => (
                     <option key={dive.id} value={dive.id}>
-                      {settings.diveNamePrefix ? `${settings.diveNamePrefix} #${dive.dive_number}` : `#${dive.dive_number}`} - {dive.location || dive.date}
+                      {formatDiveName(settings.diveNamePrefix, dive.dive_number)} - {dive.location || dive.date}
                     </option>
                   ))}
               </select>

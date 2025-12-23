@@ -1,8 +1,15 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { confirmDialog } from './utils/dialogs';
 import { logger } from './utils/logger';
+import {
+  useNavigationStore,
+  useDataStore,
+  useSelectionStore,
+  useSearchStore,
+  useUIStore,
+} from './stores';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ContentArea } from './components/ContentArea';
@@ -16,7 +23,7 @@ import { SpeciesTagModal } from './components/SpeciesTagModal';
 import { GeneralTagModal } from './components/GeneralTagModal';
 import { StatisticsModal } from './components/StatisticsModal';
 import { ExportModal } from './components/ExportModal';
-import { SearchModal } from './components/SearchModal';
+import { SearchBar } from './components/SearchBar';
 import { BatchOperationsModal } from './components/BatchOperationsModal';
 import { SettingsModal, type AppSettings } from './components/SettingsModal';
 import { WelcomeModal } from './components/WelcomeModal';
@@ -24,68 +31,79 @@ import { MapView } from './components/MapView';
 import { DiveComputerModal } from './components/DiveComputerModal';
 import { EquipmentModal } from './components/EquipmentModal';
 import { BulkEditDiveModal, type BulkDiveFormData } from './components/BulkEditDiveModal';
-import type { Trip, Dive, Photo, AppState, SearchResults } from './types';
+import type { Photo } from './types';
 
 function App() {
-  const [state, setState] = useState<AppState>({
-    viewMode: 'trips',
-    selectedTripId: null,
-    selectedDiveId: null,
-    selectedPhotoId: null,
-  });
-  
-  // Multi-select state for photos
-  const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<number>>(new Set());
-  
-  // Bulk edit mode for dives
-  const [bulkEditMode, setBulkEditMode] = useState(false);
-  const [selectedDiveIds, setSelectedDiveIds] = useState<Set<number>>(new Set());
-  const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false);
+  // Navigation store
+  const {
+    viewMode,
+    selectedTripId,
+    selectedDiveId,
+    selectedPhotoId,
+    selectTrip,
+    selectDive,
+    selectPhoto,
+    setViewMode,
+  } = useNavigationStore();
 
-  const [trips, setTrips] = useState<Trip[]>([]);
-  const [dives, setDives] = useState<Dive[]>([]);
-  const [photos, setPhotos] = useState<Photo[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [tripModalOpen, setTripModalOpen] = useState(false);
-  const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
-  const [diveModalOpen, setDiveModalOpen] = useState(false);
-  const [editingDive, setEditingDive] = useState<Dive | null>(null);
-  const [addDiveModalOpen, setAddDiveModalOpen] = useState(false);
-  const [addDiveTripId, setAddDiveTripId] = useState<number | null>(null);
-  const [photoImportOpen, setPhotoImportOpen] = useState(false);
-  const [photoImportPaths, setPhotoImportPaths] = useState<string[]>([]);
-  const [viewerPhotoId, setViewerPhotoId] = useState<number | null>(null);
-  const [thumbnailProgress, setThumbnailProgress] = useState<{ current: number; total: number } | null>(null);
-  const [speciesModalOpen, setSpeciesModalOpen] = useState(false);
-  const [generalTagModalOpen, setGeneralTagModalOpen] = useState(false);
-  const [statisticsModalOpen, setStatisticsModalOpen] = useState(false);
-  const [exportModalOpen, setExportModalOpen] = useState(false);
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
-  const [batchModalOpen, setBatchModalOpen] = useState(false);
-  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
-  const [mapViewOpen, setMapViewOpen] = useState(false);
-  const [diveComputerModalOpen, setDiveComputerModalOpen] = useState(false);
-  const [equipmentModalOpen, setEquipmentModalOpen] = useState(false);
-  const [welcomeModalOpen, setWelcomeModalOpen] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem('pelagic-sidebar-width');
-    return saved ? parseInt(saved, 10) : 280;
-  });
-  const [isResizing, setIsResizing] = useState(false);
-  
-  // Search results state
-  const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  // Data store
+  const {
+    trips,
+    dives,
+    photos,
+    isLoading,
+    thumbnailProgress,
+    loadTrips,
+    loadDivesForTrip,
+    loadPhotosForDive,
+    loadPhotosForTrip,
+    clearDives,
+    setPhotos,
+    setThumbnailProgress,
+    invalidateTripCache,
+    invalidateDiveCache,
+  } = useDataStore();
 
-  // Refs to track current state for background effects (avoids stale closures)
-  const stateRef = useRef(state);
-  useEffect(() => { stateRef.current = state; }, [state]);
+  // Selection store
+  const {
+    selectedPhotoIds,
+    selectedDiveIds,
+    bulkEditMode,
+    togglePhotoSelection,
+    setPhotoSelection,
+    clearPhotoSelection,
+    toggleDiveSelection,
+    selectAllDives,
+    enterBulkEditMode,
+    exitBulkEditMode,
+  } = useSelectionStore();
+
+  // Search store
+  const {
+    searchResults,
+    searchQuery,
+    clearSearch,
+  } = useSearchStore();
+
+  // UI store
+  const {
+    activeModal,
+    modalContext,
+    sidebarWidth,
+    isResizing,
+    openModal,
+    closeModal,
+    updateModalContext,
+    setSidebarWidth,
+    setIsResizing,
+    saveSidebarWidth,
+  } = useUIStore();
 
   // Sidebar resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
-  }, []);
+  }, [setIsResizing]);
 
   useEffect(() => {
     if (!isResizing) return;
@@ -97,7 +115,7 @@ function App() {
 
     const handleMouseUp = () => {
       setIsResizing(false);
-      localStorage.setItem('pelagic-sidebar-width', sidebarWidth.toString());
+      saveSidebarWidth();
     };
 
     document.addEventListener('mousemove', handleMouseMove);
@@ -111,39 +129,65 @@ function App() {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [isResizing, sidebarWidth]);
+  }, [isResizing, setSidebarWidth, setIsResizing, saveSidebarWidth]);
 
-  // Computed values - defined early so handlers can use them
-  const selectedTrip = trips.find((t) => t.id === state.selectedTripId) ?? null;
-  const selectedDive = dives.find((d) => d.id === state.selectedDiveId) ?? null;
-  
-  // Handle search results photos
+  // Computed values
+  const selectedTrip = useMemo(
+    () => trips.find((t) => t.id === selectedTripId) ?? null,
+    [trips, selectedTripId]
+  );
+
+  const selectedDive = useMemo(
+    () => dives.find((d) => d.id === selectedDiveId) ?? null,
+    [dives, selectedDiveId]
+  );
+
+  // Track all photos loaded from the trip's "All Photos" section
+  const [allTripPhotos, setAllTripPhotos] = useState<Photo[]>([]);
+
+  // Clear allTripPhotos when trip changes
+  useEffect(() => {
+    setAllTripPhotos([]);
+  }, [selectedTripId]);
+
   const currentPhotos = useMemo(() => {
-    if (state.viewMode === 'search' && searchResults) {
+    if (viewMode === 'search' && searchResults) {
       return searchResults.photos;
     }
-    return state.selectedDiveId
-      ? photos.filter((p) => p.dive_id === state.selectedDiveId)
-      : photos.filter((p) => p.trip_id === state.selectedTripId);
-  }, [photos, state.selectedDiveId, state.selectedTripId, state.viewMode, searchResults]);
-  
-  const selectedPhoto = currentPhotos.find((p) => p.id === state.selectedPhotoId) ?? null;
-  const tripDives = dives.filter((d) => d.trip_id === state.selectedTripId);
-  const viewerPhoto = viewerPhotoId ? currentPhotos.find(p => p.id === viewerPhotoId) ?? null : null;
+    if (selectedDiveId) {
+      return photos.filter((p) => p.dive_id === selectedDiveId);
+    }
+    // In trip view, merge photos with allTripPhotos (deduped)
+    const tripPhotos = photos.filter((p) => p.trip_id === selectedTripId);
+    if (allTripPhotos.length > 0) {
+      const existingIds = new Set(tripPhotos.map((p) => p.id));
+      const additionalPhotos = allTripPhotos.filter((p) => !existingIds.has(p.id));
+      return [...tripPhotos, ...additionalPhotos];
+    }
+    return tripPhotos;
+  }, [photos, selectedDiveId, selectedTripId, viewMode, searchResults, allTripPhotos]);
+
+  const selectedPhoto = useMemo(
+    () => currentPhotos.find((p) => p.id === selectedPhotoId) ?? null,
+    [currentPhotos, selectedPhotoId]
+  );
+
+  const tripDives = useMemo(
+    () => dives.filter((d) => d.trip_id === selectedTripId),
+    [dives, selectedTripId]
+  );
+
+  const viewerPhotoId = modalContext.viewerPhotoId ?? null;
+  const viewerPhoto = useMemo(
+    () => (viewerPhotoId ? currentPhotos.find(p => p.id === viewerPhotoId) ?? null : null),
+    [viewerPhotoId, currentPhotos]
+  );
 
   // Load trips on mount
   useEffect(() => {
     loadTrips();
-    
-    // Link any orphan processed photos to their RAW counterparts
-    invoke<number>('link_orphan_processed_photos')
-      .then((count) => {
-        if (count > 0) {
-          logger.info(`Linked ${count} orphan processed photos to their RAW files`);
-        }
-      })
-      .catch((err) => logger.error('Failed to link orphan photos:', err));
-  }, []);
+    // Note: Orphan photo linking now runs after photo imports instead of on every startup
+  }, [loadTrips]);
 
   // Check if we need to show welcome modal on first boot
   useEffect(() => {
@@ -151,42 +195,42 @@ function App() {
     if (savedSettings) {
       const settings = JSON.parse(savedSettings) as AppSettings;
       if (!settings.hasCompletedWelcome) {
-        setWelcomeModalOpen(true);
+        openModal('welcome');
       }
     } else {
       // No settings at all, definitely first boot
-      setWelcomeModalOpen(true);
+      openModal('welcome');
     }
-  }, []);
-  
+  }, [openModal]);
+
   // Regenerate thumbnails in background ONE AT A TIME (non-blocking)
   useEffect(() => {
     let cancelled = false;
-    
+
     const processThumbsInBackground = async () => {
       try {
-        // Wait a bit before starting
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Defer thumbnail processing to reduce startup load
+        await new Promise(resolve => setTimeout(resolve, 5000));
         if (cancelled) return;
-        
+
         // Get list of photos needing thumbnails
         const photoIds = await invoke<number[]>('get_photos_needing_thumbnails');
         if (photoIds.length === 0 || cancelled) return;
-        
+
         logger.info(`Starting background thumbnail generation for ${photoIds.length} photos`);
         setThumbnailProgress({ current: 0, total: photoIds.length });
-        
+
         // Process one at a time
         for (let i = 0; i < photoIds.length; i++) {
           if (cancelled) break;
-          
+
           try {
             await invoke('generate_single_thumbnail', { photoId: photoIds[i] });
             setThumbnailProgress({ current: i + 1, total: photoIds.length });
-            
+
             // Every 10 thumbnails, reload current photo view to show progress
             if ((i + 1) % 10 === 0) {
-              const currentState = stateRef.current;
+              const currentState = useNavigationStore.getState();
               if (currentState.selectedDiveId) {
                 const newPhotos = await invoke<Photo[]>('get_photos_for_dive', { diveId: currentState.selectedDiveId });
                 setPhotos(newPhotos);
@@ -199,12 +243,12 @@ function App() {
             logger.warn(`Failed to generate thumbnail for photo ${photoIds[i]}:`, err);
           }
         }
-        
+
         logger.info('Background thumbnail generation complete');
         setThumbnailProgress(null);
-        
+
         // Final reload of photos using current state
-        const finalState = stateRef.current;
+        const finalState = useNavigationStore.getState();
         if (finalState.selectedDiveId) {
           const newPhotos = await invoke<Photo[]>('get_photos_for_dive', { diveId: finalState.selectedDiveId });
           setPhotos(newPhotos);
@@ -217,31 +261,30 @@ function App() {
         setThumbnailProgress(null);
       }
     };
-    
+
     processThumbsInBackground();
-    
+
     return () => { cancelled = true; };
-  }, []); // Only run once on mount
+  }, [setThumbnailProgress, setPhotos]);
 
   // Load dives when trip changes
   useEffect(() => {
-    if (state.selectedTripId) {
-      loadDivesForTrip(state.selectedTripId);
+    if (selectedTripId) {
+      loadDivesForTrip(selectedTripId);
     } else {
-      setDives([]);
+      clearDives();
     }
-  }, [state.selectedTripId]);
+  }, [selectedTripId, loadDivesForTrip, clearDives]);
 
   // Load photos when dive changes
+  // Note: Trip-level photos are loaded by ContentGrid's "All Photos" section
+  // We only need to load dive-specific photos here
   useEffect(() => {
-    if (state.selectedDiveId) {
-      loadPhotosForDive(state.selectedDiveId);
-    } else if (state.selectedTripId) {
-      loadPhotosForTrip(state.selectedTripId);
-    } else {
-      setPhotos([]);
+    if (selectedDiveId) {
+      loadPhotosForDive(selectedDiveId);
     }
-  }, [state.selectedDiveId, state.selectedTripId]);
+    // Don't load trip photos here - ContentGrid handles it via get_all_photos_for_trip
+  }, [selectedDiveId, loadPhotosForDive]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -249,55 +292,17 @@ function App() {
       // Ctrl+K to open search
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
-        setSearchModalOpen(true);
+        openModal('search');
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [openModal]);
 
-  const loadTrips = async () => {
-    try {
-      setIsLoading(true);
-      const result = await invoke<Trip[]>('get_trips');
-      setTrips(result);
-    } catch (error) {
-      logger.error('Failed to load trips:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadDivesForTrip = async (tripId: number) => {
-    try {
-      const result = await invoke<Dive[]>('get_dives_for_trip', { tripId });
-      setDives(result);
-    } catch (error) {
-      logger.error('Failed to load dives:', error);
-    }
-  };
-
-  const loadPhotosForDive = async (diveId: number) => {
-    try {
-      const result = await invoke<Photo[]>('get_photos_for_dive', { diveId });
-      setPhotos(result);
-    } catch (error) {
-      logger.error('Failed to load photos:', error);
-    }
-  };
-
-  const loadPhotosForTrip = async (tripId: number) => {
-    try {
-      const result = await invoke<Photo[]>('get_photos_for_trip', { tripId });
-      setPhotos(result);
-    } catch (error) {
-      logger.error('Failed to load photos:', error);
-    }
-  };
-
-  const handleImportPhotos = async () => {
-    if (!state.selectedTripId) {
+  // Handler functions
+  const handleImportPhotos = useCallback(async () => {
+    if (!selectedTripId) {
       alert('Please select a trip first before importing photos.');
       return;
     }
@@ -313,174 +318,157 @@ function App() {
       });
 
       if (selected) {
-        // Convert to array if single selection
         const paths = Array.isArray(selected) ? selected : [selected];
-        setPhotoImportPaths(paths);
-        setPhotoImportOpen(true);
+        updateModalContext({ photoImportPaths: paths });
+        openModal('photoImport');
       }
     } catch (error) {
       logger.error('Failed to select photos:', error);
       alert('Failed to select photos: ' + error);
     }
-  };
+  }, [selectedTripId, openModal, updateModalContext]);
 
-  const handlePhotoImportComplete = async () => {
-    // Reload photos for current view
-    if (state.selectedDiveId) {
-      await loadPhotosForDive(state.selectedDiveId);
-    } else if (state.selectedTripId) {
-      await loadPhotosForTrip(state.selectedTripId);
+  const handlePhotoImportComplete = useCallback(async () => {
+    // Invalidate caches since new photos were added
+    if (selectedTripId) {
+      invalidateTripCache(selectedTripId);
     }
-  };
+    if (selectedDiveId) {
+      invalidateDiveCache(selectedDiveId);
+      await loadPhotosForDive(selectedDiveId);
+    } else if (selectedTripId) {
+      await loadPhotosForTrip(selectedTripId);
+    }
+  }, [selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
 
   const handleSelectTrip = useCallback((tripId: number | null) => {
-    setState({
-      viewMode: tripId ? 'trip' : 'trips',
-      selectedTripId: tripId,
-      selectedDiveId: null,
-      selectedPhotoId: null,
-    });
-    // Clear search results when navigating to a trip
-    setSearchResults(null);
-    setSearchQuery('');
-  }, []);
+    selectTrip(tripId);
+    clearSearch();
+  }, [selectTrip, clearSearch]);
 
-  // Batch operations handler
   const handleBatchOperationComplete = useCallback(async () => {
-    // Reload photos after batch operation
-    if (state.selectedDiveId) {
-      await loadPhotosForDive(state.selectedDiveId);
-    } else if (state.selectedTripId) {
-      await loadPhotosForTrip(state.selectedTripId);
+    // Invalidate caches since photos may have been moved/deleted
+    if (selectedTripId) {
+      invalidateTripCache(selectedTripId);
     }
-    // Clear selection
-    setSelectedPhotoIds(new Set());
-  }, [state.selectedDiveId, state.selectedTripId]);
+    if (selectedDiveId) {
+      invalidateDiveCache(selectedDiveId);
+      await loadPhotosForDive(selectedDiveId);
+    } else if (selectedTripId) {
+      await loadPhotosForTrip(selectedTripId);
+    }
+    clearPhotoSelection();
+  }, [selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, clearPhotoSelection, invalidateTripCache, invalidateDiveCache]);
 
   const handleSelectDive = useCallback((diveId: number | null) => {
-    setState((prev) => ({
-      ...prev,
-      viewMode: diveId ? 'dive' : 'trip',
-      selectedDiveId: diveId,
-      selectedPhotoId: null,
-    }));
-    // Clear multi-select when changing dives
-    setSelectedPhotoIds(new Set());
-    // Clear search results
-    setSearchResults(null);
-    setSearchQuery('');
-  }, []);
+    selectDive(diveId);
+    clearPhotoSelection();
+    clearSearch();
+  }, [selectDive, clearPhotoSelection, clearSearch]);
 
   const handleSelectPhoto = useCallback((photoId: number, multiSelect: boolean) => {
     if (multiSelect) {
-      // Multi-select mode: toggle the photo in selection
-      setSelectedPhotoIds(prev => {
-        const next = new Set(prev);
-        if (next.has(photoId)) {
-          next.delete(photoId);
-        } else {
-          next.add(photoId);
-        }
-        return next;
-      });
+      togglePhotoSelection(photoId);
     } else {
-      // Single select: clear multi-selection and select just this photo
-      setSelectedPhotoIds(new Set([photoId]));
+      setPhotoSelection(new Set([photoId]));
     }
-    // Always update the single selected photo for the right panel
-    setState((prev) => ({
-      ...prev,
-      selectedPhotoId: photoId,
-    }));
-  }, []);
-  
+    selectPhoto(photoId);
+  }, [togglePhotoSelection, setPhotoSelection, selectPhoto]);
+
   const handleClearSelection = useCallback(() => {
-    setSelectedPhotoIds(new Set());
-    setState((prev) => ({
-      ...prev,
-      selectedPhotoId: null,
-    }));
+    clearPhotoSelection();
+    selectPhoto(null);
+  }, [clearPhotoSelection, selectPhoto]);
+
+  // Handle when ContentGrid loads all trip photos (for selection/viewer support)
+  const handleAllTripPhotosLoaded = useCallback((loadedPhotos: Photo[]) => {
+    setAllTripPhotos(loadedPhotos);
   }, []);
-  
+
   const handleTagSpecies = useCallback(() => {
     if (selectedPhotoIds.size > 0) {
-      setSpeciesModalOpen(true);
+      openModal('species');
     }
-  }, [selectedPhotoIds]);
-  
+  }, [selectedPhotoIds.size, openModal]);
+
   const handleTagGeneral = useCallback(() => {
     if (selectedPhotoIds.size > 0) {
-      setGeneralTagModalOpen(true);
+      openModal('generalTag');
     }
-  }, [selectedPhotoIds]);
-  
+  }, [selectedPhotoIds.size, openModal]);
+
   const handleDeletePhotos = useCallback(async () => {
     if (selectedPhotoIds.size === 0) return;
-    
+
     const count = selectedPhotoIds.size;
     const confirmed = await confirmDialog(
       'Delete Photos',
       `Are you sure you want to delete ${count} photo${count !== 1 ? 's' : ''}?\n\nThis will remove the photos from the database but will NOT delete the original files from disk.`,
       { okLabel: 'Delete', kind: 'warning' }
     );
-    
+
     if (confirmed) {
       try {
         await invoke('delete_photos', { photoIds: Array.from(selectedPhotoIds) });
-        // Clear selection
-        setSelectedPhotoIds(new Set());
-        setState(prev => ({ ...prev, selectedPhotoId: null }));
-        // Reload photos
-        if (state.selectedDiveId) {
-          await loadPhotosForDive(state.selectedDiveId);
-        } else if (state.selectedTripId) {
-          await loadPhotosForTrip(state.selectedTripId);
+        clearPhotoSelection();
+        selectPhoto(null);
+        // Invalidate caches since photos were deleted
+        if (selectedTripId) {
+          invalidateTripCache(selectedTripId);
+        }
+        if (selectedDiveId) {
+          invalidateDiveCache(selectedDiveId);
+          await loadPhotosForDive(selectedDiveId);
+        } else if (selectedTripId) {
+          await loadPhotosForTrip(selectedTripId);
         }
       } catch (error) {
         logger.error('Failed to delete photos:', error);
         alert('Failed to delete photos: ' + error);
       }
     }
-  }, [selectedPhotoIds, state.selectedDiveId, state.selectedTripId]);
+  }, [selectedPhotoIds, clearPhotoSelection, selectPhoto, selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
 
   const handleOpenPhoto = useCallback((photoId: number) => {
-    setViewerPhotoId(photoId);
-  }, []);
+    updateModalContext({ viewerPhotoId: photoId });
+    openModal('photoViewer');
+  }, [updateModalContext, openModal]);
 
   const handleCloseViewer = useCallback(() => {
-    setViewerPhotoId(null);
-  }, []);
+    updateModalContext({ viewerPhotoId: null });
+    closeModal();
+  }, [updateModalContext, closeModal]);
 
   const handlePreviousPhoto = useCallback(() => {
     if (viewerPhotoId === null) return;
     const currentIndex = currentPhotos.findIndex(p => p.id === viewerPhotoId);
     if (currentIndex > 0) {
-      setViewerPhotoId(currentPhotos[currentIndex - 1].id);
+      updateModalContext({ viewerPhotoId: currentPhotos[currentIndex - 1].id });
     }
-  }, [viewerPhotoId, currentPhotos]);
+  }, [viewerPhotoId, currentPhotos, updateModalContext]);
 
   const handleNextPhoto = useCallback(() => {
     if (viewerPhotoId === null) return;
     const currentIndex = currentPhotos.findIndex(p => p.id === viewerPhotoId);
     if (currentIndex < currentPhotos.length - 1) {
-      setViewerPhotoId(currentPhotos[currentIndex + 1].id);
+      updateModalContext({ viewerPhotoId: currentPhotos[currentIndex + 1].id });
     }
-  }, [viewerPhotoId, currentPhotos]);
+  }, [viewerPhotoId, currentPhotos, updateModalContext]);
 
-  const handleAddTrip = () => {
-    setEditingTrip(null);
-    setTripModalOpen(true);
-  };
+  const handleAddTrip = useCallback(() => {
+    updateModalContext({ editingTrip: null });
+    openModal('trip');
+  }, [updateModalContext, openModal]);
 
-  const handleEditTrip = (trip: Trip) => {
-    setEditingTrip(trip);
-    setTripModalOpen(true);
-  };
+  const handleEditTrip = useCallback((trip: typeof selectedTrip) => {
+    updateModalContext({ editingTrip: trip });
+    openModal('trip');
+  }, [updateModalContext, openModal]);
 
-  const handleTripSubmit = async (data: TripFormData) => {
+  const handleTripSubmit = useCallback(async (data: TripFormData) => {
     try {
+      const editingTrip = modalContext.editingTrip;
       if (editingTrip) {
-        // Update existing trip
         await invoke('update_trip', {
           id: editingTrip.id,
           name: data.name,
@@ -490,17 +478,16 @@ function App() {
           dateEnd: data.dateEnd,
           notes: data.notes || null,
         });
-        setTripModalOpen(false);
+        closeModal();
         await loadTrips();
       } else {
-        // Create new trip
         const tripId = await invoke<number>('create_trip', {
           name: data.name,
           location: data.location,
           dateStart: data.dateStart,
           dateEnd: data.dateEnd,
         });
-        setTripModalOpen(false);
+        closeModal();
         await loadTrips();
         handleSelectTrip(tripId);
       }
@@ -508,35 +495,36 @@ function App() {
       logger.error('Failed to save trip:', error);
       alert('Failed to save trip: ' + error);
     }
-  };
+  }, [modalContext.editingTrip, closeModal, loadTrips, handleSelectTrip]);
 
-  const handleDeleteTrip = async (tripId: number) => {
+  const handleDeleteTrip = useCallback(async (tripId: number) => {
     try {
       await invoke('delete_trip', { id: tripId });
-      setTripModalOpen(false);
+      closeModal();
       await loadTrips();
-      if (state.selectedTripId === tripId) {
+      if (selectedTripId === tripId) {
         handleSelectTrip(null);
       }
     } catch (error) {
       logger.error('Failed to delete trip:', error);
       alert('Failed to delete trip: ' + error);
     }
-  };
+  }, [closeModal, loadTrips, selectedTripId, handleSelectTrip]);
 
-  const handleEditDive = (dive: Dive) => {
-    setEditingDive(dive);
-    setDiveModalOpen(true);
-  };
+  const handleEditDive = useCallback((dive: typeof selectedDive) => {
+    updateModalContext({ editingDive: dive });
+    openModal('dive');
+  }, [updateModalContext, openModal]);
 
-  const handleAddDive = (tripId: number) => {
-    setAddDiveTripId(tripId);
-    setAddDiveModalOpen(true);
-  };
+  const handleAddDive = useCallback((tripId: number) => {
+    updateModalContext({ addDiveTripId: tripId });
+    openModal('addDive');
+  }, [updateModalContext, openModal]);
 
-  const handleAddDiveSubmit = async (data: NewDiveFormData) => {
+  const handleAddDiveSubmit = useCallback(async (data: NewDiveFormData) => {
+    const addDiveTripId = modalContext.addDiveTripId;
     if (!addDiveTripId) return;
-    
+
     try {
       const diveId = await invoke<number>('create_manual_dive', {
         tripId: addDiveTripId,
@@ -549,7 +537,6 @@ function App() {
         airTempC: data.air_temp_c,
         surfacePressureBar: data.surface_pressure_bar,
         cnsPercent: data.cns_percent,
-        nitroxO2Percent: data.nitrox_o2_percent,
         location: data.location || null,
         ocean: data.ocean || null,
         visibilityM: data.visibility_m,
@@ -566,20 +553,21 @@ function App() {
         isNightDive: data.is_night_dive,
         isTrainingDive: data.is_training_dive,
       });
-      
-      setAddDiveModalOpen(false);
-      setAddDiveTripId(null);
-      
-      // Reload dives and select the new one
+
+      closeModal();
+      updateModalContext({ addDiveTripId: null });
+
+      // Invalidate trip cache since a dive was added
+      invalidateTripCache(addDiveTripId);
       await loadDivesForTrip(addDiveTripId);
       handleSelectDive(diveId);
     } catch (error) {
       logger.error('Failed to create dive:', error);
       alert('Failed to create dive: ' + error);
     }
-  };
+  }, [modalContext.addDiveTripId, closeModal, updateModalContext, loadDivesForTrip, handleSelectDive, invalidateTripCache]);
 
-  const handleDiveSubmit = async (diveId: number, data: DiveFormData) => {
+  const handleDiveSubmit = useCallback(async (diveId: number, data: DiveFormData) => {
     try {
       await invoke('update_dive', {
         id: diveId,
@@ -593,66 +581,59 @@ function App() {
         comments: data.comments || null,
         latitude: data.latitude,
         longitude: data.longitude,
+        diveSiteId: data.dive_site_id,
         isFreshWater: data.is_fresh_water,
         isBoatDive: data.is_boat_dive,
         isDriftDive: data.is_drift_dive,
         isNightDive: data.is_night_dive,
         isTrainingDive: data.is_training_dive,
       });
-      setDiveModalOpen(false);
-      // Reload dives to get updated data
-      if (state.selectedTripId) {
-        await loadDivesForTrip(state.selectedTripId);
+      closeModal();
+      if (selectedTripId) {
+        // Invalidate cache since dive was updated
+        invalidateTripCache(selectedTripId);
+        await loadDivesForTrip(selectedTripId);
       }
     } catch (error) {
       logger.error('Failed to update dive:', error);
       alert('Failed to update dive: ' + error);
     }
-  };
+  }, [closeModal, selectedTripId, loadDivesForTrip, invalidateTripCache]);
 
-  const handleDeleteDive = async (diveId: number) => {
+  const handleDeleteDive = useCallback(async (diveId: number) => {
     try {
       await invoke('delete_dive', { id: diveId });
-      setDiveModalOpen(false);
-      // Clear selection and reload dives
+      closeModal();
       handleSelectDive(null);
-      if (state.selectedTripId) {
-        await loadDivesForTrip(state.selectedTripId);
+      if (selectedTripId) {
+        // Invalidate cache since dive was deleted
+        invalidateTripCache(selectedTripId);
+        invalidateDiveCache(diveId);
+        await loadDivesForTrip(selectedTripId);
       }
     } catch (error) {
       logger.error('Failed to delete dive:', error);
       alert('Failed to delete dive: ' + error);
     }
-  };
+  }, [closeModal, handleSelectDive, selectedTripId, loadDivesForTrip, invalidateTripCache, invalidateDiveCache]);
 
-  // Bulk edit mode handlers
   const handleEnterBulkEditMode = useCallback(() => {
-    setBulkEditMode(true);
-    setSelectedDiveIds(new Set());
-  }, []);
+    enterBulkEditMode();
+  }, [enterBulkEditMode]);
 
   const handleExitBulkEditMode = useCallback(() => {
-    setBulkEditMode(false);
-    setSelectedDiveIds(new Set());
-  }, []);
+    exitBulkEditMode();
+  }, [exitBulkEditMode]);
 
   const handleToggleDiveSelection = useCallback((diveId: number) => {
-    setSelectedDiveIds(prev => {
-      const next = new Set(prev);
-      if (next.has(diveId)) {
-        next.delete(diveId);
-      } else {
-        next.add(diveId);
-      }
-      return next;
-    });
-  }, []);
+    toggleDiveSelection(diveId);
+  }, [toggleDiveSelection]);
 
   const handleSelectAllDives = useCallback(() => {
-    setSelectedDiveIds(new Set(tripDives.map(d => d.id)));
-  }, [tripDives]);
+    selectAllDives(tripDives.map(d => d.id));
+  }, [selectAllDives, tripDives]);
 
-  const handleBulkEditSubmit = async (diveIds: number[], data: BulkDiveFormData) => {
+  const handleBulkEditSubmit = useCallback(async (diveIds: number[], data: BulkDiveFormData) => {
     try {
       await invoke('bulk_update_dives', {
         diveIds,
@@ -668,31 +649,94 @@ function App() {
         isFreshWater: data.is_fresh_water,
         isTrainingDive: data.is_training_dive,
       });
-      
-      setBulkEditModalOpen(false);
+
+      closeModal();
       handleExitBulkEditMode();
-      
-      // Reload dives to reflect changes
-      if (state.selectedTripId) {
-        await loadDivesForTrip(state.selectedTripId);
+
+      if (selectedTripId) {
+        // Invalidate cache since dives were updated
+        invalidateTripCache(selectedTripId);
+        await loadDivesForTrip(selectedTripId);
       }
     } catch (error) {
       logger.error('Failed to bulk update dives:', error);
       alert('Failed to bulk update dives: ' + error);
     }
-  };
+  }, [closeModal, handleExitBulkEditMode, selectedTripId, loadDivesForTrip, invalidateTripCache]);
+
+  const handlePhotosUpdated = useCallback(async () => {
+    // Invalidate caches since photos were modified
+    if (selectedTripId) {
+      invalidateTripCache(selectedTripId);
+    }
+    if (selectedDiveId) {
+      invalidateDiveCache(selectedDiveId);
+      await loadPhotosForDive(selectedDiveId);
+    } else if (selectedTripId) {
+      await loadPhotosForTrip(selectedTripId);
+    }
+  }, [selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
+
+  const handleClearSearch = useCallback(() => {
+    clearSearch();
+    setViewMode('trips');
+  }, [clearSearch, setViewMode]);
+
+  // Search bar handlers
+  const handleSearchSelectTrip = useCallback((tripId: number) => {
+    handleSelectTrip(tripId);
+    closeModal();
+  }, [handleSelectTrip, closeModal]);
+
+  const handleSearchSelectDive = useCallback((tripId: number, diveId: number) => {
+    handleSelectTrip(tripId);
+    setTimeout(() => handleSelectDive(diveId), 100);
+    closeModal();
+  }, [handleSelectTrip, handleSelectDive, closeModal]);
+
+  const handleWelcomeComplete = useCallback((prefix: string) => {
+    const savedSettings = localStorage.getItem('pelagic-settings');
+    const settings = savedSettings
+      ? JSON.parse(savedSettings) as AppSettings
+      : { diveNamePrefix: 'Dive', hasCompletedWelcome: false };
+    settings.diveNamePrefix = prefix;
+    settings.hasCompletedWelcome = true;
+    localStorage.setItem('pelagic-settings', JSON.stringify(settings));
+    window.dispatchEvent(new Event('pelagic-settings-changed'));
+    closeModal();
+  }, [closeModal]);
+
+  const handleMapSelectDive = useCallback((tripId: number, diveId: number) => {
+    handleSelectTrip(tripId);
+    handleSelectDive(diveId);
+  }, [handleSelectTrip, handleSelectDive]);
+
+  const handleDivesImported = useCallback(async () => {
+    console.log('📥 App.tsx onDivesImported called');
+    if (selectedTripId) {
+      // Invalidate cache since dives were imported
+      invalidateTripCache(selectedTripId);
+      await loadDivesForTrip(selectedTripId);
+    }
+  }, [selectedTripId, loadDivesForTrip, invalidateTripCache]);
+
+  const handleTripsChanged = useCallback(async () => {
+    console.log('🔄 App.tsx onTripsChanged called - reloading trips');
+    await loadTrips();
+    console.log('✅ App.tsx trips reloaded');
+  }, [loadTrips]);
 
   return (
     <div className="app">
-      <Header 
-        onImportPhotos={handleImportPhotos} 
-        onOpenStatistics={() => setStatisticsModalOpen(true)} 
-        onOpenExport={() => setExportModalOpen(true)}
-        onOpenSearch={() => setSearchModalOpen(true)}
-        onOpenSettings={() => setSettingsModalOpen(true)}
-        onOpenMap={() => setMapViewOpen(true)}
-        onOpenDiveComputer={() => setDiveComputerModalOpen(true)}
-        onOpenEquipment={() => setEquipmentModalOpen(true)}
+      <Header
+        onImportPhotos={handleImportPhotos}
+        onOpenStatistics={() => openModal('statistics')}
+        onOpenExport={() => openModal('export')}
+        onOpenSearch={() => openModal('search')}
+        onOpenSettings={() => openModal('settings')}
+        onOpenMap={() => openModal('map')}
+        onOpenDiveComputer={() => openModal('diveComputer')}
+        onOpenEquipment={() => openModal('equipment')}
       />
       {thumbnailProgress && (
         <div className="thumbnail-progress">
@@ -709,8 +753,8 @@ function App() {
         <Sidebar
           trips={trips}
           dives={dives}
-          selectedTripId={state.selectedTripId}
-          selectedDiveId={state.selectedDiveId}
+          selectedTripId={selectedTripId}
+          selectedDiveId={selectedDiveId}
           onSelectTrip={handleSelectTrip}
           onSelectDive={handleSelectDive}
           onAddTrip={handleAddTrip}
@@ -721,12 +765,12 @@ function App() {
           onToggleDiveSelection={handleToggleDiveSelection}
           style={{ width: sidebarWidth }}
         />
-        <div 
+        <div
           className={`sidebar-resizer ${isResizing ? 'resizing' : ''}`}
           onMouseDown={handleResizeStart}
         />
         <ContentArea
-          viewMode={state.viewMode}
+          viewMode={viewMode}
           trip={selectedTrip}
           dive={selectedDive}
           dives={tripDives}
@@ -740,81 +784,64 @@ function App() {
           onTagGeneral={handleTagGeneral}
           onDeletePhotos={handleDeletePhotos}
           onClearSelection={handleClearSelection}
-          onBatchOperations={() => setBatchModalOpen(true)}
-          onPhotosUpdated={() => {
-            // Reload photos to reflect species tag changes
-            if (state.selectedDiveId) {
-              loadPhotosForDive(state.selectedDiveId);
-            } else if (state.selectedTripId) {
-              loadPhotosForTrip(state.selectedTripId);
-            }
-          }}
+          onBatchOperations={() => openModal('batch')}
+          onPhotosUpdated={handlePhotosUpdated}
           searchResults={searchResults}
           searchQuery={searchQuery}
           onSelectTrip={handleSelectTrip}
-          onClearSearch={() => {
-            setSearchResults(null);
-            setSearchQuery('');
-            setState(prev => ({ ...prev, viewMode: 'trips' }));
-          }}
+          onClearSearch={handleClearSearch}
           bulkEditMode={bulkEditMode}
           selectedDiveIds={selectedDiveIds}
           onEnterBulkEditMode={handleEnterBulkEditMode}
           onExitBulkEditMode={handleExitBulkEditMode}
           onToggleDiveSelection={handleToggleDiveSelection}
           onSelectAllDives={handleSelectAllDives}
-          onOpenBulkEditModal={() => setBulkEditModalOpen(true)}
+          onOpenBulkEditModal={() => openModal('bulkEditDive')}
+          onAllTripPhotosLoaded={handleAllTripPhotosLoaded}
         />
         <RightPanel
           photo={selectedPhoto}
           dive={selectedDive}
           trip={selectedTrip}
-          onPhotoUpdated={() => {
-            // Reload photos to reflect rating changes
-            if (state.selectedDiveId) {
-              loadPhotosForDive(state.selectedDiveId);
-            } else if (state.selectedTripId) {
-              loadPhotosForTrip(state.selectedTripId);
-            }
-          }}
+          onPhotoUpdated={handlePhotosUpdated}
         />
       </main>
       <TripModal
-        isOpen={tripModalOpen}
-        trip={editingTrip}
-        onClose={() => setTripModalOpen(false)}
+        isOpen={activeModal === 'trip'}
+        trip={modalContext.editingTrip}
+        onClose={closeModal}
         onSubmit={handleTripSubmit}
         onDelete={handleDeleteTrip}
       />
       <DiveModal
-        isOpen={diveModalOpen}
-        dive={editingDive}
-        onClose={() => setDiveModalOpen(false)}
+        isOpen={activeModal === 'dive'}
+        dive={modalContext.editingDive ?? null}
+        onClose={closeModal}
         onSubmit={handleDiveSubmit}
         onDelete={handleDeleteDive}
       />
-      {addDiveTripId && (
+      {modalContext.addDiveTripId && (
         <AddDiveModal
-          isOpen={addDiveModalOpen}
-          tripId={addDiveTripId}
+          isOpen={activeModal === 'addDive'}
+          tripId={modalContext.addDiveTripId}
           onClose={() => {
-            setAddDiveModalOpen(false);
-            setAddDiveTripId(null);
+            closeModal();
+            updateModalContext({ addDiveTripId: null });
           }}
           onSubmit={handleAddDiveSubmit}
         />
       )}
-      {state.selectedTripId && (
+      {selectedTripId && (
         <PhotoImportModal
-          isOpen={photoImportOpen}
-          tripId={state.selectedTripId}
+          isOpen={activeModal === 'photoImport'}
+          tripId={selectedTripId}
           dives={dives}
-          photoPaths={photoImportPaths}
-          onClose={() => setPhotoImportOpen(false)}
+          photoPaths={modalContext.photoImportPaths ?? []}
+          onClose={closeModal}
           onImportComplete={handlePhotoImportComplete}
         />
       )}
-      {viewerPhoto && (
+      {viewerPhoto && activeModal === 'photoViewer' && (
         <PhotoViewer
           photo={viewerPhoto}
           onClose={handleCloseViewer}
@@ -825,121 +852,73 @@ function App() {
         />
       )}
       <SpeciesTagModal
-        isOpen={speciesModalOpen}
+        isOpen={activeModal === 'species'}
         selectedPhotoIds={Array.from(selectedPhotoIds)}
-        onClose={() => setSpeciesModalOpen(false)}
+        onClose={closeModal}
         onTagsAdded={() => {
           logger.debug('Tags added successfully');
         }}
       />
       <GeneralTagModal
-        isOpen={generalTagModalOpen}
+        isOpen={activeModal === 'generalTag'}
         selectedPhotoIds={Array.from(selectedPhotoIds)}
-        onClose={() => setGeneralTagModalOpen(false)}
+        onClose={closeModal}
         onTagsAdded={() => {
           logger.debug('General tags added successfully');
         }}
       />
       <StatisticsModal
-        isOpen={statisticsModalOpen}
-        onClose={() => setStatisticsModalOpen(false)}
+        isOpen={activeModal === 'statistics'}
+        onClose={closeModal}
       />
       <ExportModal
-        isOpen={exportModalOpen}
-        onClose={() => setExportModalOpen(false)}
+        isOpen={activeModal === 'export'}
+        onClose={closeModal}
         selectedTrip={selectedTrip}
         selectedPhotoIds={Array.from(selectedPhotoIds)}
       />
-      <SearchModal
-        isOpen={searchModalOpen}
-        onClose={() => setSearchModalOpen(false)}
-        currentTripId={state.selectedTripId ?? undefined}
-        currentDiveId={state.selectedDiveId ?? undefined}
-        onSearchResults={(results, query) => {
-          setSearchResults(results);
-          setSearchQuery(query);
-          // Switch to search results view mode
-          if (results) {
-            setState(prev => ({
-              ...prev,
-              viewMode: 'search',
-              selectedDiveId: null,
-              selectedPhotoId: null,
-            }));
-          }
-        }}
-        onApplyFilter={async (filter) => {
-          try {
-            const filteredPhotos = await invoke<Photo[]>('filter_photos', { filter });
-            setPhotos(filteredPhotos);
-            // Stay in current view mode
-          } catch (error) {
-            logger.error('Failed to apply filter:', error);
-          }
-        }}
+      <SearchBar
+        isOpen={activeModal === 'search'}
+        onClose={closeModal}
+        onSelectTrip={handleSearchSelectTrip}
+        onSelectDive={handleSearchSelectDive}
       />
       <BatchOperationsModal
-        isOpen={batchModalOpen}
-        onClose={() => setBatchModalOpen(false)}
+        isOpen={activeModal === 'batch'}
+        onClose={closeModal}
         selectedPhotoIds={Array.from(selectedPhotoIds)}
-        currentDiveId={state.selectedDiveId}
+        currentDiveId={selectedDiveId}
         dives={dives}
         onOperationComplete={handleBatchOperationComplete}
       />
       <SettingsModal
-        isOpen={settingsModalOpen}
-        onClose={() => setSettingsModalOpen(false)}
+        isOpen={activeModal === 'settings'}
+        onClose={closeModal}
       />
       <WelcomeModal
-        isOpen={welcomeModalOpen}
-        onComplete={(prefix: string) => {
-          // Save the settings
-          const savedSettings = localStorage.getItem('pelagic-settings');
-          const settings = savedSettings 
-            ? JSON.parse(savedSettings) as AppSettings 
-            : { diveNamePrefix: 'Dive', hasCompletedWelcome: false };
-          settings.diveNamePrefix = prefix;
-          settings.hasCompletedWelcome = true;
-          localStorage.setItem('pelagic-settings', JSON.stringify(settings));
-          // Trigger settings changed event so other components update
-          window.dispatchEvent(new Event('pelagic-settings-changed'));
-          setWelcomeModalOpen(false);
-        }}
+        isOpen={activeModal === 'welcome'}
+        onComplete={handleWelcomeComplete}
       />
       <MapView
-        isOpen={mapViewOpen}
-        onClose={() => setMapViewOpen(false)}
-        onSelectDive={(tripId, diveId) => {
-          handleSelectTrip(tripId);
-          handleSelectDive(diveId);
-        }}
+        isOpen={activeModal === 'map'}
+        onClose={closeModal}
+        onSelectDive={handleMapSelectDive}
       />
       <DiveComputerModal
-        isOpen={diveComputerModalOpen}
-        onClose={() => setDiveComputerModalOpen(false)}
-        tripId={state.selectedTripId}
-        onDivesImported={async (_importedDives) => {
-          console.log('📥 App.tsx onDivesImported called with', _importedDives.length, 'dives');
-          // Dives were already saved by the modal - just reload
-          if (state.selectedTripId) {
-            await loadDivesForTrip(state.selectedTripId);
-          }
-        }}
-        onTripsChanged={async () => {
-          console.log('🔄 App.tsx onTripsChanged called - reloading trips');
-          // A new trip was created during import - refresh the trips list
-          await loadTrips();
-          console.log('✅ App.tsx trips reloaded');
-        }}
+        isOpen={activeModal === 'diveComputer'}
+        onClose={closeModal}
+        tripId={selectedTripId}
+        onDivesImported={handleDivesImported}
+        onTripsChanged={handleTripsChanged}
       />
       <EquipmentModal
-        isOpen={equipmentModalOpen}
-        onClose={() => setEquipmentModalOpen(false)}
+        isOpen={activeModal === 'equipment'}
+        onClose={closeModal}
       />
       <BulkEditDiveModal
-        isOpen={bulkEditModalOpen}
+        isOpen={activeModal === 'bulkEditDive'}
         selectedDiveIds={Array.from(selectedDiveIds)}
-        onClose={() => setBulkEditModalOpen(false)}
+        onClose={closeModal}
         onSubmit={handleBulkEditSubmit}
       />
     </div>

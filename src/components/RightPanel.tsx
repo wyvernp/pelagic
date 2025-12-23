@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
-import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult } from '../types';
+import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank } from '../types';
 import { useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import './RightPanel.css';
@@ -22,6 +22,18 @@ function formatFileSize(bytes?: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+// Tank summary for display (merged from DiveTank metadata + TankPressure time series)
+interface TankSummary {
+  sensorId: number;
+  sensorName?: string;
+  gasIndex: number;
+  o2Percent?: number;
+  hePercent?: number;
+  startPressure?: number;
+  endPressure?: number;
+  consumption?: number;
+}
+
 export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProps) {
   const [speciesTags, setSpeciesTags] = useState<SpeciesTag[]>([]);
   const [generalTags, setGeneralTags] = useState<GeneralTag[]>([]);
@@ -30,6 +42,8 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [identifyError, setIdentifyError] = useState<string | null>(null);
   const [showContextInput, setShowContextInput] = useState(false);
   const [additionalContext, setAdditionalContext] = useState('');
+  const [tankPressures, setTankPressures] = useState<TankPressure[]>([]);
+  const [diveTanks, setDiveTanks] = useState<DiveTank[]>([]);
   const { apiKey: geminiApiKey } = useGeminiApiKey();
 
   // Load tags when photo changes (separate from rating to avoid unnecessary reloads)
@@ -47,6 +61,116 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   useEffect(() => {
     setRating(photo?.rating || 0);
   }, [photo?.id, photo?.rating]);
+
+  // Load tank data when dive changes
+  useEffect(() => {
+    if (dive) {
+      loadTankPressures(dive.id);
+      loadDiveTanks(dive.id);
+    } else {
+      setTankPressures([]);
+      setDiveTanks([]);
+    }
+  }, [dive?.id]);
+
+  const loadTankPressures = async (diveId: number) => {
+    try {
+      const pressures = await invoke<TankPressure[]>('get_tank_pressures', { diveId });
+      setTankPressures(pressures);
+    } catch (error) {
+      logger.error('Failed to load tank pressures:', error);
+      setTankPressures([]);
+    }
+  };
+
+  const loadDiveTanks = async (diveId: number) => {
+    try {
+      const tanks = await invoke<DiveTank[]>('get_dive_tanks', { diveId });
+      setDiveTanks(tanks);
+    } catch (error) {
+      logger.error('Failed to load dive tanks:', error);
+      setDiveTanks([]);
+    }
+  };
+
+  // Compute tank summaries by merging dive_tanks (gas mix metadata) with tank_pressures (time series)
+  const tankSummaries = useMemo<TankSummary[]>(() => {
+    // Start with dive_tanks as the primary source if available
+    if (diveTanks.length > 0) {
+      const summaries: TankSummary[] = diveTanks.map(tank => {
+        // Try to find matching pressure data from tank_pressures
+        const pressureReadings = tankPressures.filter(tp => tp.sensor_id === tank.sensor_id);
+        let startPressure = tank.start_pressure_bar ?? undefined;
+        let endPressure = tank.end_pressure_bar ?? undefined;
+        
+        // If we have pressure readings, use those for more accurate start/end
+        if (pressureReadings.length > 0) {
+          pressureReadings.sort((a, b) => a.time_seconds - b.time_seconds);
+          startPressure = pressureReadings[0].pressure_bar;
+          endPressure = pressureReadings[pressureReadings.length - 1].pressure_bar;
+        }
+
+        return {
+          sensorId: tank.sensor_id,
+          sensorName: undefined, // dive_tanks doesn't have sensor name yet
+          gasIndex: tank.gas_index,
+          o2Percent: tank.o2_percent ?? undefined,
+          hePercent: tank.he_percent ?? undefined,
+          startPressure,
+          endPressure,
+          consumption: startPressure !== undefined && endPressure !== undefined 
+            ? startPressure - endPressure 
+            : undefined,
+        };
+      });
+
+      // Sort by gas index, then sensor ID
+      summaries.sort((a, b) => {
+        if (a.gasIndex !== b.gasIndex) return a.gasIndex - b.gasIndex;
+        return a.sensorId - b.sensorId;
+      });
+
+      return summaries;
+    }
+
+    // Fallback: compute from tank_pressures only (legacy data)
+    if (tankPressures.length === 0) return [];
+
+    // Group by sensor_id
+    const bySensor = new Map<number, TankPressure[]>();
+    for (const tp of tankPressures) {
+      const existing = bySensor.get(tp.sensor_id) || [];
+      existing.push(tp);
+      bySensor.set(tp.sensor_id, existing);
+    }
+
+    // Create summary for each tank
+    const summaries: TankSummary[] = [];
+    for (const [sensorId, readings] of bySensor.entries()) {
+      // Sort by time to get first and last
+      readings.sort((a, b) => a.time_seconds - b.time_seconds);
+      const first = readings[0];
+      const last = readings[readings.length - 1];
+      summaries.push({
+        sensorId,
+        sensorName: first.sensor_name,
+        gasIndex: 0,
+        startPressure: first.pressure_bar,
+        endPressure: last.pressure_bar,
+        consumption: first.pressure_bar - last.pressure_bar,
+      });
+    }
+
+    // Sort by sensor name if available, otherwise by sensor ID
+    summaries.sort((a, b) => {
+      if (a.sensorName && b.sensorName) {
+        return a.sensorName.localeCompare(b.sensorName);
+      }
+      return a.sensorId - b.sensorId;
+    });
+
+    return summaries;
+  }, [diveTanks, tankPressures]);
 
   const loadSpeciesTags = async (photoId: number) => {
     try {
@@ -633,14 +757,22 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
             )}
 
             {/* Gas & Decompression Section */}
-            {(dive.nitrox_o2_percent || dive.cns_percent || dive.otu) && (
+            {(diveTanks.some(t => t.o2_percent && t.o2_percent !== 21) || dive.cns_percent || dive.otu) && (
               <div className="panel-section">
                 <h4 className="panel-section-title">Gas & Deco</h4>
                 <dl className="info-list">
-                  {dive.nitrox_o2_percent && (
+                  {diveTanks.some(t => t.o2_percent && t.o2_percent !== 21) && (
                     <div className="info-item">
                       <dt>Gas Mix</dt>
-                      <dd>{dive.nitrox_o2_percent <= 21 ? 'Air' : `EAN${dive.nitrox_o2_percent.toFixed(0)}`}</dd>
+                      <dd>
+                        {diveTanks.map(t => {
+                          if (!t.o2_percent || t.o2_percent === 21) return null;
+                          if (t.he_percent && t.he_percent > 0) {
+                            return `TX${t.o2_percent}/${t.he_percent}`;
+                          }
+                          return `EAN${t.o2_percent}`;
+                        }).filter(Boolean).join(', ')}
+                      </dd>
                     </div>
                   )}
                   {dive.cns_percent != null && dive.cns_percent > 0 && (
@@ -655,6 +787,56 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                       <dd>{dive.otu}</dd>
                     </div>
                   )}
+                </dl>
+              </div>
+            )}
+
+            {/* Tank Pressures Section */}
+            {tankSummaries.length > 0 && (
+              <div className="panel-section">
+                <h4 className="panel-section-title">Tanks</h4>
+                <dl className="info-list">
+                  {tankSummaries.map((tank, index) => {
+                    // Format gas mix display
+                    let gasMix = '';
+                    if (tank.o2Percent !== undefined) {
+                      if (tank.o2Percent === 21 && (!tank.hePercent || tank.hePercent === 0)) {
+                        gasMix = 'Air';
+                      } else if (tank.hePercent && tank.hePercent > 0) {
+                        // Trimix
+                        gasMix = `${tank.o2Percent}/${tank.hePercent}`;
+                      } else {
+                        // Nitrox
+                        gasMix = `EAN${tank.o2Percent}`;
+                      }
+                    }
+                    
+                    // Format tank name
+                    const tankName = tank.sensorName || (tankSummaries.length > 1 ? `Tank ${index + 1}` : 'Tank');
+                    
+                    return (
+                      <div key={`${tank.sensorId}-${tank.gasIndex}`} className="info-item tank-summary">
+                        <dt>
+                          {tankName}
+                          {gasMix && <span className="tank-gas-mix"> ({gasMix})</span>}
+                        </dt>
+                        <dd>
+                          {tank.startPressure !== undefined && tank.endPressure !== undefined ? (
+                            <>
+                              {tank.startPressure.toFixed(0)} → {tank.endPressure.toFixed(0)} bar
+                              {tank.consumption !== undefined && tank.consumption > 0 && (
+                                <span className="tank-consumption"> (−{tank.consumption.toFixed(0)})</span>
+                              )}
+                            </>
+                          ) : gasMix ? (
+                            <span className="tank-gas-only">{gasMix}</span>
+                          ) : (
+                            <span className="tank-no-data">No pressure data</span>
+                          )}
+                        </dd>
+                      </div>
+                    );
+                  })}
                 </dl>
               </div>
             )}

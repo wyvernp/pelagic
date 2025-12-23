@@ -28,7 +28,6 @@ export interface Dive {
   surface_pressure_bar?: number;
   otu?: number;
   cns_percent?: number;
-  nitrox_o2_percent?: number;
   dive_computer_model?: string;
   dive_computer_serial?: string;
   
@@ -46,6 +45,7 @@ export interface Dive {
   // GPS coordinates
   latitude?: number;
   longitude?: number;
+  dive_site_id?: number;
   
   // Dive type flags
   is_fresh_water: boolean;
@@ -72,10 +72,23 @@ export interface DiveSample {
 export interface TankPressure {
   id: number;
   dive_id: number;
-  sensor_id: string;
+  sensor_id: number;  // Matches Rust i64 - Garmin sensor serial numbers
   sensor_name?: string;
   time_seconds: number;
   pressure_bar: number;
+}
+
+export interface DiveTank {
+  id: number;
+  dive_id: number;
+  sensor_id: number;        // Matches TankPressure.sensor_id
+  sensor_name?: string;
+  gas_index: number;        // Gas mix index (0=primary, 1=secondary, etc)
+  o2_percent?: number;      // Oxygen percentage (21 for air, 32 for EAN32, etc)
+  he_percent?: number;      // Helium percentage (0 for nitrox, >0 for trimix)
+  start_pressure_bar?: number;
+  end_pressure_bar?: number;
+  volume_used_liters?: number;
 }
 
 export interface DiveEvent {
@@ -184,6 +197,16 @@ export interface Photo {
 export interface DiveStats {
   photo_count: number;
   species_count: number;
+}
+
+/**
+ * Extended dive info with stats and thumbnail paths for batch loading
+ * Reduces IPC calls from 2N to 1 when loading dive cards
+ */
+export interface DiveWithDetails extends Dive {
+  photo_count: number;
+  species_count: number;
+  thumbnail_paths: string[];
 }
 
 export interface SpeciesTag {
@@ -365,6 +388,15 @@ export interface SearchResults {
   photos: Photo[];
   species: SpeciesTag[];
   tags: GeneralTag[];
+  dive_sites: DiveSite[];
+}
+
+export interface DiveSite {
+  id: number;
+  name: string;
+  lat: number;
+  lon: number;
+  is_user_created: boolean;
 }
 
 // Map types

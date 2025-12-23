@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettings } from './SettingsModal';
+import { formatDiveName } from '../utils/diveNames';
 import type { Dive, PhotoImportPreview, PhotoGroup, PhotoAssignment, ScannedPhoto } from '../types';
 import './AddTripModal.css';
 import './PhotoImportModal.css';
@@ -353,7 +354,7 @@ function PhotoGroupCard({
               <option value="">-- No dive --</option>
               {dives.map((dive) => (
                 <option key={dive.id} value={dive.id}>
-                  {diveNamePrefix ? `${diveNamePrefix} ${dive.dive_number}` : dive.dive_number} - {dive.location || dive.date}
+                  {formatDiveName(diveNamePrefix, dive.dive_number)} - {dive.location || dive.date}
                 </option>
               ))}
             </select>

@@ -110,9 +110,6 @@ function convertDive(dcDive: DCDive, tripId: number, diveNumber: number): Omit<D
     cns_percent: cnsPercent,
     dive_computer_model: dc?.model,
     dive_computer_serial: dc?.serial,
-    nitrox_o2_percent: dcDive.cylinders[0]?.gasmix.oxygen.permille 
-      ? dcDive.cylinders[0].gasmix.oxygen.permille / 10 
-      : undefined,
     latitude,
     longitude,
     is_fresh_water: false,
@@ -1116,6 +1113,17 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     dive_computer_model?: string;
     samples: ParsedDiveSample[];
     tank_pressures: ParsedTankPressure[];
+    tanks: ParsedTank[];
+  }
+
+  interface ParsedTank {
+    sensor_id: number;
+    gas_index: number;
+    o2_percent?: number;
+    he_percent?: number;
+    start_pressure_bar?: number;
+    end_pressure_bar?: number;
+    volume_used_liters?: number;
   }
 
   interface ParsedFileResult {
@@ -1143,7 +1151,14 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
       maxDepth: { mm: parsed.max_depth_m * 1000, m: parsed.max_depth_m, ft: parsed.max_depth_m * 3.28084 },
       meanDepth: { mm: parsed.mean_depth_m * 1000, m: parsed.mean_depth_m, ft: parsed.mean_depth_m * 3.28084 },
       waterTemperature: parsed.water_temp_c != null ? { mkelvin: (parsed.water_temp_c + 273.15) * 1000, celsius: parsed.water_temp_c, fahrenheit: parsed.water_temp_c * 9/5 + 32 } : undefined,
-      cylinders: [],
+      cylinders: parsed.tanks?.map(t => ({
+        gasmix: {
+          oxygen: t.o2_percent != null ? { permille: t.o2_percent * 10 } : undefined,
+          helium: t.he_percent != null ? { permille: t.he_percent * 10 } : undefined,
+        },
+        start: t.start_pressure_bar != null ? { mbar: t.start_pressure_bar * 1000 } : undefined,
+        end: t.end_pressure_bar != null ? { mbar: t.end_pressure_bar * 1000 } : undefined,
+      })) || [],
       diveComputers: [{
         model: parsed.dive_computer_model,
         serial: undefined,
@@ -1406,6 +1421,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     dives_imported: number;
     samples_imported: number;
     tank_pressures_imported: number;
+    tanks_imported: number;
     created_trip_ids: number[];
   }
 
@@ -1443,7 +1459,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
                 cns_percent: diveData.cns_percent,
                 dive_computer_model: diveData.dive_computer_model,
                 dive_computer_serial: diveData.dive_computer_serial,
-                nitrox_o2_percent: diveData.nitrox_o2_percent,
                 latitude: diveData.latitude,
                 longitude: diveData.longitude,
                 samples: dc?.samples?.map(s => ({
@@ -1455,6 +1470,16 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
                   rbt_seconds: s.rbt?.seconds,
                 })) || [],
                 tank_pressures: importableDive.tankPressures || [],
+                // Include tank/gas mix data from cylinders
+                tanks: dcDive.cylinders?.map((cyl, idx) => ({
+                  sensor_id: idx,
+                  gas_index: idx,
+                  o2_percent: cyl.gasmix?.oxygen?.permille ? cyl.gasmix.oxygen.permille / 10 : undefined,
+                  he_percent: cyl.gasmix?.helium?.permille ? cyl.gasmix.helium.permille / 10 : undefined,
+                  start_pressure_bar: cyl.start?.mbar ? cyl.start.mbar / 1000 : undefined,
+                  end_pressure_bar: cyl.end?.mbar ? cyl.end.mbar / 1000 : undefined,
+                  volume_used_liters: undefined,
+                })) || [],
               };
             }),
           };
@@ -1555,7 +1580,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           cnsPercent: diveData.cns_percent,
           diveComputerModel: diveData.dive_computer_model,
           diveComputerSerial: diveData.dive_computer_serial,
-          nitroxO2Percent: diveData.nitrox_o2_percent,
           latitude: diveData.latitude,
           longitude: diveData.longitude,
         });

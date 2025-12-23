@@ -1,0 +1,1442 @@
+﻿cargo : warning: unreachable pattern
+At line:1 char:64
++ ... src-tauri"; cargo run --example dump_fit -- "..\2025-09-16-08-43-12.f ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unreachable pattern:Stri 
+   ng) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+   --> src\import.rs:567:30
+    |
+566 |     tank_pressure: Option<Vec<f64>>,  // Array of tank pressures in Pa
+    |     ------------- matches all the relevant values
+567 |     #[serde(default, alias = "TankPressure")]
+    |                              ^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by 
+default
+
+warning: value assigned to `last_error` is never read
+    --> src\commands.rs:1236:13
+     |
+1236 |     let mut last_error = String::new();
+     |             ^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by 
+default
+
+warning: value assigned to `last_error` is never read
+    --> src\commands.rs:1247:17
+     |
+1247 |                 last_error = e;
+     |                 ^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: multiple fields are never read
+   --> src\db.rs:222:9
+    |
+221 | pub struct PhotoFilter {
+    |            ----------- fields in this struct
+222 |     pub date_from: Option<String>,
+    |         ^^^^^^^^^
+223 |     pub date_to: Option<String>,
+    |         ^^^^^^^
+224 |     pub rating_min: Option<i32>,
+225 |     pub rating_max: Option<i32>,
+    |         ^^^^^^^^^^
+226 |     pub camera_model: Option<String>,
+    |         ^^^^^^^^^^^^
+227 |     pub lens_model: Option<String>,
+    |         ^^^^^^^^^^
+228 |     pub iso_min: Option<i32>,
+    |         ^^^^^^^
+229 |     pub iso_max: Option<i32>,
+    |         ^^^^^^^
+230 |     pub aperture_min: Option<f64>,
+    |         ^^^^^^^^^^^^
+231 |     pub aperture_max: Option<f64>,
+    |         ^^^^^^^^^^^^
+232 |     pub focal_length_min: Option<f64>,
+    |         ^^^^^^^^^^^^^^^^
+233 |     pub focal_length_max: Option<f64>,
+    |         ^^^^^^^^^^^^^^^^
+234 |     pub width_min: Option<i32>,
+    |         ^^^^^^^^^
+235 |     pub width_max: Option<i32>,
+    |         ^^^^^^^^^
+236 |     pub height_min: Option<i32>,
+    |         ^^^^^^^^^^
+237 |     pub height_max: Option<i32>,
+    |         ^^^^^^^^^^
+238 |     pub has_raw: Option<bool>,
+    |         ^^^^^^^
+239 |     pub is_processed: Option<bool>,
+    |         ^^^^^^^^^^^^
+240 |     pub exposure_compensation_min: Option<f64>,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+241 |     pub exposure_compensation_max: Option<f64>,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+242 |     pub white_balance: Option<String>,
+    |         ^^^^^^^^^^^^^
+243 |     pub flash_fired: Option<bool>,
+    |         ^^^^^^^^^^^
+244 |     pub metering_mode: Option<String>,
+    |         ^^^^^^^^^^^^^
+    |
+    = note: `PhotoFilter` has derived impls for the traits `Clone` and 
+`Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `conn` is never read
+   --> src\db.rs:251:5
+    |
+250 | pub struct Database {
+    |            -------- field in this struct
+251 |     conn: Connection,
+    |     ^^^^
+
+warning: method `import_dive_sites_from_csv` is never used
+    --> src\db.rs:1184:12
+     |
+ 262 | impl<'a> Db<'a> {
+     | --------------- method in this implementation
+...
+1184 |     pub fn import_dive_sites_from_csv(&self, csv_content: &str) -> 
+Result<usize> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+    --> src\db.rs:1728:12
+     |
+1727 | impl Database {
+     | ------------- associated items in this implementation
+1728 |     pub fn new() -> Result<Self> {
+     |            ^^^
+...
+1745 |     pub fn from_conn(conn: Connection) -> Self {
+     |            ^^^^^^^^^
+...
+1750 |     pub fn conn(&self) -> &Connection {
+     |            ^^^^
+...
+1977 |     fn init_schema(&self) -> Result<()> {
+     |        ^^^^^^^^^^^
+...
+2175 |     fn run_migrations(&self) -> Result<()> {
+     |        ^^^^^^^^^^^^^^
+...
+2217 |     pub fn get_all_trips(&self) -> Result<Vec<Trip>> {
+     |            ^^^^^^^^^^^^^
+...
+2240 |     pub fn get_trip(&self, id: i64) -> Result<Option<Trip>> {
+     |            ^^^^^^^^
+...
+2264 |     pub fn create_trip(&self, name: &str, location: &str, date_start: 
+&str, date_end: &str) -> Result<i64> {
+     |            ^^^^^^^^^^^
+...
+2272 |     pub fn update_trip(&self, id: i64, name: &str, location: &str, 
+resort: Option<&str>, date_start: &str, date_end: &str, notes: Option<...
+     |            ^^^^^^^^^^^
+...
+2280 |     pub fn delete_trip(&self, id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^
+...
+2285 |     pub fn delete_dive(&self, id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^
+...
+2299 |     pub fn update_dive(
+     |            ^^^^^^^^^^^
+...
+2341 |     pub fn bulk_update_dives(
+     |            ^^^^^^^^^^^^^^^^^
+...
+2436 |     pub fn get_dives_for_trip(&self, trip_id: i64) -> Result<Vec<Dive>> 
+{
+     |            ^^^^^^^^^^^^^^^^^^
+...
+2490 |     pub fn get_dive(&self, id: i64) -> Result<Option<Dive>> {
+     |            ^^^^^^^^
+...
+2545 |     pub fn insert_dive(&self, dive: &Dive) -> Result<i64> {
+     |            ^^^^^^^^^^^
+...
+2563 |     pub fn create_dive_from_computer(
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2602 |     pub fn create_manual_dive(
+     |            ^^^^^^^^^^^^^^^^^^
+...
+2653 |     pub fn get_dives_with_coordinates(&self) -> 
+Result<Vec<DiveMapPoint>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2681 |     pub fn get_dive_samples(&self, dive_id: i64) -> 
+Result<Vec<DiveSample>> {
+     |            ^^^^^^^^^^^^^^^^
+...
+2703 |     pub fn insert_dive_sample(&self, sample: &DiveSample) -> 
+Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^
+...
+2717 |     pub fn insert_dive_samples_batch(&self, dive_id: i64, samples: 
+&[DiveSample]) -> Result<usize> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2743 |     pub fn insert_dive_event(&self, event: &DiveEvent) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^
+...
+2753 |     pub fn insert_dive_events_batch(&self, dive_id: i64, events: 
+&[DiveEvent]) -> Result<usize> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2778 |     pub fn insert_tank_pressures_batch(&self, dive_id: i64, pressures: 
+&[TankPressure]) -> Result<usize> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2804 |     pub fn insert_tank_pressure(&self, pressure: &TankPressure) -> 
+Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+2814 |     pub fn get_tank_pressures_for_dive(&self, dive_id: i64) -> 
+Result<Vec<TankPressure>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2837 |     pub fn get_all_photos(&self) -> Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^
+...
+2854 |     pub fn get_photos_for_trip(&self, trip_id: i64) -> 
+Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+2875 |     pub fn get_all_photos_for_trip(&self, trip_id: i64) -> 
+Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+2896 |     pub fn get_photos_for_dive(&self, dive_id: i64) -> 
+Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+2917 |     pub fn get_dive_thumbnail_photos(&self, dive_id: i64, limit: i64) 
+-> Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2943 |     pub fn get_dive_stats(&self, dive_id: i64) -> Result<DiveStats> {
+     |            ^^^^^^^^^^^^^^
+...
+2968 |     pub fn get_dives_with_details(&self, trip_id: i64, thumbnail_limit: 
+i64) -> Result<Vec<DiveWithDetails>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+3075 |     pub fn find_photo_by_base_filename(&self, trip_id: i64, 
+base_filename: &str) -> Result<Option<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3095 |     pub fn get_display_version(&self, photo_id: i64) -> Result<Photo> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+3105 |     pub fn insert_photo(
+     |            ^^^^^^^^^^^^
+...
+3126 |     pub fn insert_photo_full(
+     |            ^^^^^^^^^^^^^^^^^
+...
+3168 |     pub fn get_processed_version(&self, raw_photo_id: i64) -> 
+Result<Option<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^
+...
+3182 |     pub fn get_raw_version(&self, photo_id: i64) -> 
+Result<Option<Photo>> {
+     |            ^^^^^^^^^^^^^^^
+...
+3197 |     fn map_photo_row(row: &rusqlite::Row) -> rusqlite::Result<Photo> {
+     |        ^^^^^^^^^^^^^
+...
+3230 |     pub fn update_photo_thumbnail(&self, photo_id: i64, thumbnail_path: 
+&str) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+3239 |     pub fn get_photos_without_thumbnails(&self) -> Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3254 |     pub fn get_photo(&self, id: i64) -> Result<Option<Photo>> {
+     |            ^^^^^^^^^
+...
+3273 |     pub fn delete_photo_by_path(&self, file_path: &str) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+3309 |     pub fn delete_photos(&self, photo_ids: &[i64]) -> Result<u64> {
+     |            ^^^^^^^^^^^^^
+...
+3339 |     pub fn update_photo_rating(&self, photo_id: i64, rating: i32) -> 
+Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+3348 |     pub fn update_photos_rating(&self, photo_ids: &[i64], rating: i32) 
+-> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+3373 |     pub fn filter_photos(&self, filter: &PhotoFilter) -> 
+Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^
+...
+3534 |     pub fn update_photo_exif(
+     |            ^^^^^^^^^^^^^^^^^
+...
+3593 |     pub fn link_orphan_processed_photos(&self) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3636 |     pub fn get_all_general_tags(&self) -> Result<Vec<GeneralTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+3652 |     pub fn get_or_create_general_tag(&self, name: &str) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3673 |     pub fn get_general_tags_for_photo(&self, photo_id: i64) -> 
+Result<Vec<GeneralTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3693 |     pub fn add_general_tag_to_photos(&self, photo_ids: &[i64], 
+general_tag_id: i64) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3717 |     pub fn remove_general_tag_from_photo(&self, photo_id: i64, 
+general_tag_id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3726 |     pub fn search_general_tags(&self, query: &str) -> 
+Result<Vec<GeneralTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+3745 |     pub fn get_all_species_tags(&self) -> Result<Vec<SpeciesTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+3763 |     pub fn create_species_tag(&self, name: &str, category: 
+Option<&str>, scientific_name: Option<&str>) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^
+...
+3772 |     pub fn get_or_create_species_tag(&self, name: &str, category: 
+Option<&str>, scientific_name: Option<&str>) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3789 |     pub fn get_species_tags_for_photo(&self, photo_id: i64) -> 
+Result<Vec<SpeciesTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3811 |     pub fn add_species_tag_to_photo(&self, photo_id: i64, 
+species_tag_id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3820 |     pub fn remove_species_tag_from_photo(&self, photo_id: i64, 
+species_tag_id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3829 |     pub fn add_species_tag_to_photos(&self, photo_ids: &[i64], 
+species_tag_id: i64) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3853 |     pub fn search_species_tags(&self, query: &str) -> 
+Result<Vec<SpeciesTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+3877 |     pub fn get_distinct_species_categories(&self) -> 
+Result<Vec<String>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3911 |     pub fn update_species_tag_category(&self, species_tag_id: i64, 
+category: Option<&str>) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3920 |     pub fn get_common_species_tags_for_photos(&self, photo_ids: &[i64]) 
+-> Result<Vec<SpeciesTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3958 |     pub fn get_common_general_tags_for_photos(&self, photo_ids: &[i64]) 
+-> Result<Vec<GeneralTag>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3993 |     pub fn remove_species_tag_from_photos(&self, photo_ids: &[i64], 
+species_tag_id: i64) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4014 |     pub fn remove_general_tag_from_photos(&self, photo_ids: &[i64], 
+general_tag_id: i64) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4037 |     pub fn get_statistics(&self) -> Result<Statistics> {
+     |            ^^^^^^^^^^^^^^
+...
+4098 |     pub fn get_species_with_counts(&self) -> Result<Vec<SpeciesCount>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+4121 |     pub fn get_camera_stats(&self) -> Result<Vec<CameraStat>> {
+     |            ^^^^^^^^^^^^^^^^
+...
+4141 |     pub fn get_yearly_stats(&self) -> Result<Vec<YearlyStat>> {
+     |            ^^^^^^^^^^^^^^^^
+...
+4166 |     pub fn get_trip_species_count(&self, trip_id: i64) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+4180 |     pub fn get_trip_export(&self, trip_id: i64) -> Result<TripExport> {
+     |            ^^^^^^^^^^^^^^^
+...
+4240 |     pub fn get_species_export(&self) -> Result<Vec<SpeciesExport>> {
+     |            ^^^^^^^^^^^^^^^^^^
+...
+4268 |     pub fn get_photos_for_export(&self, photo_ids: &[i64]) -> 
+Result<Vec<Photo>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^
+...
+4324 |     pub fn get_all_dive_sites(&self) -> Result<Vec<DiveSite>> {
+     |            ^^^^^^^^^^^^^^^^^^
+...
+4341 |     pub fn insert_dive_site(&self, name: &str, lat: f64, lon: f64) -> 
+Result<i64> {
+     |            ^^^^^^^^^^^^^^^^
+...
+4350 |     pub fn dive_sites_empty(&self) -> Result<bool> {
+     |            ^^^^^^^^^^^^^^^^
+...
+4360 |     pub fn import_dive_sites_from_csv(&self, csv_content: &str) -> 
+Result<usize> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4383 |     pub fn search_dive_sites(&self, query: &str) -> 
+Result<Vec<DiveSite>> {
+     |            ^^^^^^^^^^^^^^^^^
+...
+4403 |     pub fn search(&self, query: &str) -> Result<SearchResults> {
+     |            ^^^^^^
+...
+4580 |     pub fn move_photos_to_dive(&self, photo_ids: &[i64], dive_id: 
+Option<i64>) -> Result<usize> {
+     |            ^^^^^^^^^^^^^^^^^^^
+...
+4603 |     pub fn get_equipment_categories(&self) -> 
+Result<Vec<EquipmentCategory>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4621 |     pub fn create_equipment_category(&self, name: &str, icon: 
+Option<&str>, sort_order: i32) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4630 |     pub fn update_equipment_category(&self, id: i64, name: &str, icon: 
+Option<&str>, sort_order: i32) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4639 |     pub fn delete_equipment_category(&self, id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4645 |     pub fn get_all_equipment(&self) -> 
+Result<Vec<EquipmentWithCategory>> {
+     |            ^^^^^^^^^^^^^^^^^
+...
+4675 |     pub fn get_equipment_by_category(&self, category_id: i64) -> 
+Result<Vec<Equipment>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4704 |     pub fn get_equipment(&self, id: i64) -> 
+Result<Option<EquipmentWithCategory>> {
+     |            ^^^^^^^^^^^^^
+...
+4735 |     pub fn create_equipment(
+     |            ^^^^^^^^^^^^^^^^
+...
+4754 |     pub fn update_equipment(
+     |            ^^^^^^^^^^^^^^^^
+...
+4777 |     pub fn delete_equipment(&self, id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^
+...
+4788 |     pub fn get_equipment_sets(&self) -> Result<Vec<EquipmentSet>> {
+     |            ^^^^^^^^^^^^^^^^^^
+...
+4811 |     pub fn get_equipment_sets_by_type(&self, set_type: &str) -> 
+Result<Vec<EquipmentSet>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4835 |     pub fn get_equipment_set_with_items(&self, id: i64) -> 
+Result<Option<EquipmentSetWithItems>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4899 |     pub fn create_equipment_set(&self, name: &str, description: 
+Option<&str>, set_type: &str, is_default: bool) -> Result<i64> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+4916 |     pub fn update_equipment_set(&self, id: i64, name: &str, 
+description: Option<&str>, set_type: &str, is_default: bool) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+4933 |     pub fn delete_equipment_set(&self, id: i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+4944 |     pub fn add_equipment_to_set(&self, set_id: i64, equipment_id: i64) 
+-> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^
+...
+4957 |     pub fn remove_equipment_from_set(&self, set_id: i64, equipment_id: 
+i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+4970 |     pub fn set_equipment_set_items(&self, set_id: i64, equipment_ids: 
+&[i64]) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+4992 |     pub fn get_equipment_sets_for_dive(&self, dive_id: i64) -> 
+Result<Vec<EquipmentSet>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+5017 |     pub fn add_equipment_set_to_dive(&self, dive_id: i64, set_id: i64) 
+-> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+5026 |     pub fn remove_equipment_set_from_dive(&self, dive_id: i64, set_id: 
+i64) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+5035 |     pub fn set_dive_equipment_sets(&self, dive_id: i64, set_ids: 
+&[i64]) -> Result<()> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^
+...
+5050 |     pub fn get_default_equipment_set(&self, set_type: &str) -> 
+Result<Option<EquipmentSet>> {
+     |            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `activity` is never read
+   --> src\import.rs:485:5
+    |
+483 | struct SuuntoDeviceHeader {
+    |        ------------------ field in this struct
+484 |     #[serde(default)]
+485 |     activity: Option<String>,
+    |     ^^^^^^^^
+    |
+    = note: `SuuntoDeviceHeader` has a derived impl for the trait `Debug`, but 
+this is intentionally ignored during dead code analysis
+
+warning: fields `helium` and `transmitter_id` are never read
+   --> src\import.rs:537:5
+    |
+533 | struct SuuntoGasInfo {
+    |        ------------- fields in this struct
+...
+537 |     helium: Option<f64>,
+    |     ^^^^^^
+...
+543 |     transmitter_id: Option<String>,
+    |     ^^^^^^^^^^^^^^
+    |
+    = note: `SuuntoGasInfo` has a derived impl for the trait `Debug`, but this 
+is intentionally ignored during dead code analysis
+
+warning: field `events` is never read
+   --> src\import.rs:570:5
+    |
+558 | struct SuuntoDeviceSample {
+    |        ------------------ field in this struct
+...
+570 |     events: Option<Vec<JsonValue>>,  // Events are complex, just capture 
+as JSON
+    |     ^^^^^^
+    |
+    = note: `SuuntoDeviceSample` has a derived impl for the trait `Debug`, but 
+this is intentionally ignored during dead code analysis
+
+warning: field `code` is never read
+  --> src\ai.rs:81:5
+   |
+79 | struct GeminiError {
+   |        ----------- field in this struct
+80 |     message: String,
+81 |     code: Option<i32>,
+   |     ^^^^
+   |
+   = note: `GeminiError` has a derived impl for the trait `Debug`, but this is 
+intentionally ignored during dead code analysis
+
+warning: function `identify_species_from_thumbnail` is never used
+   --> src\ai.rs:255:14
+    |
+255 | pub async fn identify_species_from_thumbnail(
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: constant `MAX_TANK_PRESSURE_BAR` is never used
+  --> src\validation.rs:36:11
+   |
+36 | pub const MAX_TANK_PRESSURE_BAR: f64 = 350.0;
+   |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: variant `Custom` is never constructed
+   --> src\validation.rs:112:5
+    |
+ 56 | pub enum ValidationError {
+    |          --------------- variant in this enum
+...
+112 |     Custom { message: String },
+    |     ^^^^^^
+    |
+    = note: `ValidationError` has derived impls for the traits `Clone` and 
+`Debug`, but these are intentionally ignored during dead code analysis
+
+warning: type alias `ValidationResult` is never used
+   --> src\validation.rs:182:10
+    |
+182 | pub type ValidationResult<T> = Result<T, Vec<ValidationError>>;
+    |          ^^^^^^^^^^^^^^^^
+
+warning: multiple methods are never used
+   --> src\validation.rs:207:12
+    |
+190 | impl Validator {
+    | -------------- methods in this implementation
+...
+207 |     pub fn errors(&self) -> &[ValidationError] {
+    |            ^^^^^^
+...
+212 |     pub fn finish(self) -> Result<(), Vec<ValidationError>> {
+    |            ^^^^^^
+...
+266 |     pub fn validate_time_optional(&mut self, field: &str, time: 
+Option<&str>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+336 |     pub fn validate_tank_pressure(&mut self, field: &str, pressure: f64) 
+{
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+...
+348 |     pub fn validate_tank_pressure_optional(&mut self, field: &str, 
+pressure: Option<f64>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+458 |     pub fn validate_duration_optional(&mut self, field: &str, seconds: 
+Option<i64>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+475 |     pub fn validate_id_optional(&mut self, field: &str, id: Option<i64>) 
+{
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+525 |     pub fn validate_location(&mut self, field: &str, value: &str) {
+    |            ^^^^^^^^^^^^^^^^^
+...
+568 |     pub fn validate_path_optional(&mut self, path: Option<&str>) {
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `validate_date` is never used
+   --> src\validation.rs:618:8
+    |
+618 | pub fn validate_date(field: &str, date: &str) -> Result<(), 
+ValidationError> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `validate_rating` is never used
+   --> src\validation.rs:629:8
+    |
+629 | pub fn validate_rating(rating: i32) -> Result<(), ValidationError> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `validate_depth` is never used
+   --> src\validation.rs:637:8
+    |
+637 | pub fn validate_depth(field: &str, depth: f64) -> Result<(), 
+ValidationError> {
+    |        ^^^^^^^^^^^^^^
+
+warning: function `validate_gps` is never used
+   --> src\validation.rs:650:8
+    |
+650 | pub fn validate_gps(lat: f64, lon: f64) -> Result<(), ValidationError> {
+    |        ^^^^^^^^^^^^
+
+warning: `pelagic` (lib) generated 20 warnings
+   Compiling pelagic v0.2.0 
+(C:\Users\wyver\Documents\code\PelagicDesktopV2\src-tauri)
+warning: unused import: `Value`
+ --> examples\dump_fit.rs:1:38
+  |
+1 | use fitparser::{self, FitDataRecord, Value};
+  |                                      ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pelagic` (example "dump_fit") generated 1 warning (run `cargo fix 
+--example "dump_fit"` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.80s
+     Running `target\debug\examples\dump_fit.exe ..\2025-09-16-08-43-12.fit`
+Reading FIT file: ..\2025-09-16-08-43-12.fit
+
+Parsed 10186 records from FIT file
+
+Record types found:
+  233 - 4645 records
+  140 - 1 records
+  327 - 2 records
+  141 - 1 records
+  147 - 3 records
+  22 - 2 records
+  288 - 1 records
+  device_info - 10 records
+  tank_summary - 2 records
+  event - 59 records
+  file_id - 1 records
+  training_settings - 1 records
+  zones_target - 1 records
+  dive_settings - 1 records
+  record - 4296 records
+  dive_summary - 2 records
+  activity - 1 records
+  file_creator - 1 records
+  sport - 1 records
+  session - 1 records
+  79 - 1 records
+  dive_gas - 1 records
+  user_profile - 1 records
+  time_in_zone - 2 records
+  326 - 2 records
+  device_settings - 1 records
+  104 - 15 records
+  lap - 1 records
+  tank_update - 1130 records
+
+=== 233 (4645 total) ===
+  Record 0:
+    unknown_field_2: Array([Byte(6), Byte(0), Byte(0), Byte(200)])
+  Record 1:
+    unknown_field_2: Array([Byte(2), Byte(0), Byte(0), Byte(16)])
+  Record 2:
+    unknown_field_2: Array([Byte(10), Byte(0), Byte(0), Byte(24)])
+
+=== 140 (1 total) ===
+  Record 0:
+    unknown_field_0: UInt8(73)
+    unknown_field_1: UInt8(0)
+    unknown_field_2: SInt32(108470)
+    unknown_field_3: SInt32(185725)
+    unknown_field_4: UInt8(4)
+    unknown_field_5: SInt32(126521)
+    unknown_field_6: SInt32(13172736)
+    unknown_field_7: SInt32(0)
+    unknown_field_8: SInt8(0)
+    unknown_field_9: UInt16(0)
+    unknown_field_10: UInt16(61726)
+    unknown_field_11: Enum(53)
+    unknown_field_12: Enum(53)
+    unknown_field_13: UInt8(0)
+    unknown_field_14: UInt16(0)
+    unknown_field_15: UInt16(0)
+    unknown_field_16: UInt16(0)
+    unknown_field_17: SInt8(0)
+    unknown_field_18: UInt8(1)
+    unknown_field_19: UInt8(34)
+    unknown_field_20: UInt8(0)
+    unknown_field_21: SInt32(0)
+    unknown_field_22: UInt8(18)
+    unknown_field_23: UInt8(0)
+    unknown_field_24: SInt32(1184828)
+    unknown_field_25: UInt8(63)
+    unknown_field_26: SInt32(185725)
+    unknown_field_27: SInt32(0)
+    unknown_field_28: SInt32(0)
+    unknown_field_29: SInt32(0)
+    unknown_field_30: SInt8(-100)
+    unknown_field_31: SInt8(-1)
+    unknown_field_32: SInt32(463067)
+    unknown_field_33: UInt8(0)
+    unknown_field_34: Enum(0)
+    unknown_field_35: UInt32(4645279)
+    unknown_field_36: UInt32(0)
+    unknown_field_37: SInt32(185725)
+    unknown_field_38: SInt32(0)
+    unknown_field_39: SInt32(185725)
+    unknown_field_40: SInt32(0)
+    unknown_field_41: Enum(0)
+    unknown_field_43: SInt16(0)
+    unknown_field_44: SInt16(0)
+    unknown_field_45: SInt16(0)
+    unknown_field_46: UInt8(1)
+    unknown_field_48: UInt32(1126951237)
+    unknown_field_51: Enum(0)
+    unknown_field_53: UInt8(0)
+    unknown_field_54: SInt32(0)
+    unknown_field_55: UInt16(0)
+    unknown_field_56: UInt8(12)
+    unknown_field_59: Enum(0)
+    unknown_field_63: UInt8(80)
+    unknown_field_64: UInt8(78)
+    unknown_field_253: UInt32(1126922437)
+
+=== 327 (2 total) ===
+  Record 0:
+    unknown_field_0: UInt8(9)
+    unknown_field_1: UInt8(1)
+    unknown_field_2: UInt8(2)
+    unknown_field_3: UInt32(12)
+    unknown_field_4: UInt32(8356)
+    unknown_field_5: UInt32(4)
+    unknown_field_6: Enum(0)
+    unknown_field_253: UInt32(1126917792)
+  Record 1:
+    unknown_field_0: UInt8(9)
+    unknown_field_1: UInt8(1)
+    unknown_field_2: UInt8(2)
+    unknown_field_3: UInt32(12)
+    unknown_field_4: UInt32(8356)
+    unknown_field_5: UInt32(4)
+    unknown_field_6: Enum(0)
+    unknown_field_253: UInt32(1126917792)
+
+=== 141 (1 total) ===
+  Record 0:
+    unknown_field_0: Enum(1)
+    unknown_field_1: UInt32(1126828800)
+    unknown_field_2: UInt32(1127433600)
+    unknown_field_253: UInt32(1126917792)
+
+=== 147 (3 total) ===
+  Record 0:
+    unknown_field_0: UInt32z(2772880835)
+    unknown_field_1: UInt8(0)
+    unknown_field_2: String("CLIVE")
+    unknown_field_3: Enum(1)
+    unknown_field_32: UInt16(3143)
+    unknown_field_34: UInt16(266)
+    unknown_field_51: Enum(0)
+    unknown_field_52: Enum(28)
+    unknown_field_58: Enum(17)
+    unknown_field_74: Enum(2)
+    unknown_field_75: UInt16(200)
+    unknown_field_76: UInt16(70)
+    unknown_field_77: UInt16(111)
+    unknown_field_78: Enum(1)
+    unknown_field_91: String("CLIVE")
+    unknown_field_254: UInt16(0)
+  Record 1:
+    unknown_field_0: UInt32z(24663449)
+    unknown_field_1: UInt8(0)
+    unknown_field_2: String("21913")
+    unknown_field_3: Enum(1)
+    unknown_field_32: UInt16(7)
+    unknown_field_34: UInt16(210)
+    unknown_field_51: Enum(0)
+    unknown_field_52: Enum(0)
+    unknown_field_62: UInt8(0)
+    unknown_field_73: UInt16z(1)
+    unknown_field_91: String("")
+    unknown_field_254: UInt16(1)
+  Record 2:
+    unknown_field_0: UInt32z(2504420992)
+    unknown_field_1: UInt8(0)
+    unknown_field_2: String("LYN")
+    unknown_field_3: Enum(1)
+    unknown_field_32: UInt16(3143)
+    unknown_field_34: UInt16(260)
+    unknown_field_51: Enum(0)
+    unknown_field_52: Enum(28)
+    unknown_field_58: Enum(18)
+    unknown_field_73: UInt16z(1)
+    unknown_field_74: Enum(2)
+    unknown_field_75: UInt16(200)
+    unknown_field_76: UInt16(70)
+    unknown_field_77: UInt16(111)
+    unknown_field_78: Enum(0)
+    unknown_field_91: String("")
+    unknown_field_254: UInt16(2)
+
+=== 22 (2 total) ===
+  Record 0:
+    unknown_field_3: UInt8(1)
+    unknown_field_4: UInt8(2)
+    unknown_field_5: Enum(3)
+    unknown_field_253: UInt32(1126917792)
+  Record 1:
+    unknown_field_3: UInt8(1)
+    unknown_field_4: UInt8(2)
+    unknown_field_5: Enum(3)
+    unknown_field_253: UInt32(1126917793)
+
+=== 288 (1 total) ===
+  Record 0:
+    unknown_field_253: UInt32(1126917792)
+
+=== device_info (10 total) ===
+  Record 0:
+    device_index: String("creator")
+    manufacturer: String("garmin")
+    serial_number: UInt32z(3368663824)
+    garmin_product: String("descent_mk2")
+    software_version: Float64(28.0)
+    unknown_field_17: String("")
+    source_type: String("local")
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+  Record 1:
+    device_index: SInt64(1)
+    local_device_type: String("barometer")
+    manufacturer: String("garmin")
+    garmin_product: String("descent_mk2")
+    software_version: Float64(28.0)
+    unknown_field_17: String("")
+    source_type: String("local")
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+  Record 2:
+    device_index: SInt64(2)
+    local_device_type: String("whr")
+    software_version: Float64(4.0)
+    unknown_field_17: String("")
+    source_type: String("local")
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+
+=== tank_summary (2 total) ===
+  Record 0:
+    sensor: SInt64(2772880835)
+    start_pressure: Float64(205.53) <-- PRESSURE/TANK RELATED
+    end_pressure: Float64(14.06) <-- PRESSURE/TANK RELATED
+    volume_used: Float64(2120.92)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+  Record 1:
+    sensor: SInt64(2504420992)
+    start_pressure: Float64(219.52) <-- PRESSURE/TANK RELATED
+    end_pressure: Float64(54.46) <-- PRESSURE/TANK RELATED
+    volume_used: Float64(1829.26)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+
+=== event (59 total) ===
+  Record 0:
+    event: String("timer")
+    event_type: String("start")
+    timer_trigger: String("manual")
+    event_group: UInt8(0)
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+  Record 1:
+    event: String("dive_gas_switched")
+    event_type: String("marker")
+    data: UInt32(0)
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+  Record 2:
+    event: String("tank_pod_connected")
+    event_type: String("marker")
+    data: UInt32(2504420992)
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+
+=== file_id (1 total) ===
+  Record 0:
+    type: String("activity")
+    manufacturer: String("garmin")
+    garmin_product: String("descent_mk2")
+    serial_number: UInt32z(3368663824)
+    time_created: Timestamp(2025-09-16T03:03:36+01:00)
+    unknown_field_7: UInt32(1126917792)
+
+=== training_settings (1 total) ===
+  Record 0:
+    unknown_field_1: Enum(0)
+    unknown_field_2: UInt16(4167)
+    unknown_field_3: Enum(6)
+    unknown_field_4: UInt32(100000)
+    unknown_field_7: Enum(0)
+    unknown_field_8: UInt16(1389)
+    unknown_field_11: UInt8(10)
+    unknown_field_12: Enum(0)
+    unknown_field_13: Enum(0)
+    unknown_field_14: Enum(0)
+    unknown_field_15: Enum(0)
+    unknown_field_16: Enum(1)
+    unknown_field_24: Enum(1)
+    unknown_field_27: Enum(2)
+    unknown_field_30: Enum(0)
+    target_distance: Float64(1609.34)
+    target_speed: Float64(6.706)
+    unknown_field_34: Enum(1)
+    unknown_field_35: Enum(0)
+    unknown_field_36: Enum(0)
+    unknown_field_37: Enum(0)
+    unknown_field_40: Enum(1)
+    unknown_field_41: SInt32(16667)
+    unknown_field_42: UInt8(30)
+    unknown_field_46: Enum(0)
+    unknown_field_55: Enum(0)
+    unknown_field_60: Enum(0)
+    unknown_field_63: Enum(0)
+    unknown_field_64: UInt16(77)
+    unknown_field_66: Enum(1)
+    unknown_field_89: Enum(0)
+    unknown_field_122: Enum(0)
+    unknown_field_254: UInt16(0)
+
+=== zones_target (1 total) ===
+  Record 0:
+    max_heart_rate: UInt8(176)
+    threshold_heart_rate: UInt8(0)
+    functional_threshold_power: UInt16(200)
+    hr_calc_type: String("percent_max_hr")
+    pwr_calc_type: String("percent_ftp")
+    unknown_field_9: Enum(0)
+    unknown_field_10: Enum(1)
+    unknown_field_11: Enum(0)
+    unknown_field_12: Enum(0)
+    unknown_field_254: UInt16(0)
+
+=== dive_settings (1 total) ===
+  Record 0:
+    name: String("")
+    model: String("zhl_16c")
+    gf_low: UInt8(45)
+    gf_high: UInt8(95)
+    water_type: String("salt")
+    water_density: Float32(1025.0)
+    po2_warn: Float64(1.4)
+    po2_critical: Float64(1.6)
+    po2_deco: Float64(1.4)
+    safety_stop_enabled: Enum(1)
+    apnea_countdown_enabled: Enum(0)
+    apnea_countdown_time: UInt32(120)
+    backlight_mode: String("always_on")
+    backlight_brightness: UInt8(30)
+    backlight_timeout: SInt64(8)
+    repeat_dive_interval: UInt16(60)
+    safety_stop_time: UInt16(180)
+    heart_rate_source_type: String("local")
+    heart_rate_local_device_type: String("whr")
+    travel_gas: SInt64(0) <-- PRESSURE/TANK RELATED
+    ccr_low_setpoint_switch_mode: String("manual")
+    ccr_low_setpoint: Float64(0.7)
+    ccr_low_setpoint_depth: Float64(4.572)
+    ccr_high_setpoint_switch_mode: String("manual")
+    ccr_high_setpoint: Float64(1.3)
+    ccr_high_setpoint_depth: Float64(21.336)
+    gas_consumption_display: String("pressure_sac") <-- PRESSURE/TANK RELATED
+    up_key_enabled: Enum(1)
+    unknown_field_31: Enum(1)
+    unknown_field_32: Enum(0)
+    dive_sounds: String("tone_and_vibrate")
+    last_stop_multiple: Float64(1.0)
+    no_fly_time_mode: String("standard")
+    unknown_field_38: Enum(1)
+    unknown_field_39: Enum(1)
+    message_index: SInt64(0)
+
+=== record (4296 total) ===
+  Record 0:
+    heart_rate: UInt8(101)
+    temperature: SInt8(30)
+    enhanced_altitude: Float64(7.0)
+    absolute_pressure: UInt32(115984) <-- PRESSURE/TANK RELATED
+    depth: Float64(1.208)
+    ascent_rate: Float64(-0.315)
+    po2: Float64(0.24)
+    unknown_field_135: UInt8(129)
+    unknown_field_136: UInt8(101)
+    timestamp: Timestamp(2025-09-16T01:43:12+01:00)
+  Record 1:
+    heart_rate: UInt8(101)
+    temperature: SInt8(30)
+    enhanced_altitude: Float64(7.0)
+    absolute_pressure: UInt32(118087) <-- PRESSURE/TANK RELATED
+    depth: Float64(1.417)
+    next_stop_depth: Float64(0.0)
+    next_stop_time: UInt32(0)
+    time_to_surface: UInt32(9)
+    cns_load: UInt8(0)
+    n2_load: UInt16(16)
+    ascent_rate: Float64(-0.333)
+    po2: Float64(0.25)
+    unknown_field_135: UInt8(129)
+    unknown_field_136: UInt8(101)
+    timestamp: Timestamp(2025-09-16T01:43:13+01:00)
+  Record 2:
+    heart_rate: UInt8(100)
+    temperature: SInt8(30)
+    enhanced_altitude: Float64(7.0)
+    absolute_pressure: UInt32(118189) <-- PRESSURE/TANK RELATED
+    depth: Float64(1.427)
+    next_stop_depth: Float64(0.0)
+    next_stop_time: UInt32(0)
+    time_to_surface: UInt32(9)
+    cns_load: UInt8(0)
+    n2_load: UInt16(16)
+    ascent_rate: Float64(-0.218)
+    po2: Float64(0.25)
+    unknown_field_135: UInt8(108)
+    unknown_field_136: UInt8(100)
+    timestamp: Timestamp(2025-09-16T01:43:14+01:00)
+
+=== dive_summary (2 total) ===
+  Record 0:
+    reference_mesg: String("lap")
+    reference_index: SInt64(0)
+    avg_depth: Float64(13.559)
+    max_depth: Float64(22.714)
+    surface_interval: UInt32(47323)
+    bottom_time: Float64(4584.418)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+  Record 1:
+    reference_mesg: String("session")
+    reference_index: SInt64(0)
+    avg_depth: Float64(13.559)
+    max_depth: Float64(22.714)
+    surface_interval: UInt32(47323)
+    start_cns: UInt8(0)
+    end_cns: UInt8(5)
+    start_n2: UInt16(16)
+    end_n2: UInt16(77)
+    o2_toxicity: UInt16(12)
+    dive_number: UInt32(1084)
+    bottom_time: Float64(4584.418)
+    avg_pressure_sac: Float64(1.12) <-- PRESSURE/TANK RELATED
+    avg_volume_sac: Float64(12.42)
+    avg_rmv: Float64(29.45)
+    descent_time: Float64(888.0)
+    ascent_time: Float64(3042.418)
+    avg_ascent_rate: Float64(0.037)
+    unknown_field_21: Enum(0)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+
+=== activity (1 total) ===
+  Record 0:
+    total_timer_time: Float64(4645.266)
+    num_sessions: UInt16(1)
+    type: String("manual")
+    event: String("activity")
+    event_type: String("stop")
+    local_timestamp: Timestamp(2025-09-16T11:00:37+01:00)
+    unknown_field_8: String("")
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+
+=== file_creator (1 total) ===
+  Record 0:
+    software_version: UInt16(2800)
+    unknown_field_2: String("")
+
+=== sport (1 total) ===
+  Record 0:
+    sport: String("diving")
+    sub_sport: String("single_gas_diving")
+    name: String("Single-Gas")
+    unknown_field_4: UInt16(8)
+    unknown_field_5: Enum(1)
+    unknown_field_6: Enum(0)
+    unknown_field_9: UInt8(0)
+    unknown_field_10: Array([UInt8(0), UInt8(170), Invalid, Invalid])
+    unknown_field_11: Enum(0)
+    unknown_field_13: Enum(0)
+
+=== session (1 total) ===
+  Record 0:
+    event: String("lap")
+    event_type: String("stop")
+    start_time: Timestamp(2025-09-16T01:43:12+01:00)
+    start_position_lat: SInt32(17726529)
+    start_position_long: SInt32(1494368638)
+    sport: String("diving")
+    sub_sport: String("single_gas_diving")
+    total_elapsed_time: Float64(4645.266)
+    total_timer_time: Float64(4645.266)
+    total_distance: Float64(0.0)
+    total_cycles: UInt32(3)
+    total_calories: UInt16(201)
+    avg_heart_rate: UInt8(80)
+    max_heart_rate: UInt8(109)
+    total_ascent: UInt16(0)
+    total_descent: UInt16(0)
+    first_lap_index: UInt16(0)
+    num_laps: UInt16(1)
+    trigger: String("activity_end")
+    end_position_lat: SInt32(17728848)
+    end_position_long: SInt32(1494368721)
+    avg_temperature: SInt8(30)
+    max_temperature: SInt8(30)
+    unknown_field_81: Enum(0)
+    unknown_field_106: UInt16(0)
+    sport_profile_name: String("Single-Gas")
+    enhanced_avg_speed: Float64(0.0)
+    min_temperature: SInt8(30)
+    unknown_field_151: UInt16(0)
+    unknown_field_152: UInt32(0)
+    training_load_peak: Float64(2.8339385986328125)
+    unknown_field_184: Enum(0)
+    unknown_field_196: UInt16(110)
+    total_fractional_ascent: Float64(0.0)
+    total_fractional_descent: Float64(0.0)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+    message_index: SInt64(0)
+
+=== 79 (1 total) ===
+  Record 0:
+    unknown_field_0: UInt16(10104)
+    unknown_field_1: UInt8(47)
+    unknown_field_2: UInt8(178)
+    unknown_field_3: UInt16(780)
+    unknown_field_4: Enum(1)
+    unknown_field_5: Enum(40)
+    unknown_field_6: UInt8(176)
+    unknown_field_7: SInt8(1)
+    unknown_field_8: UInt16(1)
+    unknown_field_9: UInt16(425)
+    unknown_field_10: UInt8(58)
+    unknown_field_11: UInt16(0)
+    unknown_field_12: UInt16(200)
+    unknown_field_13: UInt16(0)
+    unknown_field_14: UInt8(0)
+    unknown_field_15: UInt8(68)
+    unknown_field_16: UInt32(3993371147)
+    unknown_field_17: SInt32(646690)
+    unknown_field_18: SInt32(646690)
+    unknown_field_19: SInt32(646690)
+    unknown_field_20: UInt16(0)
+    unknown_field_21: SInt32(197935)
+    unknown_field_22: SInt32(1054086)
+    unknown_field_23: SInt16(480)
+    unknown_field_25: UInt32(21600)
+    unknown_field_26: UInt32(79200)
+    unknown_field_27: UInt8(0)
+    unknown_field_28: UInt8(0)
+    unknown_field_29: UInt32(1289600)
+    unknown_field_30: UInt32(5555700)
+    unknown_field_33: UInt16(0)
+    unknown_field_34: UInt16(360)
+    unknown_field_35: UInt32(3992781186)
+    unknown_field_36: SInt32(870510)
+    unknown_field_37: SInt16(0)
+    unknown_field_253: UInt32(1126917792)
+
+=== dive_gas (1 total) ===
+  Record 0:
+    helium_content: UInt8(0)
+    oxygen_content: UInt8(21)
+    status: String("enabled")
+    mode: String("open_circuit")
+    message_index: SInt64(0)
+
+=== user_profile (1 total) ===
+  Record 0:
+    gender: String("male")
+    height: Float64(1.78)
+    weight: Float64(78.7)
+    language: String("english")
+    elev_setting: String("metric")
+    weight_setting: String("metric")
+    resting_heart_rate: UInt8(0)
+    hr_setting: String("max")
+    speed_setting: String("metric")
+    dist_setting: String("metric")
+    activity_class: SInt64(30)
+    position_setting: String("degree_minute_second")
+    temperature_setting: String("metric")
+    unknown_field_24: UInt8(78)
+    unknown_field_26: Enum(2)
+    wake_time: UInt32(21600)
+    sleep_time: UInt32(79200)
+    height_setting: String("metric")
+    unknown_field_36: UInt8(0)
+    unknown_field_37: UInt16(0)
+    unknown_field_43: Enum(0)
+    unknown_field_44: UInt8(10)
+    unknown_field_45: UInt8z(2)
+    depth_setting: String("metric")
+    dive_count: UInt32(1083)
+    unknown_field_52: Enum(0)
+    unknown_field_53: UInt8(3)
+    unknown_field_54: UInt8(4)
+    unknown_field_57: Enum(0)
+    unknown_field_58: Enum(1)
+    unknown_field_60: Array([Enum(0), Enum(0), Enum(0), Enum(0), Enum(0), Enum(2), Enum(2)])
+    unknown_field_62: Enum(1)
+
+=== time_in_zone (2 total) ===
+  Record 0:
+    reference_mesg: String("lap")
+    reference_index: SInt64(0)
+    time_in_hr_zone: Array([Float64(4065.998), Float64(544.419), Float64(34.001), Float64(0.0), Float64(0.0), Float64(0.0), Float64(0.0)])
+    hr_zone_high_boundary: Array([UInt8(88), UInt8(106), UInt8(123), UInt8(141), UInt8(158), UInt8(176)])
+    hr_calc_type: String("percent_max_hr")
+    max_heart_rate: UInt8(176)
+    resting_heart_rate: UInt8(0)
+    threshold_heart_rate: UInt8(0)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+  Record 1:
+    reference_mesg: String("session")
+    reference_index: SInt64(0)
+    time_in_hr_zone: Array([Float64(4065.998), Float64(544.419), Float64(34.001), Float64(0.0), Float64(0.0), Float64(0.0), Float64(0.0)])
+    hr_zone_high_boundary: Array([UInt8(88), UInt8(106), UInt8(123), UInt8(141), UInt8(158), UInt8(176)])
+    hr_calc_type: String("percent_max_hr")
+    max_heart_rate: UInt8(176)
+    resting_heart_rate: UInt8(0)
+    threshold_heart_rate: UInt8(0)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+
+=== 326 (2 total) ===
+  Record 0:
+    unknown_field_0: UInt32(49)
+    unknown_field_1: UInt32(3)
+    unknown_field_253: UInt32(1126917792)
+  Record 1:
+    unknown_field_0: UInt32(41)
+    unknown_field_253: UInt32(1126917792)
+
+=== device_settings (1 total) ===
+  Record 0:
+    active_time_zone: UInt8(0)
+    utc_offset: UInt32(0)
+    time_offset: UInt32(28800)
+    unknown_field_3: Enum(2)
+    time_mode: String("hour24")
+    time_zone_offset: Float64(0.0)
+    unknown_field_10: Enum(0)
+    unknown_field_11: Enum(3)
+    backlight_mode: String("auto_brightness")
+    unknown_field_13: UInt8(8)
+    unknown_field_14: UInt8(70)
+    unknown_field_15: UInt8(50)
+    unknown_field_22: Enum(0)
+    unknown_field_23: Enum(1)
+    unknown_field_25: Enum(1)
+    unknown_field_26: Enum(254)
+    unknown_field_30: Enum(1)
+    unknown_field_35: Enum(1)
+    activity_tracker_enabled: Enum(1)
+    unknown_field_38: Enum(1)
+    unknown_field_41: Enum(1)
+    unknown_field_42: Enum(1)
+    unknown_field_43: Enum(0)
+    unknown_field_45: Enum(1)
+    move_alert_enabled: Enum(0)
+    date_mode: String("day_month")
+    unknown_field_48: Enum(0)
+    unknown_field_53: Enum(1)
+    mounting_side: String("left")
+    autosync_min_steps: UInt16(2000)
+    autosync_min_time: UInt16(240)
+    unknown_field_63: Array([Enum(1), Enum(0), Enum(0), Enum(0), Enum(0), Enum(0), Enum(0), Enum(1), Enum(0), Enum(1), Enum(0), Enum(1), Enum(1)])
+    unknown_field_64: Enum(1)
+    unknown_field_65: Enum(1)
+    unknown_field_66: Enum(2)
+    unknown_field_67: Enum(1)
+    unknown_field_68: Enum(1)
+    unknown_field_69: Enum(3)
+    unknown_field_75: Enum(1)
+    unknown_field_76: Enum(1)
+    unknown_field_77: Enum(9)
+    lactate_threshold_autodetect_enabled: Enum(1)
+    unknown_field_81: Enum(1)
+    unknown_field_82: Enum(1)
+    unknown_field_83: Enum(2)
+    unknown_field_84: Enum(1)
+    unknown_field_85: Enum(1)
+    unknown_field_87: Enum(1)
+    auto_activity_detect: SInt64(2147483647)
+    unknown_field_96: Enum(3)
+    unknown_field_97: UInt8z(3)
+    unknown_field_98: Enum(1)
+    unknown_field_101: Enum(2)
+    unknown_field_104: Array([Enum(0), Enum(33), Enum(4), Enum(16), Enum(6), Enum(3), Enum(2), Enum(30), Enum(7), Enum(13), Enum(11), Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid, Invalid])
+    unknown_field_107: Enum(1)
+    unknown_field_108: Enum(1)
+    unknown_field_109: Enum(1)
+    unknown_field_110: Enum(1)
+    unknown_field_111: Enum(1)
+    unknown_field_112: Enum(1)
+    unknown_field_116: Enum(0)
+    unknown_field_117: Enum(2)
+    unknown_field_124: UInt8(20)
+    unknown_field_125: UInt8(8)
+    unknown_field_126: Enum(1)
+    unknown_field_127: Enum(1)
+    unknown_field_128: Enum(1)
+    unknown_field_129: Enum(0)
+    unknown_field_130: Enum(1)
+    unknown_field_131: Enum(2)
+    unknown_field_132: Enum(0)
+    unknown_field_133: Enum(1)
+    tap_interface: String("off")
+    unknown_field_137: Enum(0)
+    unknown_field_138: Enum(0)
+    unknown_field_139: Enum(1)
+    unknown_field_141: UInt8(0)
+    unknown_field_142: UInt8(0)
+    unknown_field_143: UInt8(100)
+    unknown_field_144: Enum(1)
+    unknown_field_145: Enum(1)
+    unknown_field_148: Enum(1)
+    unknown_field_149: Enum(0)
+    unknown_field_151: Enum(0)
+    unknown_field_160: Enum(1)
+    unknown_field_161: Enum(0)
+    unknown_field_163: Enum(0)
+    unknown_field_164: UInt8(40)
+    unknown_field_167: String("")
+    unknown_field_168: Enum(0)
+    unknown_field_170: Array([UInt8(8), UInt8(7), UInt8(9), UInt8(13), UInt8(11), UInt8(12), UInt8(5), UInt8(6), UInt8(14), UInt8(10), UInt8(1), UInt8(4), UInt8(0), UInt8(2), UInt8(3)])
+    tap_sensitivity: String("medium")
+    unknown_field_177: UInt8(20)
+    unknown_field_178: UInt8(8)
+    unknown_field_179: Enum(1)
+    unknown_field_180: Enum(1)
+    unknown_field_181: Enum(0)
+    unknown_field_218: Enum(1)
+    unknown_field_219: Enum(1)
+
+=== 104 (15 total) ===
+  Record 0:
+    unknown_field_0: UInt16(4175)
+    unknown_field_2: UInt8(92)
+    unknown_field_3: SInt8(30)
+    unknown_field_4: SInt32(0)
+    unknown_field_253: UInt32(1126917978)
+  Record 1:
+    unknown_field_0: UInt16(4181)
+    unknown_field_2: UInt8(91)
+    unknown_field_3: SInt8(29)
+    unknown_field_4: SInt32(0)
+    unknown_field_253: UInt32(1126918278)
+  Record 2:
+    unknown_field_0: UInt16(4177)
+    unknown_field_2: UInt8(90)
+    unknown_field_3: SInt8(29)
+    unknown_field_4: SInt32(0)
+    unknown_field_253: UInt32(1126918578)
+
+=== lap (1 total) ===
+  Record 0:
+    event: String("lap")
+    event_type: String("stop")
+    start_time: Timestamp(2025-09-16T01:43:12+01:00)
+    total_elapsed_time: Float64(4645.266)
+    total_timer_time: Float64(4645.266)
+    total_distance: Float64(0.0)
+    total_cycles: UInt32(3)
+    total_calories: UInt16(201)
+    avg_heart_rate: UInt8(80)
+    max_heart_rate: UInt8(109)
+    total_ascent: UInt16(0)
+    total_descent: UInt16(0)
+    lap_trigger: String("session_end")
+    sport: String("diving")
+    sub_sport: String("single_gas_diving")
+    avg_temperature: SInt8(30)
+    max_temperature: SInt8(30)
+    enhanced_avg_speed: Float64(0.0)
+    enhanced_min_altitude: Float64(7.0)
+    enhanced_max_altitude: Float64(7.0)
+    min_temperature: SInt8(30)
+    unknown_field_155: UInt16(110)
+    total_fractional_ascent: Float64(0.0)
+    total_fractional_descent: Float64(0.0)
+    timestamp: Timestamp(2025-09-16T03:00:37+01:00)
+    message_index: SInt64(0)
+
+=== tank_update (1130 total) ===
+  Record 0:
+    sensor: SInt64(2772880835)
+    pressure: Float64(205.53) <-- PRESSURE/TANK RELATED
+    timestamp: Timestamp(2025-09-16T01:43:26+01:00)
+  Record 1:
+    sensor: SInt64(2504420992)
+    pressure: Float64(219.52) <-- PRESSURE/TANK RELATED
+    timestamp: Timestamp(2025-09-16T01:43:31+01:00)
+  Record 2:
+    sensor: SInt64(2772880835)
+    pressure: Float64(205.6) <-- PRESSURE/TANK RELATED
+    timestamp: Timestamp(2025-09-16T01:43:31+01:00)
+

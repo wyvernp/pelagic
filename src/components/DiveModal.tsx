@@ -3,15 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { logger } from '../utils/logger';
 import { useSettings } from './SettingsModal';
-import type { Dive, EquipmentSet } from '../types';
+import { formatDiveName } from '../utils/diveNames';
+import type { Dive, EquipmentSet, DiveTank, DiveSite } from '../types';
 import './AddTripModal.css'; // Reuse modal styles
-
-interface DiveSite {
-  id: number;
-  name: string;
-  lat: number;
-  lon: number;
-}
 
 export interface DiveFormData {
   location: string;
@@ -24,6 +18,7 @@ export interface DiveFormData {
   comments: string;
   latitude: number | null;
   longitude: number | null;
+  dive_site_id: number | null;
   is_fresh_water: boolean;
   is_boat_dive: boolean;
   is_drift_dive: boolean;
@@ -59,6 +54,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   const [diveSites, setDiveSites] = useState<DiveSite[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [selectedSiteId, setSelectedSiteId] = useState<number | null>(null);
   const locationContainerRef = useRef<HTMLDivElement>(null);
   
   // Equipment state
@@ -66,10 +62,14 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   const [availableCameraSets, setAvailableCameraSets] = useState<EquipmentSet[]>([]);
   const [selectedDiveSetIds, setSelectedDiveSetIds] = useState<number[]>([]);
   const [selectedCameraSetIds, setSelectedCameraSetIds] = useState<number[]>([]);
+  
+  // Tank/gas data
+  const [tanks, setTanks] = useState<DiveTank[]>([]);
 
-  // Search dive sites when location changes
+  // Search dive sites when location changes (server-side search)
   const handleLocationChange = (value: string) => {
     setLocation(value);
+    setSelectedSiteId(null); // Clear selected site when user types
     
     // Clear previous timeout
     if (searchTimeout) {
@@ -80,12 +80,10 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
     if (value.trim().length >= 2) {
       const timeout = setTimeout(async () => {
         try {
-          const sites = await invoke<DiveSite[]>('get_dive_sites');
-          const filtered = sites.filter(site => 
-            site.name.toLowerCase().includes(value.toLowerCase())
-          ).slice(0, 10); // Limit to 10 suggestions
-          setDiveSites(filtered);
-          setShowSuggestions(filtered.length > 0);
+          // Use server-side search instead of fetching all sites
+          const sites = await invoke<DiveSite[]>('search_dive_sites', { query: value });
+          setDiveSites(sites.slice(0, 15)); // Limit display to 15
+          setShowSuggestions(sites.length > 0);
         } catch (error) {
           logger.error('Failed to search dive sites:', error);
         }
@@ -102,6 +100,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
     setLocation(site.name);
     setLatitude(site.lat.toString());
     setLongitude(site.lon.toString());
+    setSelectedSiteId(site.id);
     setShowSuggestions(false);
     setDiveSites([]);
   };
@@ -136,6 +135,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       setIsDriftDive(dive.is_drift_dive);
       setIsNightDive(dive.is_night_dive);
       setIsTrainingDive(dive.is_training_dive);
+      setSelectedSiteId(dive.dive_site_id || null);
       
       // Load equipment sets
       loadEquipmentData(dive.id);
@@ -145,16 +145,18 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   // Load available equipment sets and current dive's assignments
   const loadEquipmentData = async (diveId: number) => {
     try {
-      const [diveSets, cameraSets, assignedSets] = await Promise.all([
+      const [diveSets, cameraSets, assignedSets, diveTanks] = await Promise.all([
         invoke<EquipmentSet[]>('get_equipment_sets_by_type', { setType: 'dive' }),
         invoke<EquipmentSet[]>('get_equipment_sets_by_type', { setType: 'camera' }),
         invoke<EquipmentSet[]>('get_equipment_sets_for_dive', { diveId }),
+        invoke<DiveTank[]>('get_dive_tanks', { diveId }),
       ]);
       
       setAvailableDiveSets(diveSets);
       setAvailableCameraSets(cameraSets);
       setSelectedDiveSetIds(assignedSets.filter(s => s.set_type === 'dive').map(s => s.id));
       setSelectedCameraSetIds(assignedSets.filter(s => s.set_type === 'camera').map(s => s.id));
+      setTanks(diveTanks);
     } catch (error) {
       logger.error('Failed to load equipment data:', error);
     }
@@ -176,8 +178,28 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       logger.error('Failed to save equipment sets:', error);
     }
     
+    // Determine dive_site_id: use selected site, or auto-create if location + GPS provided
+    let finalSiteId = selectedSiteId;
+    const lat = latitude ? parseFloat(latitude) : null;
+    const lon = longitude ? parseFloat(longitude) : null;
+    const loc = location.trim();
+    
+    if (!finalSiteId && loc && lat !== null && lon !== null) {
+      // Try to find or create a dive site
+      try {
+        finalSiteId = await invoke<number>('find_or_create_dive_site', {
+          name: loc,
+          lat,
+          lon,
+        });
+        logger.info('Auto-linked dive to site:', finalSiteId);
+      } catch (error) {
+        logger.error('Failed to find/create dive site:', error);
+      }
+    }
+    
     onSubmit(dive.id, {
-      location: location.trim(),
+      location: loc,
       ocean: ocean.trim(),
       visibility_m: visibility ? parseFloat(visibility) : null,
       buddy: buddy.trim(),
@@ -185,8 +207,9 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       guide: guide.trim(),
       instructor: instructor.trim(),
       comments: comments.trim(),
-      latitude: latitude ? parseFloat(latitude) : null,
-      longitude: longitude ? parseFloat(longitude) : null,
+      latitude: lat,
+      longitude: lon,
+      dive_site_id: finalSiteId,
       is_fresh_water: isFreshWater,
       is_boat_dive: isBoatDive,
       is_drift_dive: isDriftDive,
@@ -204,7 +227,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   const handleDelete = async () => {
     if (dive && onDelete) {
       const confirmed = await confirm(
-        `Are you sure you want to delete ${settings.diveNamePrefix ? `${settings.diveNamePrefix} #${dive.dive_number}` : `#${dive.dive_number}`}? This will also delete all photos associated with this dive.`,
+        `Are you sure you want to delete ${formatDiveName(settings.diveNamePrefix, dive.dive_number)}? This will also delete all photos associated with this dive.`,
         {
           title: 'Delete Dive',
           kind: 'warning',
@@ -230,7 +253,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
     <div className="modal-backdrop" onClick={handleBackdropClick}>
       <div className="modal modal-lg">
         <div className="modal-header">
-          <h2>Edit {settings.diveNamePrefix ? `${settings.diveNamePrefix} #${dive.dive_number}` : `#${dive.dive_number}`}</h2>
+          <h2>Edit {formatDiveName(settings.diveNamePrefix, dive.dive_number)}</h2>
           <button className="modal-close" onClick={onClose}>
             <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
               <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -260,10 +283,18 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
                   <span className="info-value">{dive.water_temp_c.toFixed(1)}°C</span>
                 </div>
               )}
-              {dive.nitrox_o2_percent && dive.nitrox_o2_percent > 21 && (
+              {tanks.length > 0 && tanks.some(t => t.o2_percent && t.o2_percent !== 21) && (
                 <div className="info-row">
                   <span className="info-label">Gas:</span>
-                  <span className="info-value">EAN{dive.nitrox_o2_percent}</span>
+                  <span className="info-value">
+                    {tanks.map(t => {
+                      if (!t.o2_percent || t.o2_percent === 21) return null;
+                      if (t.he_percent && t.he_percent > 0) {
+                        return `TX${t.o2_percent}/${t.he_percent}`;
+                      }
+                      return `EAN${t.o2_percent}`;
+                    }).filter(Boolean).join(', ') || 'Air'}
+                  </span>
                 </div>
               )}
             </div>
@@ -294,7 +325,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
                         >
                           <div className="suggestion-name">{site.name}</div>
                           <div className="suggestion-coords">
-                            {site.lat.toFixed(4)}, {site.lon.toFixed(4)}
+                            {site.lat.toFixed(6)}, {site.lon.toFixed(6)}
                           </div>
                         </div>
                       ))}
@@ -353,7 +384,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
                   placeholder="e.g., -8.5069"
                   min="-90"
                   max="90"
-                  step="0.0001"
+                  step="any"
                 />
               </div>
               
@@ -367,7 +398,7 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
                   placeholder="e.g., 115.2624"
                   min="-180"
                   max="180"
-                  step="0.0001"
+                  step="any"
                 />
               </div>
             </div>
