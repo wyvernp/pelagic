@@ -1,5 +1,16 @@
 import { create } from 'zustand';
-import type { Trip, Dive } from '../types';
+import type { Trip, Dive, Photo } from '../types';
+
+// Context menu state
+export interface ContextMenuState {
+  isOpen: boolean;
+  x: number;
+  y: number;
+  type: 'dive' | 'trip' | 'photo' | null;
+  targetId: number | null;
+  targetTripId?: number | null; // For dives, the trip they belong to
+  targetPhoto?: Photo | null; // For photos, the full photo object
+}
 
 // All modal types in the app
 export type ModalName =
@@ -19,7 +30,9 @@ export type ModalName =
   | 'diveComputer'
   | 'equipment'
   | 'bulkEditDive'
-  | 'photoViewer';
+  | 'photoViewer'
+  | 'setupWizard'
+  | 'shareCard';
 
 // Context that modals might need
 export interface ModalContext {
@@ -28,6 +41,9 @@ export interface ModalContext {
   addDiveTripId?: number | null;
   photoImportPaths?: string[];
   viewerPhotoId?: number | null;
+  // Share card context
+  shareType?: 'dive' | 'trip' | 'photo';
+  sharePhotoId?: number | null;
 }
 
 interface UIState {
@@ -38,6 +54,8 @@ interface UIState {
   // Walkthrough tour state
   isTourRunning: boolean;
   hasCompletedTour: boolean;
+  // Context menu state
+  contextMenu: ContextMenuState;
 }
 
 interface UIActions {
@@ -51,6 +69,9 @@ interface UIActions {
   startTour: () => void;
   endTour: (completed: boolean) => void;
   resetTour: () => void;
+  // Context menu actions
+  showContextMenu: (type: 'dive' | 'trip' | 'photo', targetId: number, x: number, y: number, targetTripId?: number, targetPhoto?: Photo) => void;
+  hideContextMenu: () => void;
 }
 
 type UIStore = UIState & UIActions;
@@ -79,6 +100,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
   activeModal: null,
   modalContext: {},
   sidebarWidth: getInitialSidebarWidth(),
+  contextMenu: {
+    isOpen: false,
+    x: 0,
+    y: 0,
+    type: null,
+    targetId: null,
+    targetTripId: null,
+  },
   isResizing: false,
   isTourRunning: false,
   hasCompletedTour: getHasCompletedTour(),
@@ -132,6 +161,32 @@ export const useUIStore = create<UIStore>((set, get) => ({
     localStorage.setItem('pelagic-settings', JSON.stringify(settings));
     set({ hasCompletedTour: false, isTourRunning: true });
   },
+
+  showContextMenu: (type, targetId, x, y, targetTripId, targetPhoto) =>
+    set({
+      contextMenu: {
+        isOpen: true,
+        x,
+        y,
+        type,
+        targetId,
+        targetTripId: targetTripId ?? null,
+        targetPhoto: targetPhoto ?? null,
+      },
+    }),
+
+  hideContextMenu: () =>
+    set({
+      contextMenu: {
+        isOpen: false,
+        x: 0,
+        y: 0,
+        type: null,
+        targetId: null,
+        targetTripId: null,
+        targetPhoto: null,
+      },
+    }),
 }));
 
 // Helper hook to check if a specific modal is open

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { confirmDialog } from './utils/dialogs';
 import { logger } from './utils/logger';
+import { formatDiveName } from './utils/diveNames';
 import {
   useNavigationStore,
   useDataStore,
@@ -25,13 +27,17 @@ import { StatisticsModal } from './components/StatisticsModal';
 import { ExportModal } from './components/ExportModal';
 import { SearchBar } from './components/SearchBar';
 import { BatchOperationsModal } from './components/BatchOperationsModal';
-import { SettingsModal, type AppSettings } from './components/SettingsModal';
+import { SettingsModal, useSettings, useGeminiApiKey, type AppSettings } from './components/SettingsModal';
 import { WelcomeModal } from './components/WelcomeModal';
 import { WalkthroughTour } from './components/WalkthroughTour';
 import { MapView } from './components/MapView';
 import { DiveComputerModal } from './components/DiveComputerModal';
 import { EquipmentModal } from './components/EquipmentModal';
 import { BulkEditDiveModal, type BulkDiveFormData } from './components/BulkEditDiveModal';
+import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
+import { MigrationScreen, type MigrationProgress } from './components/MigrationScreen';
+import { SetupWizardModal } from './components/SetupWizardModal';
+import { ShareCardModal } from './components/ShareCardModal';
 import type { Photo } from './types';
 
 // Check if we're in dev mode
@@ -97,6 +103,7 @@ function App() {
     isResizing,
     isTourRunning,
     hasCompletedTour,
+    contextMenu,
     openModal,
     closeModal,
     updateModalContext,
@@ -105,7 +112,35 @@ function App() {
     saveSidebarWidth,
     startTour,
     endTour,
+    showContextMenu,
+    hideContextMenu,
   } = useUIStore();
+
+  // Migration state - tracks if database migration is in progress
+  const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
+
+  // Listen for migration events from the backend
+  useEffect(() => {
+    let unlistenProgress: UnlistenFn | undefined;
+    let unlistenComplete: UnlistenFn | undefined;
+
+    const setupListeners = async () => {
+      unlistenProgress = await listen<MigrationProgress>('migration-progress', (event) => {
+        setMigrationProgress(event.payload);
+      });
+
+      unlistenComplete = await listen('migration-complete', () => {
+        setMigrationProgress(null);
+      });
+    };
+
+    setupListeners();
+
+    return () => {
+      unlistenProgress?.();
+      unlistenComplete?.();
+    };
+  }, []);
 
   // Sidebar resize handlers
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -205,6 +240,9 @@ function App() {
       const settings = JSON.parse(savedSettings) as AppSettings;
       if (!settings.hasCompletedWelcome) {
         openModal('welcome');
+      } else if (!settings.hasCompletedSetup) {
+        // Welcome done but setup wizard not completed — show it directly
+        openModal('setupWizard');
       } else if (isDev) {
         // In dev mode, auto-start tour even if welcome is completed
         setTimeout(() => {
@@ -733,12 +771,28 @@ function App() {
   const handleTourComplete = useCallback(() => {
     // In dev mode, don't persist completion so it shows every time
     endTour(!isDev);
-  }, [endTour]);
+    // After tour, show setup wizard if not completed
+    const savedSettings = localStorage.getItem('pelagic-settings');
+    const settings = savedSettings ? JSON.parse(savedSettings) as AppSettings : null;
+    if (!settings?.hasCompletedSetup) {
+      setTimeout(() => {
+        openModal('setupWizard');
+      }, 300);
+    }
+  }, [endTour, openModal]);
 
   const handleTourSkip = useCallback(() => {
     // Even when skipped, mark as completed (except in dev mode)
     endTour(!isDev);
-  }, [endTour]);
+    // After tour skip, also show setup wizard if not completed
+    const savedSettings = localStorage.getItem('pelagic-settings');
+    const settings = savedSettings ? JSON.parse(savedSettings) as AppSettings : null;
+    if (!settings?.hasCompletedSetup) {
+      setTimeout(() => {
+        openModal('setupWizard');
+      }, 300);
+    }
+  }, [endTour, openModal]);
 
   const handleMapSelectDive = useCallback((tripId: number, diveId: number) => {
     handleSelectTrip(tripId);
@@ -760,8 +814,441 @@ function App() {
     console.log('✅ App.tsx trips reloaded');
   }, [loadTrips]);
 
+  // Context menu handlers
+  const handleDiveContextMenu = useCallback((diveId: number, tripId: number, x: number, y: number) => {
+    showContextMenu('dive', diveId, x, y, tripId);
+  }, [showContextMenu]);
+
+  const handleTripContextMenu = useCallback((tripId: number, x: number, y: number) => {
+    showContextMenu('trip', tripId, x, y);
+  }, [showContextMenu]);
+
+  const handleMoveDiveToTrip = useCallback(async (diveId: number, newTripId: number, oldTripId: number) => {
+    try {
+      await invoke('move_dive_to_trip', { diveId, newTripId });
+      hideContextMenu();
+      // Invalidate both old and new trip caches
+      invalidateTripCache(oldTripId);
+      invalidateTripCache(newTripId);
+      // Reload dives if we're viewing one of the affected trips
+      if (selectedTripId === oldTripId || selectedTripId === newTripId) {
+        await loadDivesForTrip(selectedTripId);
+      }
+      // If we moved the currently selected dive, deselect it
+      if (selectedDiveId === diveId && selectedTripId === oldTripId) {
+        handleSelectDive(null);
+      }
+    } catch (error) {
+      logger.error('Failed to move dive:', error);
+      alert('Failed to move dive: ' + error);
+    }
+  }, [hideContextMenu, invalidateTripCache, selectedTripId, selectedDiveId, loadDivesForTrip, handleSelectDive]);
+
+  const handleContextMenuDeleteDive = useCallback(async (diveId: number) => {
+    const confirmed = await confirmDialog(
+      'Delete Dive',
+      'Are you sure you want to delete this dive?\n\nThis will also delete all photos and dive samples associated with it.',
+      { okLabel: 'Delete', kind: 'warning' }
+    );
+    if (confirmed) {
+      hideContextMenu();
+      await handleDeleteDive(diveId);
+    }
+  }, [hideContextMenu, handleDeleteDive]);
+
+  const handleContextMenuEditDive = useCallback((diveId: number) => {
+    hideContextMenu();
+    const dive = dives.find(d => d.id === diveId);
+    if (dive) {
+      handleEditDive(dive);
+    }
+  }, [hideContextMenu, dives, handleEditDive]);
+
+  const handleContextMenuDeleteTrip = useCallback(async (tripId: number) => {
+    const confirmed = await confirmDialog(
+      'Delete Trip',
+      'Are you sure you want to delete this trip?\n\nThis will also delete all dives and photos associated with it.',
+      { okLabel: 'Delete', kind: 'warning' }
+    );
+    if (confirmed) {
+      hideContextMenu();
+      await handleDeleteTrip(tripId);
+    }
+  }, [hideContextMenu, handleDeleteTrip]);
+
+  const handleContextMenuEditTrip = useCallback((tripId: number) => {
+    hideContextMenu();
+    const trip = trips.find(t => t.id === tripId);
+    if (trip) {
+      handleEditTrip(trip);
+    }
+  }, [hideContextMenu, trips, handleEditTrip]);
+
+  // Photo context menu handler
+  const handlePhotoContextMenu = useCallback((photo: Photo, x: number, y: number) => {
+    showContextMenu('photo', photo.id, x, y, photo.trip_id ?? undefined, photo);
+  }, [showContextMenu]);
+
+  // Settings hook - declared early as needed by context menu handlers
+  const settings = useSettings();
+  const { apiKey: geminiApiKey } = useGeminiApiKey();
+
+  // Photo context menu action handlers
+  const handleContextMenuAIIdentify = useCallback(async (photo: Photo) => {
+    hideContextMenu();
+    // Set this photo as selected and open species tag modal
+    setPhotoSelection(new Set([photo.id]));
+    openModal('species');
+  }, [hideContextMenu, setPhotoSelection, openModal]);
+
+  const handleContextMenuEditPhoto = useCallback(async (photo: Photo) => {
+    hideContextMenu();
+    try {
+      const editorPath = settings.defaultImageEditor || undefined;
+      await invoke('open_in_editor', { filePath: photo.file_path, editorPath });
+    } catch (error) {
+      logger.error('Failed to open in editor:', error);
+      alert('Failed to open photo in editor: ' + error);
+    }
+  }, [hideContextMenu, settings.defaultImageEditor]);
+
+  const handleContextMenuDeletePhoto = useCallback(async (photo: Photo) => {
+    // Check for RAW/processed pair
+    let photoIdsToDelete = [photo.id];
+    let confirmMessage = `Are you sure you want to delete this photo?\n\nThis will remove the photo from the database but will NOT delete the original file from disk.`;
+    
+    // If this is a processed photo, check for RAW version
+    if (photo.raw_photo_id) {
+      const rawPhoto: Photo | null = await invoke('get_raw_version', { photoId: photo.id });
+      if (rawPhoto) {
+        confirmMessage = `This photo has a linked RAW version.\n\nDelete both the processed and RAW versions?\n\nThis will remove both photos from the database but will NOT delete the original files from disk.`;
+        photoIdsToDelete = [photo.id, rawPhoto.id];
+      }
+    }
+    
+    // If this is a RAW photo, check for processed version
+    if (!photo.is_processed && photo.raw_photo_id === null) {
+      const processedPhoto: Photo | null = await invoke('get_processed_version', { photoId: photo.id });
+      if (processedPhoto) {
+        confirmMessage = `This RAW photo has a linked processed version.\n\nDelete both the RAW and processed versions?\n\nThis will remove both photos from the database but will NOT delete the original files from disk.`;
+        photoIdsToDelete = [photo.id, processedPhoto.id];
+      }
+    }
+
+    const confirmed = await confirmDialog(
+      'Delete Photo',
+      confirmMessage,
+      { okLabel: 'Delete', kind: 'warning' }
+    );
+
+    if (confirmed) {
+      hideContextMenu();
+      try {
+        await invoke('delete_photos', { photoIds: photoIdsToDelete });
+        clearPhotoSelection();
+        selectPhoto(null);
+        if (selectedTripId) {
+          invalidateTripCache(selectedTripId);
+        }
+        if (selectedDiveId) {
+          invalidateDiveCache(selectedDiveId);
+          await loadPhotosForDive(selectedDiveId);
+        } else if (selectedTripId) {
+          await loadPhotosForTrip(selectedTripId);
+        }
+      } catch (error) {
+        logger.error('Failed to delete photo:', error);
+        alert('Failed to delete photo: ' + error);
+      }
+    }
+  }, [hideContextMenu, clearPhotoSelection, selectPhoto, selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
+
+  const handleContextMenuMovePhoto = useCallback(async (photo: Photo, targetDiveId: number | null) => {
+    // Check for RAW/processed pair
+    let photoIdsToMove = [photo.id];
+    let confirmMessage = '';
+    
+    // If this is a processed photo, check for RAW version
+    if (photo.raw_photo_id) {
+      const rawPhoto: Photo | null = await invoke('get_raw_version', { photoId: photo.id });
+      if (rawPhoto) {
+        confirmMessage = `This photo has a linked RAW version. Move both photos?`;
+        photoIdsToMove = [photo.id, rawPhoto.id];
+      }
+    }
+    
+    // If this is a RAW photo, check for processed version
+    if (!photo.is_processed && photo.raw_photo_id === null) {
+      const processedPhoto: Photo | null = await invoke('get_processed_version', { photoId: photo.id });
+      if (processedPhoto) {
+        confirmMessage = `This RAW photo has a linked processed version. Move both photos?`;
+        photoIdsToMove = [photo.id, processedPhoto.id];
+      }
+    }
+
+    // If there's a pair, confirm before moving
+    if (confirmMessage) {
+      const confirmed = await confirmDialog('Move Photos', confirmMessage, { okLabel: 'Move Both' });
+      if (!confirmed) return;
+    }
+
+    hideContextMenu();
+    try {
+      await invoke('move_photos_to_dive', { photoIds: photoIdsToMove, diveId: targetDiveId });
+      if (selectedTripId) {
+        invalidateTripCache(selectedTripId);
+      }
+      if (selectedDiveId) {
+        invalidateDiveCache(selectedDiveId);
+        await loadPhotosForDive(selectedDiveId);
+      } else if (selectedTripId) {
+        await loadPhotosForTrip(selectedTripId);
+      }
+    } catch (error) {
+      logger.error('Failed to move photo:', error);
+      alert('Failed to move photo: ' + error);
+    }
+  }, [hideContextMenu, selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
+
+  const handleContextMenuTagSpecies = useCallback((photo: Photo) => {
+    hideContextMenu();
+    setPhotoSelection(new Set([photo.id]));
+    openModal('species');
+  }, [hideContextMenu, setPhotoSelection, openModal]);
+
+  const handleContextMenuTagGeneral = useCallback((photo: Photo) => {
+    hideContextMenu();
+    setPhotoSelection(new Set([photo.id]));
+    openModal('generalTag');
+  }, [hideContextMenu, setPhotoSelection, openModal]);
+
+  // Build context menu items based on current context menu state
+  const contextMenuItems = useMemo((): ContextMenuItem[] => {
+    if (!contextMenu.isOpen || !contextMenu.targetId) return [];
+
+    if (contextMenu.type === 'dive') {
+      const currentTripId = contextMenu.targetTripId;
+      const otherTrips = trips.filter(t => t.id !== currentTripId);
+      
+      const items: ContextMenuItem[] = [
+        {
+          label: 'Edit Dive',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuEditDive(contextMenu.targetId!),
+        },
+        {
+          label: 'Share to Social',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/>
+            </svg>
+          ),
+          onClick: () => {
+            hideContextMenu();
+            updateModalContext({ shareType: 'dive' });
+            openModal('shareCard');
+          },
+        },
+        {
+          label: 'Delete Dive',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuDeleteDive(contextMenu.targetId!),
+          danger: true,
+        },
+      ];
+
+      // Add "Move to Trip" submenu if there are other trips
+      if (otherTrips.length > 0) {
+        items.splice(1, 0, {
+          label: 'Move to Trip',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/>
+            </svg>
+          ),
+          onClick: () => {},
+          submenu: otherTrips.map(trip => ({
+            label: trip.name,
+            onClick: () => handleMoveDiveToTrip(contextMenu.targetId!, trip.id, currentTripId!),
+          })),
+        });
+      }
+
+      return items;
+    }
+
+    if (contextMenu.type === 'trip') {
+      return [
+        {
+          label: 'Edit Trip',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuEditTrip(contextMenu.targetId!),
+        },
+        {
+          label: 'Share to Social',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/>
+            </svg>
+          ),
+          onClick: () => {
+            hideContextMenu();
+            updateModalContext({ shareType: 'trip' });
+            openModal('shareCard');
+          },
+        },
+        {
+          label: 'Delete Trip',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuDeleteTrip(contextMenu.targetId!),
+          danger: true,
+        },
+      ];
+    }
+
+    if (contextMenu.type === 'photo' && contextMenu.targetPhoto) {
+      const photo = contextMenu.targetPhoto;
+      const currentDiveId = photo.dive_id;
+      const availableDives = dives.filter(d => d.id !== currentDiveId);
+      
+      const items: ContextMenuItem[] = [
+        {
+          label: 'AI Identify Species',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuAIIdentify(photo),
+          disabled: !geminiApiKey,
+        },
+        {
+          label: 'Tag Species',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58.55 0 1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41 0-.55-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuTagSpecies(photo),
+        },
+        {
+          label: 'Add Tag',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.63 5.84C17.27 5.33 16.67 5 16 5L5 5.01C3.9 5.01 3 5.9 3 7v10c0 1.1.9 1.99 2 1.99L16 19c.67 0 1.27-.33 1.63-.84L22 12l-4.37-6.16z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuTagGeneral(photo),
+        },
+        {
+          label: 'Open in Editor',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+            </svg>
+          ),
+          onClick: () => handleContextMenuEditPhoto(photo),
+        },
+      ];
+
+      // Add "Move to Dive" submenu if there are dives available
+      if (availableDives.length > 0 || currentDiveId !== null) {
+        const submenuItems: ContextMenuItem[] = [];
+        
+        // Add "Unassigned" option if currently assigned to a dive
+        if (currentDiveId !== null) {
+          submenuItems.push({
+            label: '(Unassigned)',
+            onClick: () => handleContextMenuMovePhoto(photo, null),
+          });
+        }
+        
+        // Add available dives
+        availableDives.forEach(dive => {
+          const diveName = formatDiveName(settings.diveNamePrefix, dive.dive_number);
+          submenuItems.push({
+            label: diveName,
+            onClick: () => handleContextMenuMovePhoto(photo, dive.id),
+          });
+        });
+
+        items.push({
+          label: 'Move to Dive',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/>
+            </svg>
+          ),
+          onClick: () => {},
+          submenu: submenuItems,
+        });
+      }
+
+      // Add Delete at the end
+      items.push({
+        label: 'Share to Social',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/>
+          </svg>
+        ),
+        onClick: () => {
+          hideContextMenu();
+          updateModalContext({ shareType: 'photo', sharePhotoId: photo.id });
+          openModal('shareCard');
+        },
+      });
+
+      // Add Delete at the end
+      items.push({
+        label: 'Delete',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+          </svg>
+        ),
+        onClick: () => handleContextMenuDeletePhoto(photo),
+        danger: true,
+      });
+
+      return items;
+    }
+
+    return [];
+  }, [contextMenu, trips, dives, geminiApiKey, handleContextMenuEditDive, handleContextMenuDeleteDive, handleMoveDiveToTrip, handleContextMenuEditTrip, handleContextMenuDeleteTrip, handleContextMenuAIIdentify, handleContextMenuTagSpecies, handleContextMenuTagGeneral, handleContextMenuEditPhoto, handleContextMenuMovePhoto, handleContextMenuDeletePhoto, hideContextMenu, openModal, updateModalContext]);
+
+  // Block default context menu on blank space
+  const handleAppContextMenu = useCallback((e: React.MouseEvent) => {
+    // Allow context menu on input fields
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      return;
+    }
+    e.preventDefault();
+  }, []);
+
   return (
-    <div className="app">
+    <div className="app" onContextMenu={handleAppContextMenu}>
+      {/* Migration screen - shows during database updates */}
+      {migrationProgress && (
+        <MigrationScreen progress={migrationProgress} />
+      )}
       <Header
         onImportPhotos={handleImportPhotos}
         onOpenStatistics={() => openModal('statistics')}
@@ -797,6 +1284,8 @@ function App() {
           bulkEditMode={bulkEditMode}
           selectedDiveIds={selectedDiveIds}
           onToggleDiveSelection={handleToggleDiveSelection}
+          onDiveContextMenu={handleDiveContextMenu}
+          onTripContextMenu={handleTripContextMenu}
           style={{ width: sidebarWidth }}
         />
         <div
@@ -832,6 +1321,8 @@ function App() {
           onSelectAllDives={handleSelectAllDives}
           onOpenBulkEditModal={() => openModal('bulkEditDive')}
           onAllTripPhotosLoaded={handleAllTripPhotosLoaded}
+          onDiveContextMenu={handleDiveContextMenu}
+          onPhotoContextMenu={handlePhotoContextMenu}
         />
         <RightPanel
           photo={selectedPhoto}
@@ -933,6 +1424,12 @@ function App() {
         isOpen={activeModal === 'welcome'}
         onComplete={handleWelcomeComplete}
       />
+      <SetupWizardModal
+        isOpen={activeModal === 'setupWizard'}
+        onComplete={() => {
+          closeModal();
+        }}
+      />
       <MapView
         isOpen={activeModal === 'map'}
         onClose={closeModal}
@@ -955,10 +1452,26 @@ function App() {
         onClose={closeModal}
         onSubmit={handleBulkEditSubmit}
       />
+      <ShareCardModal
+        isOpen={activeModal === 'shareCard'}
+        onClose={closeModal}
+        shareType={modalContext.shareType || 'photo'}
+        dive={selectedDive}
+        trip={selectedTrip}
+        photos={currentPhotos}
+        initialPhotoId={modalContext.sharePhotoId}
+      />
       <WalkthroughTour
         run={isTourRunning}
         onComplete={handleTourComplete}
         onSkip={handleTourSkip}
+      />
+      <ContextMenu
+        isOpen={contextMenu.isOpen}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={contextMenuItems}
+        onClose={hideContextMenu}
       />
     </div>
   );

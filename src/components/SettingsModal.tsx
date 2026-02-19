@@ -19,6 +19,7 @@ export interface AppSettings {
   defaultImageEditor: string; // Path to default editor, empty = system default
   diveNamePrefix: string; // Prefix for dive names, e.g., "Dive", "#", ".", etc.
   hasCompletedWelcome: boolean; // Whether user has completed the welcome setup
+  hasCompletedSetup: boolean; // Whether user has completed the setup wizard
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -28,6 +29,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultImageEditor: '',
   diveNamePrefix: 'Dive',
   hasCompletedWelcome: false,
+  hasCompletedSetup: false,
 };
 
 // Format dive name based on prefix type

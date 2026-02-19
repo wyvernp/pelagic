@@ -8,12 +8,35 @@ mod validation;
 use db::Database;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use tauri::Manager;
+use serde::Serialize;
+use tauri::{Emitter, Manager};
+use std::sync::OnceLock;
+use std::path::PathBuf;
 
 pub type DbPool = Pool<SqliteConnectionManager>;
 
 pub struct AppState {
     pub db: DbPool,
+}
+
+/// Global storage base path (set once at startup from store or default)
+static STORAGE_BASE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Get the storage base path (e.g., %LOCALAPPDATA%/Pelagic or custom)
+pub fn get_storage_base_path() -> PathBuf {
+    STORAGE_BASE_PATH.get().cloned().unwrap_or_else(|| {
+        let mut path = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+        path.push("Pelagic");
+        path
+    })
+}
+
+/// Migration progress event payload
+#[derive(Clone, Serialize)]
+pub struct MigrationProgress {
+    pub step: String,
+    pub current_version: i64,
+    pub target_version: i64,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +56,28 @@ pub fn run() {
             
             // Initialize database connection pool
             let startup_start = std::time::Instant::now();
+            
+            // Read custom storage path from store if set
+            {
+                use tauri_plugin_store::StoreExt;
+                if let Ok(store) = app.store("secure-settings.json") {
+                    if let Some(custom_path) = store.get("storagePath").and_then(|v| v.as_str().map(|s| s.to_string())) {
+                        if !custom_path.is_empty() {
+                            let path = PathBuf::from(&custom_path);
+                            std::fs::create_dir_all(&path).ok();
+                            let _ = STORAGE_BASE_PATH.set(path);
+                            log::info!("Using custom storage path: {}", custom_path);
+                        }
+                    }
+                }
+                // If no custom path was set, initialize with default
+                if STORAGE_BASE_PATH.get().is_none() {
+                    let mut default_path = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+                    default_path.push("Pelagic");
+                    let _ = STORAGE_BASE_PATH.set(default_path);
+                }
+            }
+            
             let db_path = Database::get_db_path();
             
             // Create parent directory if it doesn't exist
@@ -58,7 +103,33 @@ pub fn run() {
                 log::info!("Schema init took {:?}", schema_start.elapsed());
                 
                 let migration_start = std::time::Instant::now();
-                Database::run_migrations_on_conn(&conn).expect("Failed to run migrations");
+                
+                // Check if migrations are needed
+                let needs_migration = Database::needs_migration(&conn);
+                let current_version = Database::get_schema_version(&conn);
+                let target_version = Database::CURRENT_SCHEMA_VERSION;
+                
+                if needs_migration {
+                    log::info!("Database migration needed: v{} -> v{}", current_version, target_version);
+                    
+                    // Get main window handle for emitting events
+                    let app_handle = app.handle().clone();
+                    
+                    // Run migrations with progress reporting
+                    Database::run_migrations_on_conn_with_progress(&conn, |step| {
+                        let progress = MigrationProgress {
+                            step: step.to_string(),
+                            current_version,
+                            target_version,
+                        };
+                        // Emit to all windows - the frontend will listen for this
+                        let _ = app_handle.emit("migration-progress", progress);
+                    }).expect("Failed to run migrations");
+                    
+                    // Emit migration complete event
+                    let _ = app.handle().emit("migration-complete", ());
+                }
+                
                 log::info!("Migrations took {:?}", migration_start.elapsed());
                 
                 // Enable WAL mode for better concurrent read/write performance
@@ -98,6 +169,7 @@ pub fn run() {
             commands::get_dive,
             commands::update_dive,
             commands::delete_dive,
+            commands::move_dive_to_trip,
             commands::bulk_update_dives,
             commands::get_dive_samples,
             commands::get_tank_pressures,
@@ -218,9 +290,17 @@ pub fn run() {
             // External editor commands
             commands::detect_image_editors,
             commands::open_in_editor,
+            // Caption template commands
+            commands::get_caption_templates,
+            commands::save_caption_template,
+            commands::update_caption_template,
+            commands::delete_caption_template,
             // Secure settings commands
             commands::get_secure_setting,
             commands::set_secure_setting,
+            // Storage path commands
+            commands::get_storage_path,
+            commands::set_storage_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

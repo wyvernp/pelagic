@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
-import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank } from '../types';
+import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank, EquipmentSet } from '../types';
 import { useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import './RightPanel.css';
@@ -44,6 +44,8 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [additionalContext, setAdditionalContext] = useState('');
   const [tankPressures, setTankPressures] = useState<TankPressure[]>([]);
   const [diveTanks, setDiveTanks] = useState<DiveTank[]>([]);
+  const [diveEquipmentSets, setDiveEquipmentSets] = useState<EquipmentSet[]>([]);
+  const [cameraEquipmentSets, setCameraEquipmentSets] = useState<EquipmentSet[]>([]);
   const { apiKey: geminiApiKey } = useGeminiApiKey();
 
   // Load tags when photo changes (separate from rating to avoid unnecessary reloads)
@@ -62,14 +64,17 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     setRating(photo?.rating || 0);
   }, [photo?.id, photo?.rating]);
 
-  // Load tank data when dive changes
+  // Load tank data and equipment sets when dive changes
   useEffect(() => {
     if (dive) {
       loadTankPressures(dive.id);
       loadDiveTanks(dive.id);
+      loadEquipmentSets(dive.id);
     } else {
       setTankPressures([]);
       setDiveTanks([]);
+      setDiveEquipmentSets([]);
+      setCameraEquipmentSets([]);
     }
   }, [dive?.id]);
 
@@ -90,6 +95,18 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     } catch (error) {
       logger.error('Failed to load dive tanks:', error);
       setDiveTanks([]);
+    }
+  };
+
+  const loadEquipmentSets = async (diveId: number) => {
+    try {
+      const sets = await invoke<EquipmentSet[]>('get_equipment_sets_for_dive', { diveId });
+      setDiveEquipmentSets(sets.filter(s => s.set_type === 'dive'));
+      setCameraEquipmentSets(sets.filter(s => s.set_type === 'camera'));
+    } catch (error) {
+      logger.error('Failed to load equipment sets:', error);
+      setDiveEquipmentSets([]);
+      setCameraEquipmentSets([]);
     }
   };
 
@@ -842,14 +859,16 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
             )}
 
             {/* Equipment Section */}
-            {dive.dive_computer_model && (
+            {(dive.dive_computer_model || diveEquipmentSets.length > 0 || cameraEquipmentSets.length > 0) && (
               <div className="panel-section">
                 <h4 className="panel-section-title">Equipment</h4>
                 <dl className="info-list">
-                  <div className="info-item">
-                    <dt>Dive Computer</dt>
-                    <dd>{dive.dive_computer_model}</dd>
-                  </div>
+                  {dive.dive_computer_model && (
+                    <div className="info-item">
+                      <dt>Dive Computer</dt>
+                      <dd>{dive.dive_computer_model}</dd>
+                    </div>
+                  )}
                   {dive.dive_computer_serial && (
                     <div className="info-item">
                       <dt>Serial</dt>
@@ -857,6 +876,32 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                     </div>
                   )}
                 </dl>
+                {diveEquipmentSets.length > 0 && (
+                  <div className="equipment-sets-section">
+                    <label className="equipment-sets-label">🤿 Dive Gear</label>
+                    <div className="equipment-chips">
+                      {diveEquipmentSets.map(set => (
+                        <span key={set.id} className="equipment-chip">
+                          {set.name}
+                          {set.is_default && <span className="default-star">★</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {cameraEquipmentSets.length > 0 && (
+                  <div className="equipment-sets-section">
+                    <label className="equipment-sets-label">📷 Camera Gear</label>
+                    <div className="equipment-chips">
+                      {cameraEquipmentSets.map(set => (
+                        <span key={set.id} className="equipment-chip">
+                          {set.name}
+                          {set.is_default && <span className="default-star">★</span>}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -888,7 +933,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
             )}
 
             {/* People Section */}
-            {(dive.buddy || dive.divemaster || dive.instructor) && (
+            {(dive.buddy || dive.divemaster || dive.guide || dive.instructor) && (
               <div className="panel-section">
                 <h4 className="panel-section-title">People</h4>
                 <dl className="info-list">
@@ -898,16 +943,19 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                       <dd>{dive.buddy}</dd>
                     </div>
                   )}
-                  {dive.divemaster && (
+                  {(dive.divemaster || dive.guide || dive.instructor) && (
                     <div className="info-item">
-                      <dt>Divemaster</dt>
-                      <dd>{dive.divemaster}</dd>
-                    </div>
-                  )}
-                  {dive.instructor && (
-                    <div className="info-item">
-                      <dt>Instructor</dt>
-                      <dd>{dive.instructor}</dd>
+                      <dt>Guide / Instructor</dt>
+                      <dd className="personnel-display">
+                        <span className="personnel-name">
+                          {dive.divemaster || dive.guide || dive.instructor}
+                        </span>
+                        <span className="personnel-roles">
+                          {dive.divemaster && <span className="role-tag">DM</span>}
+                          {dive.guide && <span className="role-tag">Guide</span>}
+                          {dive.instructor && <span className="role-tag">Instructor</span>}
+                        </span>
+                      </dd>
                     </div>
                   )}
                 </dl>

@@ -12,6 +12,8 @@ interface DataState {
   // Caches to prevent re-fetching when navigating between trips
   divesCache: Map<number, Dive[]>;
   photosCache: Map<number, Photo[]>; // Key format: tripId or `dive_${diveId}`
+  // Cache version counters - increment to signal components to invalidate their local caches
+  tripCacheVersions: Map<number, number>;
   currentTripId: number | null;
   currentDiveId: number | null;
 }
@@ -44,6 +46,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
   thumbnailProgress: null,
   divesCache: new Map(),
   photosCache: new Map(),
+  tripCacheVersions: new Map(),
   currentTripId: null,
   currentDiveId: null,
 
@@ -171,15 +174,18 @@ export const useDataStore = create<DataStore>((set, get) => ({
 
   // Cache invalidation methods
   invalidateTripCache: (tripId) => {
-    const { divesCache, photosCache } = get();
+    const { divesCache, photosCache, tripCacheVersions } = get();
     const newDivesCache = new Map(divesCache);
     const newPhotosCache = new Map(photosCache);
+    const newTripCacheVersions = new Map(tripCacheVersions);
     
     newDivesCache.delete(tripId);
     newPhotosCache.delete(tripId);
+    // Increment version to signal components with local caches to refresh
+    newTripCacheVersions.set(tripId, (tripCacheVersions.get(tripId) || 0) + 1);
     
-    logger.debug(`Invalidated cache for trip ${tripId}`);
-    set({ divesCache: newDivesCache, photosCache: newPhotosCache });
+    logger.debug(`Invalidated cache for trip ${tripId}, version now ${newTripCacheVersions.get(tripId)}`);
+    set({ divesCache: newDivesCache, photosCache: newPhotosCache, tripCacheVersions: newTripCacheVersions });
   },
 
   invalidateDiveCache: (diveId) => {
@@ -197,6 +203,7 @@ export const useDataStore = create<DataStore>((set, get) => ({
     set({ 
       divesCache: new Map(), 
       photosCache: new Map(),
+      tripCacheVersions: new Map(),
       currentTripId: null,
       currentDiveId: null 
     });

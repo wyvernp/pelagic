@@ -204,6 +204,26 @@ pub fn bulk_update_dives(
     ).map_err(|e| e.to_string())
 }
 
+/// Move a dive to a different trip
+#[tauri::command]
+pub fn move_dive_to_trip(
+    state: State<AppState>,
+    dive_id: i64,
+    new_trip_id: i64,
+) -> Result<(), String> {
+    // Validate inputs
+    let mut v = Validator::new();
+    v.validate_id("dive_id", dive_id);
+    v.validate_id("new_trip_id", new_trip_id);
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.move_dive_to_trip(dive_id, new_trip_id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_dives_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Dive>, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
@@ -2469,6 +2489,63 @@ pub fn open_in_editor(file_path: String, editor_path: Option<String>) -> Result<
     Ok(())
 }
 
+// ==================== Caption Template Commands ====================
+
+use crate::db::CaptionTemplate;
+
+/// Get caption templates, optionally filtered by content type
+#[tauri::command]
+pub fn get_caption_templates(
+    state: State<AppState>,
+    content_type: Option<String>,
+) -> Result<Vec<CaptionTemplate>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.get_caption_templates(content_type.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Save a new caption template
+#[tauri::command]
+pub fn save_caption_template(
+    state: State<AppState>,
+    name: String,
+    template: String,
+    content_type: String,
+) -> Result<i64, String> {
+    // Validate content type
+    if !["photo", "dive", "trip"].contains(&content_type.as_str()) {
+        return Err("Invalid content type. Must be 'photo', 'dive', or 'trip'.".to_string());
+    }
+    
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.save_caption_template(&name, &template, &content_type).map_err(|e| e.to_string())
+}
+
+/// Update an existing caption template
+#[tauri::command]
+pub fn update_caption_template(
+    state: State<AppState>,
+    id: i64,
+    name: String,
+    template: String,
+) -> Result<(), String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.update_caption_template(id, &name, &template).map_err(|e| e.to_string())
+}
+
+/// Delete a caption template
+#[tauri::command]
+pub fn delete_caption_template(
+    state: State<AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.delete_caption_template(id).map_err(|e| e.to_string())
+}
+
 // ==================== Secure Settings Commands ====================
 
 use tauri_plugin_store::StoreExt;
@@ -2492,6 +2569,47 @@ pub fn set_secure_setting(app: tauri::AppHandle, key: String, value: String) -> 
         .map_err(|e| format!("Failed to open secure store: {}", e))?;
     
     store.set(&key, serde_json::json!(value));
+    store.save()
+        .map_err(|e| format!("Failed to save secure store: {}", e))?;
+    
+    Ok(())
+}
+
+// ==================== Storage Path Commands ====================
+
+/// Get the current storage path (database and thumbnails location)
+#[tauri::command]
+pub fn get_storage_path(app: tauri::AppHandle) -> Result<String, String> {
+    // Check if a custom path is saved in secure settings
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    
+    if let Some(custom_path) = store.get("storagePath").and_then(|v| v.as_str().map(|s| s.to_string())) {
+        if !custom_path.is_empty() {
+            return Ok(custom_path);
+        }
+    }
+    
+    // Return default path
+    let mut path = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    path.push("Pelagic");
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Set a custom storage path for database and thumbnails
+#[tauri::command]
+pub fn set_storage_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    // Validate the path exists or can be created
+    let storage_path = std::path::Path::new(&path);
+    if !storage_path.exists() {
+        std::fs::create_dir_all(storage_path)
+            .map_err(|e| format!("Failed to create storage directory: {}", e))?;
+    }
+    
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    
+    store.set("storagePath", serde_json::json!(path));
     store.save()
         .map_err(|e| format!("Failed to save secure store: {}", e))?;
     

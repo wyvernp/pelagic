@@ -165,13 +165,14 @@ pub struct EquipmentCategory {
     pub name: String,
     pub icon: Option<String>,
     pub sort_order: i32,
+    pub category_type: String,  // 'dive', 'camera', or 'both'
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Equipment {
     pub id: i64,
     pub category_id: i64,
-    pub name: String,
+    pub name: Option<String>,  // Optional - can use brand+model as display name
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
@@ -187,7 +188,8 @@ pub struct EquipmentWithCategory {
     pub id: i64,
     pub category_id: i64,
     pub category_name: String,
-    pub name: String,
+    pub category_type: String,  // 'dive', 'camera', or 'both'
+    pub name: Option<String>,
     pub brand: Option<String>,
     pub model: Option<String>,
     pub serial_number: Option<String>,
@@ -219,6 +221,17 @@ pub struct EquipmentSetWithItems {
     pub items: Vec<EquipmentWithCategory>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+// Social sharing types
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaptionTemplate {
+    pub id: i64,
+    pub name: String,
+    pub template: String,
+    pub content_type: String,  // 'photo', 'dive', or 'trip'
+    pub created_at: String,
 }
 
 // Search results
@@ -390,6 +403,21 @@ impl<'a> Db<'a> {
         self.conn.execute("DELETE FROM tank_pressures WHERE dive_id = ?", params![id])?;
         self.conn.execute("DELETE FROM dive_events WHERE dive_id = ?", params![id])?;
         self.conn.execute("DELETE FROM dives WHERE id = ?", params![id])?;
+        Ok(())
+    }
+    
+    /// Move a dive to a different trip
+    pub fn move_dive_to_trip(&self, dive_id: i64, new_trip_id: i64) -> Result<()> {
+        // Update the dive's trip_id
+        self.conn.execute(
+            "UPDATE dives SET trip_id = ?, updated_at = datetime('now') WHERE id = ?",
+            params![new_trip_id, dive_id],
+        )?;
+        // Also update any photos associated with this dive to the new trip
+        self.conn.execute(
+            "UPDATE photos SET trip_id = ?, updated_at = datetime('now') WHERE dive_id = ?",
+            params![new_trip_id, dive_id],
+        )?;
         Ok(())
     }
     
@@ -1579,8 +1607,8 @@ impl<'a> Db<'a> {
     // ====================== Equipment Operations ======================
 
     pub fn get_equipment_categories(&self) -> Result<Vec<EquipmentCategory>> {
-        let mut stmt = self.conn.prepare("SELECT id, name, icon, sort_order FROM equipment_categories ORDER BY sort_order, name")?;
-        let categories = stmt.query_map([], |row| Ok(EquipmentCategory { id: row.get(0)?, name: row.get(1)?, icon: row.get(2)?, sort_order: row.get(3)? }))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut stmt = self.conn.prepare("SELECT id, name, icon, sort_order, category_type FROM equipment_categories ORDER BY sort_order, name")?;
+        let categories = stmt.query_map([], |row| Ok(EquipmentCategory { id: row.get(0)?, name: row.get(1)?, icon: row.get(2)?, sort_order: row.get(3)?, category_type: row.get(4)? }))?.collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(categories)
     }
 
@@ -1602,13 +1630,13 @@ impl<'a> Db<'a> {
     pub fn get_all_equipment(&self) -> Result<Vec<EquipmentWithCategory>> {
         let mut stmt = self.conn.prepare(
             "SELECT e.id, e.category_id, e.name, e.brand, e.model, e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at,
-                    c.name as category_name
-             FROM equipment e LEFT JOIN equipment_categories c ON e.category_id = c.id ORDER BY c.sort_order, c.name, e.name"
+                    c.name as category_name, c.category_type
+             FROM equipment e LEFT JOIN equipment_categories c ON e.category_id = c.id ORDER BY c.sort_order, c.name, COALESCE(e.name, e.brand || ' ' || e.model)"
         )?;
         let equipment = stmt.query_map([], |row| Ok(EquipmentWithCategory {
             id: row.get(0)?, category_id: row.get(1)?, name: row.get(2)?, brand: row.get(3)?, model: row.get(4)?,
             serial_number: row.get(5)?, purchase_date: row.get(6)?, notes: row.get(7)?, is_retired: row.get::<_, i32>(8)? != 0, 
-            created_at: row.get(9)?, updated_at: row.get(10)?, category_name: row.get(11)?,
+            created_at: row.get(9)?, updated_at: row.get(10)?, category_name: row.get(11)?, category_type: row.get(12)?,
         }))?.collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(equipment)
     }
@@ -1616,7 +1644,7 @@ impl<'a> Db<'a> {
     pub fn get_equipment_by_category(&self, category_id: i64) -> Result<Vec<Equipment>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, category_id, name, brand, model, serial_number, purchase_date, notes, is_retired, created_at, updated_at
-             FROM equipment WHERE category_id = ? ORDER BY name"
+             FROM equipment WHERE category_id = ? ORDER BY COALESCE(name, brand || ' ' || model)"
         )?;
         let equipment = stmt.query_map([category_id], |row| Ok(Equipment {
             id: row.get(0)?, category_id: row.get(1)?, name: row.get(2)?, brand: row.get(3)?, model: row.get(4)?,
@@ -1629,7 +1657,7 @@ impl<'a> Db<'a> {
     pub fn get_equipment(&self, id: i64) -> Result<Option<EquipmentWithCategory>> {
         let mut stmt = self.conn.prepare(
             "SELECT e.id, e.category_id, e.name, e.brand, e.model, e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at,
-                    c.name as category_name
+                    c.name as category_name, c.category_type
              FROM equipment e LEFT JOIN equipment_categories c ON e.category_id = c.id WHERE e.id = ?"
         )?;
         let mut rows = stmt.query([id])?;
@@ -1637,7 +1665,7 @@ impl<'a> Db<'a> {
             Some(row) => Ok(Some(EquipmentWithCategory {
                 id: row.get(0)?, category_id: row.get(1)?, name: row.get(2)?, brand: row.get(3)?, model: row.get(4)?,
                 serial_number: row.get(5)?, purchase_date: row.get(6)?, notes: row.get(7)?, is_retired: row.get::<_, i32>(8)? != 0, 
-                created_at: row.get(9)?, updated_at: row.get(10)?, category_name: row.get(11)?,
+                created_at: row.get(9)?, updated_at: row.get(10)?, category_name: row.get(11)?, category_type: row.get(12)?,
             })),
             None => Ok(None),
         }
@@ -1706,16 +1734,16 @@ impl<'a> Db<'a> {
     fn get_equipment_in_set(&self, set_id: i64) -> Result<Vec<EquipmentWithCategory>> {
         let mut stmt = self.conn.prepare(
             "SELECT e.id, e.category_id, e.name, e.brand, e.model, e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at,
-                    c.name as category_name
+                    c.name as category_name, c.category_type
              FROM equipment e
              JOIN equipment_set_items esi ON e.id = esi.equipment_id
              LEFT JOIN equipment_categories c ON e.category_id = c.id
-             WHERE esi.set_id = ? ORDER BY c.sort_order, c.name, e.name"
+             WHERE esi.equipment_set_id = ? ORDER BY c.sort_order, c.name, COALESCE(e.name, e.brand || ' ' || e.model)"
         )?;
         let equipment = stmt.query_map([set_id], |row| Ok(EquipmentWithCategory {
             id: row.get(0)?, category_id: row.get(1)?, name: row.get(2)?, brand: row.get(3)?, model: row.get(4)?,
             serial_number: row.get(5)?, purchase_date: row.get(6)?, notes: row.get(7)?, is_retired: row.get::<_, i32>(8)? != 0,
-            created_at: row.get(9)?, updated_at: row.get(10)?, category_name: row.get(11)?,
+            created_at: row.get(9)?, updated_at: row.get(10)?, category_name: row.get(11)?, category_type: row.get(12)?,
         }))?.collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(equipment)
     }
@@ -1743,26 +1771,26 @@ impl<'a> Db<'a> {
     }
 
     pub fn delete_equipment_set(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM equipment_set_items WHERE set_id = ?", params![id])?;
+        self.conn.execute("DELETE FROM equipment_set_items WHERE equipment_set_id = ?", params![id])?;
         self.conn.execute("DELETE FROM equipment_sets WHERE id = ?", params![id])?;
         Ok(())
     }
 
     pub fn add_equipment_to_set(&self, set_id: i64, equipment_id: i64) -> Result<()> {
-        self.conn.execute("INSERT OR IGNORE INTO equipment_set_items (set_id, equipment_id) VALUES (?, ?)", params![set_id, equipment_id])?;
+        self.conn.execute("INSERT OR IGNORE INTO equipment_set_items (equipment_set_id, equipment_id) VALUES (?, ?)", params![set_id, equipment_id])?;
         Ok(())
     }
 
     pub fn remove_equipment_from_set(&self, set_id: i64, equipment_id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM equipment_set_items WHERE set_id = ? AND equipment_id = ?", params![set_id, equipment_id])?;
+        self.conn.execute("DELETE FROM equipment_set_items WHERE equipment_set_id = ? AND equipment_id = ?", params![set_id, equipment_id])?;
         Ok(())
     }
 
     pub fn set_equipment_set_items(&self, set_id: i64, equipment_ids: &[i64]) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM equipment_set_items WHERE set_id = ?", params![set_id])?;
+        tx.execute("DELETE FROM equipment_set_items WHERE equipment_set_id = ?", params![set_id])?;
         for &equipment_id in equipment_ids {
-            tx.execute("INSERT INTO equipment_set_items (set_id, equipment_id) VALUES (?, ?)", params![set_id, equipment_id])?;
+            tx.execute("INSERT INTO equipment_set_items (equipment_set_id, equipment_id) VALUES (?, ?)", params![set_id, equipment_id])?;
         }
         tx.commit()?;
         Ok(())
@@ -1812,6 +1840,51 @@ impl<'a> Db<'a> {
             })),
             None => Ok(None),
         }
+    }
+
+    // ====================== Caption Template Operations ======================
+
+    pub fn get_caption_templates(&self, content_type: Option<&str>) -> Result<Vec<CaptionTemplate>> {
+        if let Some(ct) = content_type {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, name, template, content_type, created_at FROM caption_templates WHERE content_type = ? ORDER BY name"
+            )?;
+            let templates = stmt.query_map([ct], |row| Ok(CaptionTemplate {
+                id: row.get(0)?, name: row.get(1)?, template: row.get(2)?,
+                content_type: row.get(3)?, created_at: row.get(4)?,
+            }))?.collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(templates)
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, name, template, content_type, created_at FROM caption_templates ORDER BY content_type, name"
+            )?;
+            let templates = stmt.query_map([], |row| Ok(CaptionTemplate {
+                id: row.get(0)?, name: row.get(1)?, template: row.get(2)?,
+                content_type: row.get(3)?, created_at: row.get(4)?,
+            }))?.collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(templates)
+        }
+    }
+
+    pub fn save_caption_template(&self, name: &str, template: &str, content_type: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO caption_templates (name, template, content_type) VALUES (?, ?, ?)",
+            params![name, template, content_type],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn update_caption_template(&self, id: i64, name: &str, template: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE caption_templates SET name = ?, template = ? WHERE id = ?",
+            params![name, template, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_caption_template(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM caption_templates WHERE id = ?", params![id])?;
+        Ok(())
     }
 
     // ====================== Additional Dive Import Methods ======================
@@ -1923,11 +1996,8 @@ impl Database {
     
     /// Get the database file path (public for async initialization)
     pub fn get_db_path() -> PathBuf {
-        // Use app data directory
-        let mut path = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("Pelagic");
-        path.push("pelagic.db");
-        path
+        let base = crate::get_storage_base_path();
+        base.join("pelagic.db")
     }
     
     /// Initialize schema on a raw connection (for async use via tokio-rusqlite)
@@ -2107,13 +2177,14 @@ impl Database {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 icon TEXT,
-                sort_order INTEGER NOT NULL DEFAULT 0
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                category_type TEXT NOT NULL DEFAULT 'dive'
             );
             
             CREATE TABLE IF NOT EXISTS equipment (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category_id INTEGER NOT NULL REFERENCES equipment_categories(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
+                name TEXT,
                 brand TEXT,
                 model TEXT,
                 serial_number TEXT,
@@ -2171,11 +2242,39 @@ impl Database {
     }
     
     // Current schema version - increment this when adding new migrations
-    const CURRENT_SCHEMA_VERSION: i64 = 2;
+    pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+    
+    /// Check if migrations are needed without running them
+    pub fn needs_migration(conn: &Connection) -> bool {
+        let current_version: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(0);
+        current_version < Self::CURRENT_SCHEMA_VERSION
+    }
+    
+    /// Get current schema version
+    pub fn get_schema_version(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(0)
+    }
     
     /// Run migrations on a raw connection (for async use via tokio-rusqlite)
     /// Uses version-based tracking to avoid repeated schema checks on every startup
     pub fn run_migrations_on_conn(conn: &Connection) -> Result<()> {
+        Self::run_migrations_on_conn_with_progress(conn, |_| {})
+    }
+    
+    /// Run migrations with progress callback
+    /// The callback receives the current step description
+    pub fn run_migrations_on_conn_with_progress<F>(conn: &Connection, mut progress: F) -> Result<()>
+    where
+        F: FnMut(&str),
+    {
         // Get current schema version (0 if table doesn't exist or is empty)
         let current_version: i64 = conn.query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_version",
@@ -2189,19 +2288,35 @@ impl Database {
         }
         
         log::info!("Running migrations from version {} to {}", current_version, Self::CURRENT_SCHEMA_VERSION);
+        progress("Checking database schema...");
         
         // For databases created before version tracking, check if they need legacy migrations
         // This only runs once - after that, version tracking takes over
         if current_version == 0 {
+            progress("Upgrading legacy database...");
             Self::run_legacy_migrations(conn)?;
         }
         
         // Version 1 -> 2: Add is_user_created column to dive_sites
         if current_version < 2 {
+            progress("Updating dive sites schema...");
             Self::run_migration_v2(conn)?;
         }
         
+        // Version 2 -> 3: Add category_type to equipment_categories, add Torches, split Accessories, make equipment.name nullable
+        if current_version < 3 {
+            progress("Updating equipment schema...");
+            Self::run_migration_v3(conn)?;
+        }
+        
+        // Version 3 -> 4: Add caption_templates table for social sharing
+        if current_version < 4 {
+            progress("Adding social sharing tables...");
+            Self::run_migration_v4(conn)?;
+        }
+        
         // Seed default equipment categories if table is empty
+        progress("Configuring equipment categories...");
         let categories_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM equipment_categories",
             [],
@@ -2210,30 +2325,32 @@ impl Database {
         
         if categories_count == 0 {
             conn.execute_batch(r#"
-                INSERT INTO equipment_categories (name, icon, sort_order) VALUES 
-                    ('Mask', '🥽', 1),
-                    ('Snorkel', '🤿', 2),
-                    ('Fins', '🦶', 3),
-                    ('Exposure Protection', '🧥', 4),
-                    ('BCD', '🎒', 5),
-                    ('Regulator', '💨', 6),
-                    ('Cylinder', '🔋', 7),
-                    ('Weights', '⚖️', 8),
-                    ('Computer & Gauges', '⌚', 9),
-                    ('Lighting', '🔦', 10),
-                    ('Camera Body', '📷', 11),
-                    ('Camera Housing', '📦', 12),
-                    ('Camera Lens', '🔍', 13),
-                    ('Wet Lens', '🔎', 14),
-                    ('Camera Port', '⭕', 15),
-                    ('Strobe & Video Light', '💡', 16),
-                    ('Arms & Clamps', '🦾', 17),
-                    ('Accessories', '🎒', 18);
+                INSERT INTO equipment_categories (name, icon, sort_order, category_type) VALUES 
+                    ('Mask', '🥽', 1, 'dive'),
+                    ('Snorkel', '🤿', 2, 'dive'),
+                    ('Fins', '🦶', 3, 'dive'),
+                    ('Exposure Protection', '🧥', 4, 'dive'),
+                    ('BCD', '🎒', 5, 'dive'),
+                    ('Regulator', '💨', 6, 'dive'),
+                    ('Cylinder', '🔋', 7, 'dive'),
+                    ('Weights', '⚖️', 8, 'dive'),
+                    ('Computer & Gauges', '⌚', 9, 'dive'),
+                    ('Torches', '🔦', 10, 'dive'),
+                    ('Camera Body', '📷', 11, 'camera'),
+                    ('Camera Housing', '📦', 12, 'camera'),
+                    ('Camera Lens', '🔍', 13, 'camera'),
+                    ('Wet Lens', '🔎', 14, 'camera'),
+                    ('Camera Port', '⭕', 15, 'camera'),
+                    ('Strobe & Video Light', '💡', 16, 'camera'),
+                    ('Arms & Clamps', '🦾', 17, 'camera'),
+                    ('Dive Accessories', '🎒', 18, 'dive'),
+                    ('Camera Accessories', '📸', 19, 'camera');
             "#)?;
         }
         
         // Data migrations - these check actual data state, not schema
         // They only run if data needs migrating and are idempotent
+        progress("Finalizing data migration...");
         Self::run_data_migrations(conn)?;
         
         // Record that we're now at current version
@@ -2318,6 +2435,151 @@ impl Database {
             log::info!("is_user_created column already exists, skipping");
         }
         
+        Ok(())
+    }
+    
+    /// Migration v3: Add category_type to equipment_categories, add Torches, split Accessories, make equipment.name nullable
+    fn run_migration_v3(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v3: equipment categories update...");
+        
+        // 1. Add category_type column if it doesn't exist
+        let has_category_type: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('equipment_categories') WHERE name = 'category_type'",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(false);
+        
+        if !has_category_type {
+            conn.execute(
+                "ALTER TABLE equipment_categories ADD COLUMN category_type TEXT NOT NULL DEFAULT 'dive'",
+                []
+            )?;
+            log::info!("Added category_type column to equipment_categories");
+            
+            // Update existing categories with correct types
+            conn.execute_batch(r#"
+                UPDATE equipment_categories SET category_type = 'camera' WHERE name IN (
+                    'Camera Body', 'Camera Housing', 'Camera Lens', 'Wet Lens', 
+                    'Camera Port', 'Strobe & Video Light', 'Arms & Clamps', 'Lighting'
+                );
+            "#)?;
+            log::info!("Updated existing categories with category_type");
+        }
+        
+        // 2. Add Torches category if it doesn't exist (for dive gear)
+        let has_torches: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM equipment_categories WHERE name = 'Torches'",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(false);
+        
+        if !has_torches {
+            conn.execute(
+                "INSERT INTO equipment_categories (name, icon, sort_order, category_type) VALUES ('Torches', '🔦', 10, 'dive')",
+                []
+            )?;
+            log::info!("Added Torches category");
+        }
+        
+        // 3. Rename 'Lighting' to 'Strobe & Video Light' if it exists as separate from that
+        // (or if it was the old catch-all lighting category, move it to camera)
+        // This is handled by the UPDATE above setting Lighting to camera type
+        
+        // 4. Split Accessories into Dive Accessories and Camera Accessories
+        let has_dive_accessories: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM equipment_categories WHERE name = 'Dive Accessories'",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(false);
+        
+        if !has_dive_accessories {
+            // Check if we have the old generic 'Accessories' category
+            let old_accessories_id: Option<i64> = conn.query_row(
+                "SELECT id FROM equipment_categories WHERE name = 'Accessories'",
+                [],
+                |row| row.get(0)
+            ).ok();
+            
+            if let Some(old_id) = old_accessories_id {
+                // Rename existing to 'Dive Accessories' and set type
+                conn.execute(
+                    "UPDATE equipment_categories SET name = 'Dive Accessories', category_type = 'dive' WHERE id = ?",
+                    [old_id]
+                )?;
+                log::info!("Renamed Accessories to Dive Accessories");
+            } else {
+                // Create new Dive Accessories category
+                conn.execute(
+                    "INSERT INTO equipment_categories (name, icon, sort_order, category_type) VALUES ('Dive Accessories', '🎒', 18, 'dive')",
+                    []
+                )?;
+            }
+            
+            // Add Camera Accessories
+            conn.execute(
+                "INSERT INTO equipment_categories (name, icon, sort_order, category_type) VALUES ('Camera Accessories', '📸', 19, 'camera')",
+                []
+            )?;
+            log::info!("Added Camera Accessories category");
+        }
+        
+        // 5. Split "Mask & Snorkel" into separate Mask and Snorkel categories
+        let has_mask_snorkel: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM equipment_categories WHERE name = 'Mask & Snorkel'",
+            [],
+            |row| row.get(0)
+        ).unwrap_or(false);
+        
+        if has_mask_snorkel {
+            // Get the old combined category's id and sort_order
+            let (old_id, old_sort): (i64, i32) = conn.query_row(
+                "SELECT id, sort_order FROM equipment_categories WHERE name = 'Mask & Snorkel'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?))
+            )?;
+            
+            // Rename existing to 'Mask' (keeps existing equipment assigned to it)
+            conn.execute(
+                "UPDATE equipment_categories SET name = 'Mask', icon = '🥽' WHERE id = ?",
+                [old_id]
+            )?;
+            log::info!("Renamed 'Mask & Snorkel' to 'Mask'");
+            
+            // Create new 'Snorkel' category right after Mask
+            conn.execute(
+                "INSERT INTO equipment_categories (name, icon, sort_order, category_type) VALUES ('Snorkel', '🤿', ?, 'dive')",
+                [old_sort + 1]
+            )?;
+            log::info!("Added Snorkel category");
+            
+            // Shift sort_order for categories after snorkel to make room
+            conn.execute(
+                "UPDATE equipment_categories SET sort_order = sort_order + 1 WHERE sort_order > ? AND name != 'Snorkel'",
+                [old_sort]
+            )?;
+        }
+        
+        log::info!("Migration v3 complete");
+        Ok(())
+    }
+    
+    /// Migration v4: Add caption_templates table for social sharing
+    fn run_migration_v4(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v4: adding caption_templates table...");
+        
+        // Create caption_templates table
+        conn.execute_batch(r#"
+            CREATE TABLE IF NOT EXISTS caption_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                template TEXT NOT NULL,
+                content_type TEXT NOT NULL CHECK(content_type IN ('photo', 'dive', 'trip')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_caption_templates_content_type ON caption_templates(content_type);
+        "#)?;
+        
+        log::info!("Migration v4 complete");
         Ok(())
     }
     
@@ -4910,7 +5172,7 @@ impl Database {
     /// Get all equipment categories
     pub fn get_equipment_categories(&self) -> Result<Vec<EquipmentCategory>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, icon, sort_order FROM equipment_categories ORDER BY sort_order, name"
+            "SELECT id, name, icon, sort_order, category_type FROM equipment_categories ORDER BY sort_order, name"
         )?;
         
         let categories = stmt.query_map([], |row| {
@@ -4919,6 +5181,7 @@ impl Database {
                 name: row.get(1)?,
                 icon: row.get(2)?,
                 sort_order: row.get(3)?,
+                category_type: row.get(4)?,
             })
         })?.collect::<Result<Vec<_>>>()?;
         
@@ -4952,11 +5215,11 @@ impl Database {
     /// Get all equipment items
     pub fn get_all_equipment(&self) -> Result<Vec<EquipmentWithCategory>> {
         let mut stmt = self.conn.prepare(
-            "SELECT e.id, e.category_id, c.name as category_name, e.name, e.brand, e.model,
+            "SELECT e.id, e.category_id, c.name as category_name, c.category_type, e.name, e.brand, e.model,
                     e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at
              FROM equipment e
              JOIN equipment_categories c ON e.category_id = c.id
-             ORDER BY c.sort_order, c.name, e.name"
+             ORDER BY c.sort_order, c.name, COALESCE(e.name, e.brand || ' ' || e.model)"
         )?;
         
         let equipment = stmt.query_map([], |row| {
@@ -4964,15 +5227,16 @@ impl Database {
                 id: row.get(0)?,
                 category_id: row.get(1)?,
                 category_name: row.get(2)?,
-                name: row.get(3)?,
-                brand: row.get(4)?,
-                model: row.get(5)?,
-                serial_number: row.get(6)?,
-                purchase_date: row.get(7)?,
-                notes: row.get(8)?,
-                is_retired: row.get::<_, i32>(9)? != 0,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                category_type: row.get(3)?,
+                name: row.get(4)?,
+                brand: row.get(5)?,
+                model: row.get(6)?,
+                serial_number: row.get(7)?,
+                purchase_date: row.get(8)?,
+                notes: row.get(9)?,
+                is_retired: row.get::<_, i32>(10)? != 0,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
             })
         })?.collect::<Result<Vec<_>>>()?;
         
@@ -4986,7 +5250,7 @@ impl Database {
                     is_retired, created_at, updated_at
              FROM equipment 
              WHERE category_id = ?
-             ORDER BY name"
+             ORDER BY COALESCE(name, brand || ' ' || model)"
         )?;
         
         let equipment = stmt.query_map([category_id], |row| {
@@ -5011,7 +5275,7 @@ impl Database {
     /// Get a single equipment item
     pub fn get_equipment(&self, id: i64) -> Result<Option<EquipmentWithCategory>> {
         let mut stmt = self.conn.prepare(
-            "SELECT e.id, e.category_id, c.name as category_name, e.name, e.brand, e.model,
+            "SELECT e.id, e.category_id, c.name as category_name, c.category_type, e.name, e.brand, e.model,
                     e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at
              FROM equipment e
              JOIN equipment_categories c ON e.category_id = c.id
@@ -5024,15 +5288,16 @@ impl Database {
                 id: row.get(0)?,
                 category_id: row.get(1)?,
                 category_name: row.get(2)?,
-                name: row.get(3)?,
-                brand: row.get(4)?,
-                model: row.get(5)?,
-                serial_number: row.get(6)?,
-                purchase_date: row.get(7)?,
-                notes: row.get(8)?,
-                is_retired: row.get::<_, i32>(9)? != 0,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                category_type: row.get(3)?,
+                name: row.get(4)?,
+                brand: row.get(5)?,
+                model: row.get(6)?,
+                serial_number: row.get(7)?,
+                purchase_date: row.get(8)?,
+                notes: row.get(9)?,
+                is_retired: row.get::<_, i32>(10)? != 0,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
             }))
         } else {
             Ok(None)
@@ -5162,7 +5427,7 @@ impl Database {
         if let Some(set) = set {
             // Get items in this set
             let mut stmt = self.conn.prepare(
-                "SELECT e.id, e.category_id, c.name as category_name, e.name, e.brand, e.model,
+                "SELECT e.id, e.category_id, c.name as category_name, c.category_type, e.name, e.brand, e.model,
                         e.serial_number, e.purchase_date, e.notes, e.is_retired, e.created_at, e.updated_at
                  FROM equipment e
                  JOIN equipment_categories c ON e.category_id = c.id
@@ -5176,15 +5441,16 @@ impl Database {
                     id: row.get(0)?,
                     category_id: row.get(1)?,
                     category_name: row.get(2)?,
-                    name: row.get(3)?,
-                    brand: row.get(4)?,
-                    model: row.get(5)?,
-                    serial_number: row.get(6)?,
-                    purchase_date: row.get(7)?,
-                    notes: row.get(8)?,
-                    is_retired: row.get::<_, i32>(9)? != 0,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
+                    category_type: row.get(3)?,
+                    name: row.get(4)?,
+                    brand: row.get(5)?,
+                    model: row.get(6)?,
+                    serial_number: row.get(7)?,
+                    purchase_date: row.get(8)?,
+                    notes: row.get(9)?,
+                    is_retired: row.get::<_, i32>(10)? != 0,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
                 })
             })?.collect::<Result<Vec<_>>>()?;
             

@@ -1137,9 +1137,8 @@ pub fn create_import_preview(
 
 /// Get the thumbnails directory path
 pub fn get_thumbnails_dir() -> PathBuf {
-    let mut path = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
-    path.push("Pelagic");
-    path.push("thumbnails");
+    let base = crate::get_storage_base_path();
+    let path = base.join("thumbnails");
     std::fs::create_dir_all(&path).ok();
     path
 }

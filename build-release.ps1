@@ -21,6 +21,9 @@
 .PARAMETER Platform
     Build only for specific platform: 'windows', 'mac', 'linux', or 'all' (default).
 
+.PARAMETER Upload
+    Upload the built MSI to a GitHub release after building.
+
 .EXAMPLE
     .\build-release.ps1
     # Bumps patch version and builds for all platforms
@@ -36,6 +39,10 @@
 .EXAMPLE
     .\build-release.ps1 -SkipBump -Platform windows
     # Builds Windows installer without version bump
+
+.EXAMPLE
+    .\build-release.ps1 -Upload
+    # Bumps patch version, builds, and uploads MSI to GitHub release
 #>
 
 param(
@@ -43,11 +50,18 @@ param(
     [switch]$Minor,
     [switch]$Patch,
     [switch]$SkipBump,
+    [switch]$Upload,
     [ValidateSet('windows', 'mac', 'linux', 'all')]
     [string]$Platform = 'all'
 )
 
 $ErrorActionPreference = "Stop"
+
+# Ensure MinGW gcc is on PATH for x86_64-pc-windows-gnu Rust target
+if (Test-Path "C:\msys64\mingw64\bin") {
+    $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+    Write-Host "Added MinGW to PATH" -ForegroundColor Gray
+}
 
 # File paths
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -226,6 +240,71 @@ if (Test-Path $BundlePath) {
         $RelPath = $_.FullName.Replace($BundlePath, "").TrimStart("\")
         $Size = "{0:N2} MB" -f ($_.Length / 1MB)
         Write-Host "  $RelPath ($Size)" -ForegroundColor White
+    }
+}
+
+# Upload to GitHub Release if requested
+if ($Upload) {
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "  Uploading to GitHub Release" -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host ""
+    
+    # Check if gh CLI is installed
+    if (-not (Get-Command "gh" -ErrorAction SilentlyContinue)) {
+        Write-Host "Error: GitHub CLI (gh) is not installed." -ForegroundColor Red
+        Write-Host "Install from: https://cli.github.com/" -ForegroundColor Yellow
+        exit 1
+    }
+    
+    # Check if authenticated
+    $AuthStatus = gh auth status 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Error: Not authenticated with GitHub CLI." -ForegroundColor Red
+        Write-Host "Run: gh auth login" -ForegroundColor Yellow
+        exit 1
+    }
+    
+    $TagName = "v$BuildVersion"
+    $ReleaseName = "Pelagic v$BuildVersion"
+    
+    # Find the MSI file
+    $MsiPath = Join-Path $BundlePath "msi"
+    $MsiFile = Get-ChildItem -Path $MsiPath -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+    
+    if (-not $MsiFile) {
+        Write-Host "Error: No MSI file found in $MsiPath" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "MSI file: $($MsiFile.Name)" -ForegroundColor White
+    Write-Host "Tag: $TagName" -ForegroundColor White
+    Write-Host ""
+    
+    # Check if release already exists
+    $ErrorActionPreference = "SilentlyContinue"
+    gh release view $TagName 2>$null | Out-Null
+    $ReleaseExists = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = "Stop"
+    
+    if ($ReleaseExists) {
+        Write-Host "Release $TagName already exists. Uploading asset..." -ForegroundColor Yellow
+        gh release upload $TagName $MsiFile.FullName --clobber
+    }
+    else {
+        Write-Host "Creating new release $TagName..." -ForegroundColor Yellow
+        gh release create $TagName $MsiFile.FullName --title $ReleaseName --generate-notes
+    }
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ""
+        Write-Host "Successfully uploaded to GitHub release!" -ForegroundColor Green
+        Write-Host "View at: https://github.com/wyvernp/pelagic/releases/tag/$TagName" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "Failed to upload to GitHub release" -ForegroundColor Red
+        exit 1
     }
 }
 

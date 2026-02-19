@@ -122,12 +122,13 @@ export interface EquipmentCategory {
   name: string;
   icon?: string;
   sort_order: number;
+  category_type: 'dive' | 'camera' | 'both';
 }
 
 export interface Equipment {
   id: number;
   category_id: number;
-  name: string;
+  name?: string;  // Optional - can use brand+model as display name
   brand?: string;
   model?: string;
   serial_number?: string;
@@ -140,6 +141,7 @@ export interface Equipment {
 
 export interface EquipmentWithCategory extends Equipment {
   category_name: string;
+  category_type: 'dive' | 'camera' | 'both';
 }
 
 export interface EquipmentSet {

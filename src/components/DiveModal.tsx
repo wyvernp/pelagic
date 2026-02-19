@@ -42,9 +42,11 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [buddy, setBuddy] = useState('');
-  const [divemaster, setDivemaster] = useState('');
-  const [guide, setGuide] = useState('');
-  const [instructor, setInstructor] = useState('');
+  // Combined personnel field with role checkboxes
+  const [personnelName, setPersonnelName] = useState('');
+  const [isDivemaster, setIsDivemaster] = useState(false);
+  const [isGuide, setIsGuide] = useState(false);
+  const [isInstructor, setIsInstructor] = useState(false);
   const [comments, setComments] = useState('');
   const [isFreshWater, setIsFreshWater] = useState(false);
   const [isBoatDive, setIsBoatDive] = useState(false);
@@ -126,9 +128,15 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       setLatitude(dive.latitude?.toString() || '');
       setLongitude(dive.longitude?.toString() || '');
       setBuddy(dive.buddy || '');
-      setDivemaster(dive.divemaster || '');
-      setGuide(dive.guide || '');
-      setInstructor(dive.instructor || '');
+      // Load personnel: pick name from whichever field is populated, set role flags
+      const dmName = dive.divemaster || '';
+      const guideName = dive.guide || '';
+      const instrName = dive.instructor || '';
+      const name = dmName || guideName || instrName;
+      setPersonnelName(name);
+      setIsDivemaster(!!dmName);
+      setIsGuide(!!guideName);
+      setIsInstructor(!!instrName);
       setComments(dive.comments || '');
       setIsFreshWater(dive.is_fresh_water);
       setIsBoatDive(dive.is_boat_dive);
@@ -203,9 +211,9 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
       ocean: ocean.trim(),
       visibility_m: visibility ? parseFloat(visibility) : null,
       buddy: buddy.trim(),
-      divemaster: divemaster.trim(),
-      guide: guide.trim(),
-      instructor: instructor.trim(),
+      divemaster: isDivemaster ? personnelName.trim() : '',
+      guide: isGuide ? personnelName.trim() : '',
+      instructor: isInstructor ? personnelName.trim() : '',
       comments: comments.trim(),
       latitude: lat,
       longitude: lon,
@@ -404,39 +412,45 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
             </div>
             
             <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="dive-divemaster">Divemaster</label>
+              <div className="form-group" style={{ flex: 2 }}>
+                <label htmlFor="dive-personnel">Guide / Instructor</label>
                 <input
-                  id="dive-divemaster"
+                  id="dive-personnel"
                   type="text"
-                  value={divemaster}
-                  onChange={(e) => setDivemaster(e.target.value)}
-                  placeholder="Divemaster name"
+                  value={personnelName}
+                  onChange={(e) => setPersonnelName(e.target.value)}
+                  placeholder="Name"
                 />
               </div>
               
-              <div className="form-group">
-                <label htmlFor="dive-guide">Guide</label>
-                <input
-                  id="dive-guide"
-                  type="text"
-                  value={guide}
-                  onChange={(e) => setGuide(e.target.value)}
-                  placeholder="Guide name"
-                />
-              </div>
-            </div>
-            
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="dive-instructor">Instructor</label>
-                <input
-                  id="dive-instructor"
-                  type="text"
-                  value={instructor}
-                  onChange={(e) => setInstructor(e.target.value)}
-                  placeholder="Instructor name"
-                />
+              <div className="form-group" style={{ flex: 1 }}>
+                <label>Role</label>
+                <div className="checkbox-group personnel-roles">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={isDivemaster}
+                      onChange={(e) => setIsDivemaster(e.target.checked)}
+                    />
+                    <span>DM</span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={isGuide}
+                      onChange={(e) => setIsGuide(e.target.checked)}
+                    />
+                    <span>Guide</span>
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={isInstructor}
+                      onChange={(e) => setIsInstructor(e.target.checked)}
+                    />
+                    <span>Instructor</span>
+                  </label>
+                </div>
               </div>
             </div>
             

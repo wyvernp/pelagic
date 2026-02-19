@@ -401,3 +401,88 @@
   color: var(--text-secondary);
   line-height: 1.6;
 }
+
+/* Equipment sets section */
+.equipment-sets-section {
+  margin-top: 12px;
+}
+
+.equipment-sets-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.equipment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.equipment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: rgba(0, 153, 204, 0.12);
+  border: 1px solid rgba(0, 153, 204, 0.25);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.equipment-chip .default-star {
+  color: #f5a623;
+  font-size: 10px;
+  margin-left: 2px;
+}
+
+/* Personnel display with role tags */
+.personnel-display {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.personnel-name {
+  color: var(--text-primary);
+}
+
+.personnel-roles {
+  display: flex;
+  gap: 4px;
+}
+
+.role-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(153, 102, 204, 0.15);
+  border: 1px solid rgba(153, 102, 204, 0.3);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #b794f6;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Personnel roles checkbox group in modals */
+.checkbox-group.personnel-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 0;
+  margin-top: 8px;
+}
+
+.checkbox-group.personnel-roles .checkbox-label {
+  flex: none;
+  font-size: 13px;
+}
+
+.checkbox-group.personnel-roles .checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}

@@ -19,6 +19,9 @@ interface SidebarProps {
   bulkEditMode?: boolean;
   selectedDiveIds?: Set<number>;
   onToggleDiveSelection?: (diveId: number) => void;
+  // Context menu props
+  onDiveContextMenu?: (diveId: number, tripId: number, x: number, y: number) => void;
+  onTripContextMenu?: (tripId: number, x: number, y: number) => void;
   style?: React.CSSProperties;
 }
 
@@ -35,6 +38,8 @@ export function Sidebar({
   bulkEditMode,
   selectedDiveIds,
   onToggleDiveSelection,
+  onDiveContextMenu,
+  onTripContextMenu,
   style,
 }: SidebarProps) {
   const settings = useSettings();
@@ -58,6 +63,18 @@ export function Sidebar({
     } else {
       onSelectDive(diveId);
     }
+  };
+
+  const handleDiveRightClick = (diveId: number, tripId: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onDiveContextMenu?.(diveId, tripId, e.clientX, e.clientY);
+  };
+
+  const handleTripRightClick = (tripId: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onTripContextMenu?.(tripId, e.clientX, e.clientY);
   };
 
   return (
@@ -89,7 +106,8 @@ export function Sidebar({
                     className={`trip-button ${isExpanded ? 'expanded' : ''} ${selectedTripId === trip.id && !selectedDiveId ? 'selected' : ''}`}
                     onClick={() => onSelectTrip(isExpanded && !selectedDiveId ? null : trip.id)}
                     onDoubleClick={() => onEditTrip(trip)}
-                    title="Click to expand, double-click to edit"
+                    onContextMenu={(e) => handleTripRightClick(trip.id, e)}
+                    title="Click to expand, double-click to edit, right-click for options"
                   >
                     <svg 
                       className={`trip-chevron ${isExpanded ? 'rotated' : ''}`}
@@ -120,6 +138,7 @@ export function Sidebar({
                             <button
                               className={`dive-button ${selectedDiveId === dive.id ? 'selected' : ''} ${bulkEditMode ? 'bulk-edit-mode' : ''} ${isSelected ? 'bulk-selected' : ''}`}
                               onClick={(e) => handleDiveClick(dive.id, e)}
+                              onContextMenu={(e) => handleDiveRightClick(dive.id, trip.id, e)}
                             >
                               {bulkEditMode && (
                                 <input 

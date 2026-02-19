@@ -138,18 +138,21 @@ export function DiveProfile({
   const innerHeight = height - margin.top - margin.bottom;
 
   const { xScale, yScale, pressureScale, tempScale } = useMemo(() => {
-    const maxTime = Math.max(...samples.map((s) => s.time_seconds));
-    const maxDepth = Math.max(...samples.map((s) => s.depth_m));
+    // Guard against empty samples or invalid dimensions
+    const maxTime = samples.length > 0 ? Math.max(...samples.map((s) => s.time_seconds)) : 1;
+    const maxDepth = samples.length > 0 ? Math.max(...samples.map((s) => s.depth_m)) : 1;
+    const safeInnerWidth = Math.max(innerWidth, 1);
+    const safeInnerHeight = Math.max(innerHeight, 1);
 
     const xScale = scaleLinear({
-      domain: [0, maxTime],
-      range: [0, innerWidth],
+      domain: [0, maxTime || 1],
+      range: [0, safeInnerWidth],
     });
 
     // Y scale is inverted (depth increases downward)
     const yScale = scaleLinear({
-      domain: [0, maxDepth * 1.1],
-      range: [0, innerHeight],
+      domain: [0, (maxDepth || 1) * 1.1],
+      range: [0, safeInnerHeight],
     });
 
     // Pressure scale (right axis) - starts high, goes low
@@ -164,7 +167,7 @@ export function DiveProfile({
     const minPressure = allPressures.length > 0 ? Math.min(...allPressures) : 0;
     const pressureScale = scaleLinear({
       domain: [maxPressure * 1.05, Math.max(0, minPressure - 10)],
-      range: [0, innerHeight],
+      range: [0, safeInnerHeight],
     });
 
     // Temperature scale - overlaid on depth area
@@ -174,7 +177,7 @@ export function DiveProfile({
     const tempRange = maxTemp - minTemp || 5;
     const tempScale = scaleLinear({
       domain: [minTemp - tempRange * 0.2, maxTemp + tempRange * 0.2],
-      range: [innerHeight, 0],
+      range: [safeInnerHeight, 0],
     });
 
     return { xScale, yScale, pressureScale, tempScale };
@@ -320,15 +323,17 @@ export function DiveProfile({
             numTicks={5}
           />
           
-          {/* Depth area fill */}
-          <AreaClosed
-            data={samples}
-            x={(d) => xScale(d.time_seconds)}
-            y={(d) => yScale(d.depth_m)}
-            yScale={yScale}
-            curve={curveMonotoneX}
-            fill="url(#depth-gradient)"
-          />
+          {/* Depth area fill - only render if we have samples */}
+          {samples.length > 0 && (
+            <AreaClosed
+              data={samples}
+              x={(d) => xScale(d.time_seconds)}
+              y={(d) => yScale(d.depth_m)}
+              yScale={yScale}
+              curve={curveMonotoneX}
+              fill="url(#depth-gradient)"
+            />
+          )}
           
           {/* Temperature line - drawn first so it's behind */}
           {hasTemp && tempSamples.length > 1 && (
@@ -344,15 +349,17 @@ export function DiveProfile({
             />
           )}
           
-          {/* Depth line */}
-          <LinePath
-            data={samples}
-            x={(d) => xScale(d.time_seconds)}
-            y={(d) => yScale(d.depth_m)}
-            stroke="var(--depth-primary)"
-            strokeWidth={2.5}
-            curve={curveMonotoneX}
-          />
+          {/* Depth line - only render if we have samples */}
+          {samples.length > 0 && (
+            <LinePath
+              data={samples}
+              x={(d) => xScale(d.time_seconds)}
+              y={(d) => yScale(d.depth_m)}
+              stroke="var(--depth-primary)"
+              strokeWidth={2.5}
+              curve={curveMonotoneX}
+            />
+          )}
           
           {/* Tank pressure lines - render each tank with its own color */}
           {hasTankPressures && tankSensors.map((tank) => (

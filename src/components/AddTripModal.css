@@ -264,17 +264,34 @@
 .checkbox-label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   font-size: 14px;
+  line-height: 1.2;
   color: var(--text-secondary);
 }
 
 .checkbox-label input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  margin: 0;
+  transform: translateY(1px);
   accent-color: var(--accent-color);
   cursor: pointer;
+}
+
+/* Modal-specific checkbox alignment (wins over other component CSS)
+   Use a 2-column grid so spacing is consistent everywhere. */
+.modal .checkbox-label {
+  display: inline-grid;
+  grid-template-columns: 16px auto;
+  column-gap: 6px;
+  align-items: center;
+}
+
+.modal .checkbox-label input[type="checkbox"] {
+  margin: 0;
+  transform: translateY(1px);
 }
 
 .checkbox-label:hover {
@@ -336,6 +353,35 @@
 .default-indicator {
   color: var(--accent-color);
   font-size: 12px;
+}
+
+/* Personnel roles checkbox group */
+.checkbox-group.personnel-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 0;
+  margin: 0;
+}
+
+.modal .checkbox-group.personnel-roles {
+  align-items: center;
+  padding: 8px 0;
+  margin-top: 0;
+}
+
+.modal .checkbox-group.personnel-roles .checkbox-label {
+  align-items: center;
+}
+
+.checkbox-group.personnel-roles .checkbox-label {
+  flex: none;
+  font-size: 13px;
+}
+
+.checkbox-group.personnel-roles .checkbox-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
 }
 
 /* Extra large modal for equipment */

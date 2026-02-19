@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Grid } from 'react-window';
 import { logger } from '../utils/logger';
 import { formatDiveName } from '../utils/diveNames';
+import { useDataStore } from '../stores/dataStore';
 import type { Dive, Photo, ViewMode, DiveWithDetails } from '../types';
 import { ImageLoader } from './ImageLoader';
 import { useSettings } from './SettingsModal';
@@ -15,6 +16,7 @@ interface VirtualizedPhotoCellProps {
   focusedIndex: number;
   onPhotoClick: (photoId: number, e: React.MouseEvent) => void;
   onPhotoDoubleClick: (photoId: number) => void;
+  onPhotoContextMenu?: (photo: Photo, x: number, y: number) => void;
   onFocus: (index: number) => void;
   columnCount: number;
 }
@@ -30,6 +32,7 @@ function VirtualizedPhotoCell({
   focusedIndex,
   onPhotoClick,
   onPhotoDoubleClick,
+  onPhotoContextMenu,
   onFocus,
   columnCount,
 }: {
@@ -64,6 +67,11 @@ function VirtualizedPhotoCell({
           onFocus(index);
         }}
         onDoubleClick={() => onPhotoDoubleClick(photo.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onPhotoContextMenu?.(photo, e.clientX, e.clientY);
+        }}
         onFocus={() => onFocus(index)}
         tabIndex={0}
         role="gridcell"
@@ -112,6 +120,9 @@ interface ContentGridProps {
   onToggleDiveSelection?: (diveId: number) => void;
   // Callback when all trip photos are loaded (for selection/viewer support)
   onAllTripPhotosLoaded?: (photos: Photo[]) => void;
+  // Context menu callbacks
+  onDiveContextMenu?: (diveId: number, tripId: number, x: number, y: number) => void;
+  onPhotoContextMenu?: (photo: Photo, x: number, y: number) => void;
 }
 
 export const ContentGrid = memo(function ContentGrid({
@@ -127,6 +138,8 @@ export const ContentGrid = memo(function ContentGrid({
   selectedDiveIds,
   onToggleDiveSelection,
   onAllTripPhotosLoaded,
+  onDiveContextMenu,
+  onPhotoContextMenu,
 }: ContentGridProps) {
   // Store dives with their pre-loaded details (stats + thumbnail paths)
   const [divesWithDetails, setDivesWithDetails] = useState<DiveWithDetails[]>([]);
@@ -147,6 +160,23 @@ export const ContentGrid = memo(function ContentGrid({
   const diveDetailsCache = useRef<Map<number, { details: DiveWithDetails[], photoCount: number, allPhotos?: Photo[] }>>(new Map());
   // Track current trip to detect changes
   const currentTripIdRef = useRef<number | null>(null);
+  // Track cache version to detect invalidations from dataStore
+  const lastCacheVersionRef = useRef<number | undefined>(undefined);
+  
+  // Subscribe to tripCacheVersion for current trip to detect when to clear local cache
+  const tripCacheVersion = useDataStore(
+    (state) => tripId ? state.tripCacheVersions.get(tripId) : undefined
+  );
+  
+  // Clear local cache when dataStore signals invalidation (version changes)
+  useEffect(() => {
+    if (tripId && tripCacheVersion !== undefined && lastCacheVersionRef.current !== undefined && tripCacheVersion !== lastCacheVersionRef.current) {
+      logger.debug(`Trip ${tripId} cache invalidated (version ${lastCacheVersionRef.current} -> ${tripCacheVersion}), clearing local cache`);
+      diveDetailsCache.current.delete(tripId);
+      currentTripIdRef.current = null; // Force refetch
+    }
+    lastCacheVersionRef.current = tripCacheVersion;
+  }, [tripId, tripCacheVersion]);
   
   // Batch size for progressive photo loading
   const PHOTO_BATCH_SIZE = 50;
@@ -470,6 +500,14 @@ export const ContentGrid = memo(function ContentGrid({
     }
   };
 
+  const handleDiveCardContextMenu = (diveId: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (tripId) {
+      onDiveContextMenu?.(diveId, tripId, e.clientX, e.clientY);
+    }
+  };
+
   return (
     <div className="content-grid-wrapper">
       {/* Dive cards when viewing a trip */}
@@ -487,6 +525,7 @@ export const ContentGrid = memo(function ContentGrid({
                 key={dive.id}
                 className={`grid-item dive-card ${bulkEditMode ? 'bulk-edit-mode' : ''} ${isSelected ? 'selected' : ''}`}
                 onClick={(e) => handleDiveCardClick(dive.id, e)}
+                onContextMenu={(e) => handleDiveCardContextMenu(dive.id, e)}
               >
                 {/* Selection checkbox in bulk edit mode */}
                 {bulkEditMode && (
@@ -635,6 +674,7 @@ export const ContentGrid = memo(function ContentGrid({
                     focusedIndex,
                     onPhotoClick: handlePhotoClick,
                     onPhotoDoubleClick: onOpenPhoto,
+                    onPhotoContextMenu,
                     onFocus: setFocusedIndex,
                     columnCount,
                   }}
@@ -667,6 +707,11 @@ export const ContentGrid = memo(function ContentGrid({
                 setFocusedIndex(index);
               }}
               onDoubleClick={() => onOpenPhoto(photo.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onPhotoContextMenu?.(photo, e.clientX, e.clientY);
+              }}
               onFocus={() => setFocusedIndex(index)}
               tabIndex={0}
               role="gridcell"

@@ -42,6 +42,9 @@ interface ContentAreaProps {
   onOpenBulkEditModal?: () => void;
   // All trip photos callback
   onAllTripPhotosLoaded?: (photos: Photo[]) => void;
+  // Context menu callbacks
+  onDiveContextMenu?: (diveId: number, tripId: number, x: number, y: number) => void;
+  onPhotoContextMenu?: (photo: Photo, x: number, y: number) => void;
 }
 
 export function ContentArea({
@@ -73,6 +76,8 @@ export function ContentArea({
   onSelectAllDives,
   onOpenBulkEditModal,
   onAllTripPhotosLoaded,
+  onDiveContextMenu,
+  onPhotoContextMenu,
 }: ContentAreaProps) {
   const [samples, setSamples] = useState<DiveSample[]>([]);
   const [sortField, setSortField] = useState<PhotoSortField>('capture_time');
@@ -664,6 +669,8 @@ export function ContentArea({
           selectedDiveIds={selectedDiveIds}
           onToggleDiveSelection={onToggleDiveSelection}
           onAllTripPhotosLoaded={onAllTripPhotosLoaded}
+          onDiveContextMenu={onDiveContextMenu}
+          onPhotoContextMenu={onPhotoContextMenu}
         />
       </div>
     </div>
