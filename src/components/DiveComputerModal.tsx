@@ -1,24 +1,23 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../utils/logger';
 import {
   getVendors,
   getProducts,
   findDescriptor,
   hasWebBluetooth,
-  hasWebSerial,
   DownloadManager,
   DownloadState,
   BluetoothDiscovery,
   TransportType,
-  BLETransport,
   USB_HID_DEVICES,
   type Dive as DCDive,
-  type DiveSample as DCDiveSample,
   type ProgressEvent,
   type DiscoveredDevice,
 } from '../../dive-computer-ts/src/index';
 import { SuuntoEonSteelWebHID, type DiveFile } from '../../dive-computer-ts/src/protocols/suunto-eonsteel-webhid';
+import { parseSuuntoSbemFile } from '../../dive-computer-ts/src/protocols/suunto-sbem-parser';
 import type { Dive, Trip } from '../types';
 import { DiveImportReviewModal, type DiveGroup } from './DiveImportReviewModal';
 import './DiveComputerModal.css';
@@ -42,7 +41,7 @@ interface DiveComputerModalProps {
 }
 
 type ConnectionType = 'bluetooth' | 'ble' | 'serial' | 'usb' | 'usbhid' | 'usbstorage';
-type ModalStep = 'choose-import-method' | 'select-device' | 'scan-bluetooth' | 'downloading' | 'complete' | 'error';
+type ModalStep = 'choose-import-method' | 'select-device' | 'scan-bluetooth' | 'downloading' | 'error';
 
 // Helper to check if connection type requires Bluetooth scan
 function requiresBluetoothScan(type: ConnectionType): boolean {
@@ -74,6 +73,16 @@ interface DownloadedDive extends DCDive {
     time_seconds: number;
     pressure_bar: number;
   }[];
+}
+
+// Info about a serial port from the Rust backend
+interface SerialPortInfo {
+  name: string;
+  description: string;
+  vid?: number;
+  pid?: number;
+  serial_number?: string;
+  manufacturer?: string;
 }
 
 // Convert dive-computer-ts Dive to Pelagic Dive format
@@ -161,7 +170,28 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
   // Managers
   const [downloadManager] = useState(() => new DownloadManager());
   const [discovery] = useState(() => new BluetoothDiscovery());
-  
+
+  // Listen for native download progress events from the Rust backend
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    if (step === 'downloading') {
+      listen<{ type: string; percent?: number; index?: number }>('dive-download-progress', (event) => {
+        const p = event.payload;
+        if (p.type === 'progress' && p.percent !== undefined) {
+          setProgress({ current: p.percent, maximum: 100 });
+        }
+        if (p.type === 'dive') {
+          setImportStatus(prev => ({
+            ...prev,
+            phase: 'downloading',
+            currentDive: (p.index ?? 0) + 1,
+            message: `Received dive ${(p.index ?? 0) + 1}`,
+          }));
+        }
+      }).then(fn => { unlisten = fn; });
+    }
+    return () => { unlisten?.(); };
+  }, [step]);  
   // Import from file functionality - uses review modal for consistency
   const handleImportFromFile = async () => {
     try {
@@ -216,7 +246,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           });
           
           setDownloadedDives(divesWithDuplicateCheck);
-          setStep('complete');
           openReviewModal();
         } else {
           setErrorMessage('No dives could be parsed from the selected files');
@@ -230,15 +259,78 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     }
   };
 
-  // Get available vendors and products
-  const vendors = useMemo(() => getVendors(), []);
-  const products = useMemo(() => selectedVendor ? getProducts(selectedVendor) : [], [selectedVendor]);
-  const descriptor = useMemo(() => 
-    selectedVendor && selectedProduct 
-      ? findDescriptor(selectedVendor, selectedProduct) 
-      : undefined,
-    [selectedVendor, selectedProduct]
-  );
+  // ── libdivecomputer device database ─────────────────────────────────
+  // Fetch the full list of supported dive computers from the Rust/libdc
+  // backend. This replaces the small hard-coded TS descriptor list with
+  // libdivecomputer's 300+ device database, while keeping the TS list as
+  // a fallback.
+  interface LibDCDevice {
+    vendor: string;
+    product: string;
+    family: number;
+    model: number;
+    transports: number;
+  }
+  const [libdcDevices, setLibdcDevices] = useState<LibDCDevice[]>([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      invoke<LibDCDevice[]>('get_supported_dive_computers')
+        .then(devices => setLibdcDevices(devices))
+        .catch(err => {
+          logger.warn('Failed to load libdivecomputer device list, falling back to built-in list:', err);
+          setLibdcDevices([]);
+        });
+    }
+  }, [isOpen]);
+
+  // Build vendor/product lists from libdc (primary) with TS fallback
+  const vendors = useMemo(() => {
+    if (libdcDevices.length > 0) {
+      const vendorSet = new Set(libdcDevices.map(d => d.vendor));
+      // Also include TS vendors for devices with working WebHID/BLE paths
+      for (const v of getVendors()) vendorSet.add(v);
+      return [...vendorSet].sort((a, b) => a.localeCompare(b));
+    }
+    return getVendors();
+  }, [libdcDevices]);
+
+  const products = useMemo(() => {
+    if (!selectedVendor) return [];
+    if (libdcDevices.length > 0) {
+      const libdcProducts = libdcDevices
+        .filter(d => d.vendor === selectedVendor)
+        .map(d => d.product);
+      // Also include TS products for this vendor
+      const tsProducts = getProducts(selectedVendor);
+      const productSet = new Set([...libdcProducts, ...tsProducts]);
+      return [...productSet].sort((a, b) => a.localeCompare(b));
+    }
+    return selectedVendor ? getProducts(selectedVendor) : [];
+  }, [selectedVendor, libdcDevices]);
+
+  // Descriptor: prefer the TS descriptor (which has working protocol code),
+  // fall back to a synthetic descriptor from libdc data for UI purposes.
+  const descriptor = useMemo(() => {
+    if (!selectedVendor || !selectedProduct) return undefined;
+    // Try TS descriptor first (has actual protocol implementations)
+    const tsDesc = findDescriptor(selectedVendor, selectedProduct);
+    if (tsDesc) return tsDesc;
+    // Fall back to libdc info shaped like a DCDescriptor
+    const libdcDevice = libdcDevices.find(
+      d => d.vendor === selectedVendor && d.product === selectedProduct
+    );
+    if (libdcDevice) {
+      return {
+        vendor: libdcDevice.vendor,
+        product: libdcDevice.product,
+        model: libdcDevice.model,
+        type: libdcDevice.family,
+        transports: libdcDevice.transports,
+      } as ReturnType<typeof findDescriptor>;
+    }
+    return undefined;
+  }, [selectedVendor, selectedProduct, libdcDevices]);
   
   // Check available connection types based on descriptor
   const availableConnections = useMemo(() => {
@@ -256,11 +348,11 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           available.push('bluetooth');
         }
       }
-      // Serial (RS232/USB-Serial cable)
-      if ((descriptor.transports & TransportType.SERIAL) && hasWebSerial()) {
+      // Serial (RS232/USB-Serial cable) — native via Rust, always available
+      if (descriptor.transports & TransportType.SERIAL) {
         available.push('serial');
       }
-      // USB HID
+      // USB HID — native via Rust hidapi, always available
       if (descriptor.transports & TransportType.USBHID) {
         available.push('usbhid');
       }
@@ -389,6 +481,8 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
       setExistingDives([]);
       setShowReviewModal(false);
       setAllTrips([]);
+      setSerialPorts([]);
+      setSelectedPort('');
       setImportStatus({
         phase: 'idle',
         currentDive: 0,
@@ -432,24 +526,27 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
 
   const handleProductChange = (product: string) => {
     setSelectedProduct(product);
-    // Auto-select first available connection type based on device capabilities
-    const desc = findDescriptor(selectedVendor, product);
+    setSelectedPort(''); // Reset serial port selection
+    // Auto-select connection type based on device capabilities
+    // Prefer native transports (serial, USBHID) since they go through Rust/libdivecomputer
+    const desc = findDescriptor(selectedVendor, product) 
+      || libdcDevices.find(d => d.vendor === selectedVendor && d.product === product);
     if (desc) {
-      // Prefer BLE over classic Bluetooth, then serial, then USB options
-      if ((desc.transports & TransportType.BLE) && hasWebBluetooth()) {
-        setConnectionType('ble');
-      } else if ((desc.transports & TransportType.BLUETOOTH) && hasWebBluetooth()) {
-        setConnectionType('bluetooth');
-      } else if ((desc.transports & TransportType.SERIAL) && hasWebSerial()) {
-        setConnectionType('serial');
-      } else if (desc.transports & TransportType.USBHID) {
+      const t = desc.transports;
+      if (t & TransportType.USBHID) {
         setConnectionType('usbhid');
-      } else if (desc.transports & TransportType.USB) {
+      } else if (t & TransportType.SERIAL) {
+        setConnectionType('serial');
+      } else if (t & TransportType.BLE) {
+        setConnectionType('ble');
+      } else if (t & TransportType.BLUETOOTH) {
+        setConnectionType('bluetooth');
+      } else if (t & TransportType.USB) {
         setConnectionType('usb');
-      } else if (desc.transports & TransportType.USBSTORAGE) {
+      } else if (t & TransportType.USBSTORAGE) {
         setConnectionType('usbstorage');
       } else {
-        setConnectionType('serial'); // fallback
+        setConnectionType('serial');
       }
     }
   };
@@ -460,43 +557,22 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     setStep('scan-bluetooth');
     
     try {
-      // For web bluetooth, we need to use the browser's device picker
-      if (hasWebBluetooth() && 'bluetooth' in navigator) {
-        try {
-          // Request device - this opens the browser's Bluetooth picker
-          const device = await (navigator as Navigator & { bluetooth: { requestDevice(options: RequestDeviceOptions): Promise<BluetoothDevice> } }).bluetooth.requestDevice({
-            acceptAllDevices: true,
-            // Note: In production, we'd filter by service UUIDs
-            // filters: [{ services: [...] }],
-          });
-          
-          // Create a discovered device from the selection
-          const discovered: DiscoveredDevice = {
-            address: device.id,
-            name: device.name,
-            isBLE: true,
-            vendor: selectedVendor,
-            product: selectedProduct,
-            descriptor,
-          };
-          
-          setDiscoveredDevices([discovered]);
-          setSelectedDevice(discovered);
-        } catch (err) {
-          if ((err as Error).name !== 'NotFoundError') {
-            throw err;
-          }
-          // User cancelled the picker
-        }
-      } else {
-        // Fallback for environments without web bluetooth
-        discovery.startBLEScan();
-        
-        // Auto-stop after 30 seconds
-        setTimeout(() => {
-          discovery.stopScan();
-          setIsScanning(false);
-        }, 30000);
+      // Use native Rust BLE scanning via libdivecomputer transport layer
+      interface NativeBleDevice { id: string; name: string; address: string; }
+      const nativeDevices = await invoke<NativeBleDevice[]>('scan_ble_devices', { durationSecs: 5 });
+      
+      const discovered: DiscoveredDevice[] = nativeDevices.map(d => ({
+        address: d.id, // peripheral ID for reconnect
+        name: d.name,
+        isBLE: true,
+        vendor: selectedVendor,
+        product: selectedProduct,
+        descriptor,
+      }));
+      
+      setDiscoveredDevices(discovered);
+      if (discovered.length === 1) {
+        setSelectedDevice(discovered[0]);
       }
     } catch (error) {
       setErrorMessage(`Failed to scan for devices: ${(error as Error).message}`);
@@ -511,66 +587,64 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     setIsScanning(false);
   }, [discovery]);
 
+  // Serial port selection state
+  const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>([]);
+  const [selectedPort, setSelectedPort] = useState<string>('');
+
+  // Fetch serial ports when serial connection type is selected
+  useEffect(() => {
+    if (isOpen && connectionType === 'serial') {
+      invoke<SerialPortInfo[]>('list_serial_ports')
+        .then(ports => {
+          setSerialPorts(ports);
+          if (ports.length === 1) setSelectedPort(ports[0].name);
+        })
+        .catch(err => logger.error('Failed to list serial ports:', err));
+    }
+  }, [isOpen, connectionType]);
+
   const startSerialConnection = useCallback(async () => {
     if (!descriptor) {
       setErrorMessage('Please select a dive computer model first');
       return;
     }
+    if (!selectedPort) {
+      setErrorMessage('Please select a serial port');
+      return;
+    }
+
+    setStep('downloading');
+    setDownloadedDives([]);
+    setProgress({ current: 0, maximum: 100 });
 
     try {
-      // Check if Web Serial is available
-      if (hasWebSerial() && 'serial' in navigator) {
-        // Request serial port from user
-        await (navigator as Navigator & { serial: { requestPort(): Promise<unknown> } }).serial.requestPort();
-        
-        // Create a device from the selected port
-        const discovered: DiscoveredDevice = {
-          address: 'serial-port',
-          name: `${selectedVendor} ${selectedProduct}`,
-          isBLE: false,
-          vendor: selectedVendor,
-          product: selectedProduct,
-          descriptor,
-        };
-        
-        setSelectedDevice(discovered);
-        
-        // Store the port for later use (we'll need to pass it to the transport)
-        // For now, go straight to download step
-        setStep('downloading');
-        setDownloadedDives([]);
-        setProgress({ current: 0, maximum: 100 });
-        
-        // Note: In a real implementation, we'd create a SerialTransport with the port
-        // For now, simulate the download process
-        const result = await downloadManager.download({
-          descriptor,
-          transport: new BLETransport('serial-simulation'), // This would be SerialTransport in real impl
-          forceDownload: false,
-          syncTime: true,
-        });
-        
-        if (result.success) {
-          setDownloadedDives(result.dives.map(d => ({ ...d, selected: true })));
-          setStep('complete');
-          openReviewModal();
-        } else if (result.error) {
-          setErrorMessage(result.error.message);
-          setStep('error');
-        }
-      } else {
-        setErrorMessage('Web Serial API is not available in this browser. Please use Chrome or Edge.');
+      // Call Rust backend to download via native serial + libdivecomputer
+      const result = await invoke<ParsedFileResult>('download_dives_serial', {
+        vendor: selectedVendor,
+        product: selectedProduct,
+        portName: selectedPort,
+      });
+
+      if (result.dives.length === 0) {
+        setErrorMessage('No dives found on the device.');
         setStep('error');
-      }
-    } catch (error) {
-      if ((error as Error).name === 'NotFoundError') {
-        // User cancelled the port picker
         return;
       }
-      setErrorMessage(`Failed to connect: ${(error as Error).message}`);
+
+      // Convert to DownloadedDive format
+      const converted = result.dives.map(parsed => {
+        const dd = convertParsedDiveToDownloadedDive(parsed);
+        const isDup = isDuplicateDive(dd);
+        return { ...dd, isDuplicate: isDup, selected: !isDup };
+      });
+
+      setDownloadedDives(converted);
+      openReviewModal();
+    } catch (error) {
+      setErrorMessage(`Download failed: ${error}`);
       setStep('error');
     }
-  }, [descriptor, selectedVendor, selectedProduct, downloadManager]);
+  }, [descriptor, selectedVendor, selectedProduct, selectedPort, isDuplicateDive]);
 
   const startUSBConnection = useCallback(async () => {
     if (!descriptor) {
@@ -596,33 +670,86 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
         // Use Suunto-specific WebHID protocol
         await downloadSuuntoViaUSB();
       } else {
-        // For other manufacturers, show not implemented message
+        // For other USB HID devices, use the Rust/libdivecomputer backend
         const knownDevice = USB_HID_DEVICES.find(
           d => d.vendor === selectedVendor && d.product === selectedProduct
         );
 
-        const hid = (navigator as Navigator & { hid: WebHID }).hid;
-        const filters: Array<{ vendorId: number; productId?: number }> = [];
+        // If we know the VID/PID, go directly to backend download
         if (knownDevice) {
-          filters.push({ vendorId: knownDevice.vendorId, productId: knownDevice.productId });
-        }
+          setStep('downloading');
+          setDownloadedDives([]);
+          setProgress({ current: 0, maximum: 100 });
 
-        const devices = await hid.requestDevice({ 
-          filters: filters.length > 0 ? filters : undefined 
-        });
-        
-        if (devices.length === 0) {
-          setErrorMessage('No device selected');
-          return;
-        }
+          try {
+            const result = await invoke<ParsedFileResult>('download_dives_usbhid', {
+              vendor: selectedVendor,
+              product: selectedProduct,
+              vid: knownDevice.vendorId,
+              pid: knownDevice.productId,
+            });
 
-        const hidDevice = devices[0];
-        setErrorMessage(
-          `Connected to ${hidDevice.productName || 'USB HID device'} (VID: 0x${hidDevice.vendorId.toString(16)}, PID: 0x${hidDevice.productId.toString(16)}). ` +
-          `USB HID protocol for ${selectedVendor} ${selectedProduct} is not yet implemented. ` +
-          `Try using Bluetooth LE if your device supports it.`
-        );
-        setStep('error');
+            if (result.dives.length === 0) {
+              setErrorMessage('No dives found on the device.');
+              setStep('error');
+              return;
+            }
+
+            const converted = result.dives.map(parsed => {
+              const dd = convertParsedDiveToDownloadedDive(parsed);
+              const isDup = isDuplicateDive(dd);
+              return { ...dd, isDuplicate: isDup, selected: !isDup };
+            });
+
+            setDownloadedDives(converted);
+            openReviewModal();
+          } catch (error) {
+            setErrorMessage(`Download failed: ${error}`);
+            setStep('error');
+          }
+        } else {
+          // Unknown VID/PID — prompt user to pick device from OS HID picker
+          const hid = (navigator as Navigator & { hid: WebHID }).hid;
+          const devices = await hid.requestDevice({});
+          
+          if (devices.length === 0) {
+            setErrorMessage('No device selected');
+            return;
+          }
+
+          const hidDevice = devices[0];
+          
+          setStep('downloading');
+          setDownloadedDives([]);
+          setProgress({ current: 0, maximum: 100 });
+
+          try {
+            const result = await invoke<ParsedFileResult>('download_dives_usbhid', {
+              vendor: selectedVendor,
+              product: selectedProduct,
+              vid: hidDevice.vendorId,
+              pid: hidDevice.productId,
+            });
+
+            if (result.dives.length === 0) {
+              setErrorMessage('No dives found on the device.');
+              setStep('error');
+              return;
+            }
+
+            const converted = result.dives.map(parsed => {
+              const dd = convertParsedDiveToDownloadedDive(parsed);
+              const isDup = isDuplicateDive(dd);
+              return { ...dd, isDuplicate: isDup, selected: !isDup };
+            });
+
+            setDownloadedDives(converted);
+            openReviewModal();
+          } catch (error) {
+            setErrorMessage(`Download failed: ${error}`);
+            setStep('error');
+          }
+        }
       }
     } catch (error) {
       if ((error as Error).name === 'NotFoundError') {
@@ -712,7 +839,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
 
       logger.debug(`✅ Converted ${convertedDives.length} dives for display`);
       setDownloadedDives(convertedDives);
-      setStep('complete');
       openReviewModal();
 
     } catch (error) {
@@ -723,367 +849,13 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     }
   }, []);
 
-  /**
-   * Parse a Suunto SBEM (Suunto Binary Encoded Message) .LOG file
-   * Based on libdivecomputer's suunto_eonsteel_parser.c
-   * 
-   * SBEM format:
-   * - "SBEM" + 4 NUL bytes header
-   * - Entries: 0x00, textLen, typeID(2), "<PTH>path\n<FRM>format\n<MOD>mod"
-   * - Data follows: typeID(1-2 bytes), dataLen, data bytes
-   * 
-   * Duration comes from accumulated sample time deltas (uint16 ms)
-   * Max depth comes from maximum sample depth value (uint16 cm)
-   * 
-   * Key insight: Sample data uses GRP (group) entries where a single type ID
-   * contains packed data from multiple sub-types (e.g., time + depth + temp + ...)
-   */
+  // Parse Suunto SBEM .LOG files — delegates to the library module
   const parseSuuntoDiveFile = (diveFile: DiveFile): DCDive => {
-    const timestamp = diveFile.timestamp;
-    const data = diveFile.data;
-    
-    logger.debug(`📄 Parsing Suunto LOG file: ${diveFile.name}, ${data.length} bytes`);
-    
-    // Default values
-    let maxDepthCm = 0;
-    let durationMs = 0;
-    let minTempDeciC: number | null = null;
-    const o2Percent = 21;
-    
-    // Check for SBEM header
-    const hasSBEM = data.length > 8 && 
-      String.fromCharCode(data[0], data[1], data[2], data[3]) === 'SBEM';
-    
-    if (!hasSBEM) {
-      logger.warn('   No SBEM header found');
-      return createDefaultDive(timestamp, diveFile.name);
-    }
-    
-    // Build type descriptor map and group map
-    const typeDescs = new Map<number, {path: string, format: string, size: number}>();
-    const groups = new Map<number, number[]>(); // groupId -> [memberId, ...]
-    
-    // Parse all entries (descriptors interleaved with data)
-    let pos = 8; // Skip "SBEM" + 4 NULs
-    
-    // Helper to skip/parse a data entry
-    const parseDataEntry = (startPos: number): { typeId: number; dataStart: number; dataLen: number; nextPos: number } | null => {
-      const firstByte = data[startPos];
-      if (firstByte === 0) return null; // This is a descriptor, not data
-      
-      let typeId: number;
-      let dataLenOffset: number;
-      
-      if (firstByte === 0xff) {
-        if (startPos + 3 > data.length) return null;
-        typeId = data[startPos + 1] | (data[startPos + 2] << 8);
-        dataLenOffset = startPos + 3;
-      } else {
-        typeId = firstByte;
-        dataLenOffset = startPos + 1;
-      }
-      
-      if (dataLenOffset >= data.length) return null;
-      
-      let dataLen = data[dataLenOffset];
-      let dataStart = dataLenOffset + 1;
-      
-      if (dataLen === 0xff) {
-        if (dataLenOffset + 5 > data.length) return null;
-        dataLen = data[dataLenOffset + 1] | (data[dataLenOffset + 2] << 8) | 
-                  (data[dataLenOffset + 3] << 16) | (data[dataLenOffset + 4] << 24);
-        dataStart = dataLenOffset + 5;
-      }
-      
-      if (dataStart + dataLen > data.length || dataLen > 100000) return null;
-      
-      return { typeId, dataStart, dataLen, nextPos: dataStart + dataLen };
-    };
-    
-    // First pass: collect all descriptors (they're interleaved with data)
-    while (pos < data.length - 4) {
-      if (data[pos] === 0) {
-        // Descriptor entry
-        let textLen = data[pos + 1];
-        let headerLen = 2;
-        
-        if (textLen === 0xff) {
-          textLen = data[pos + 2] | (data[pos + 3] << 8) | (data[pos + 4] << 16) | (data[pos + 5] << 24);
-          headerLen = 6;
-        }
-        
-        if (textLen < 3 || pos + headerLen + textLen > data.length) {
-          pos++;
-          continue;
-        }
-        
-        const typeId = data[pos + headerLen] | (data[pos + headerLen + 1] << 8);
-        const descStart = pos + headerLen + 2;
-        const descEnd = pos + headerLen + textLen;
-        
-        if (data[descStart] === 0x3c) { // '<'
-          const descText = String.fromCharCode(...data.slice(descStart, descEnd));
-          
-          // Check for GRP (group) entries
-          const grpMatch = descText.match(/<GRP>([0-9,]+)/);
-          if (grpMatch) {
-            const memberIds = grpMatch[1].split(',').map(Number);
-            groups.set(typeId, memberIds);
-          }
-          
-          // Parse PTH/FRM
-          const pthMatch = descText.match(/<PTH>([^<\n]+)/);
-          const frmMatch = descText.match(/<FRM>([^<\n]+)/);
-          
-          if (pthMatch) {
-            const format = frmMatch ? frmMatch[1] : '';
-            let size = 0;
-            if (format.startsWith('bool') || format.startsWith('enum')) size = 1;
-            else if (format.includes('8')) size = 1;
-            else if (format.includes('16')) size = 2;
-            else if (format.includes('32')) size = 4;
-            
-            typeDescs.set(typeId, { path: pthMatch[1], format, size });
-          }
-        }
-        
-        pos = descEnd;
-      } else {
-        // Data entry - skip for now
-        const entry = parseDataEntry(pos);
-        if (entry) {
-          pos = entry.nextPos;
-        } else {
-          pos++;
-        }
-      }
-    }
-    
-    logger.debug(`   Found ${typeDescs.size} descriptors, ${groups.size} groups`);
-    
-    // Find sample-related type IDs
-    let timeTypeId = -1;
-    let depthTypeId = -1;
-    let tempTypeId = -1;
-    
-    for (const [id, desc] of typeDescs) {
-      if (desc.path.includes('Samples') && desc.path.includes('+Sample.Time')) timeTypeId = id;
-      if (desc.path.includes('Samples') && desc.path.endsWith('.Sample.Depth')) depthTypeId = id;
-      if (desc.path.includes('Samples') && desc.path.endsWith('.Sample.Temperature')) tempTypeId = id;
-    }
-    
-    // Find which group contains the sample data
-    let sampleGroupId = -1;
-    let timeOffsetInGroup = -1;
-    let depthOffsetInGroup = -1;
-    let tempOffsetInGroup = -1;
-    
-    // Find cylinder pressure type
-    let pressureTypeId = -1;
-    for (const [id, desc] of typeDescs) {
-      if (desc.path.includes('Cylinders') && desc.path.endsWith('.Pressure')) {
-        pressureTypeId = id;
-      }
-    }
-    
-    // Find which group contains cylinder pressure
-    let cylinderGroupId = -1;
-    let pressureOffsetInGroup = -1;
-    
-    for (const [groupId, members] of groups) {
-      const timeIdx = members.indexOf(timeTypeId);
-      const depthIdx = members.indexOf(depthTypeId);
-      
-      if (timeIdx >= 0 && depthIdx >= 0) {
-        sampleGroupId = groupId;
-        // Calculate byte offsets (each member is 2 bytes for uint16/int16)
-        timeOffsetInGroup = timeIdx * 2;
-        depthOffsetInGroup = depthIdx * 2;
-        
-        const tempIdx = members.indexOf(tempTypeId);
-        if (tempIdx >= 0) tempOffsetInGroup = tempIdx * 2;
-        
-        logger.debug(`   Sample group ID: ${sampleGroupId}, members: [${members.join(',')}]`);
-        logger.debug(`   Offsets - time: ${timeOffsetInGroup}, depth: ${depthOffsetInGroup}, temp: ${tempOffsetInGroup}`);
-      }
-      
-      // Check for cylinder group (contains pressure)
-      const pressIdx = members.indexOf(pressureTypeId);
-      if (pressIdx >= 0) {
-        cylinderGroupId = groupId;
-        // Gas number is 1 byte (uint8), pressure is 2 bytes (uint16)
-        // Members are [gasNumber, pressure], so offset for pressure is 1 byte
-        pressureOffsetInGroup = 1; // After the 1-byte gas number
-        logger.debug(`   Cylinder group ID: ${cylinderGroupId}, members: [${members.join(',')}], pressure offset: ${pressureOffsetInGroup}`);
-      }
-    }
-    
-    // Second pass: extract sample data from group entries
-    // We need to interleave sample data with cylinder pressure data
-    pos = 8;
-    let sampleCount = 0;
-    const samples: DCDiveSample[] = [];
-    const pressures: number[] = []; // Collect pressures separately (in centibar)
-    let currentTimeMs = 0;
-    
-    while (pos < data.length - 2) {
-      if (data[pos] === 0) {
-        // Skip descriptor
-        let textLen = data[pos + 1];
-        if (textLen === 0xff) {
-          textLen = data[pos + 2] | (data[pos + 3] << 8) | (data[pos + 4] << 16) | (data[pos + 5] << 24);
-          pos += 6 + textLen;
-        } else {
-          pos += 2 + textLen;
-        }
-        continue;
-      }
-      
-      const entry = parseDataEntry(pos);
-      if (!entry) {
-        pos++;
-        continue;
-      }
-      
-      // Check if this is the cylinder group (pressure data)
-      if (entry.typeId === cylinderGroupId && entry.dataLen >= 3) {
-        const d = data;
-        const s = entry.dataStart;
-        // Pressure is uint16 in centibar (divide by 100 for bar)
-        const pressureCentibar = d[s + pressureOffsetInGroup] | (d[s + pressureOffsetInGroup + 1] << 8);
-        if (pressureCentibar !== 0xffff) {
-          pressures.push(pressureCentibar);
-        } else {
-          pressures.push(-1); // Mark invalid
-        }
-      }
-      
-      // Check if this is the sample group
-      if (entry.typeId === sampleGroupId && entry.dataLen >= 6) {
-        const d = data;
-        const s = entry.dataStart;
-        
-        let timeDelta = 0;
-        let depthCm = 0;
-        let tempDeciC: number | null = null;
-        
-        // Extract time delta (uint16 ms)
-        if (timeOffsetInGroup >= 0 && s + timeOffsetInGroup + 2 <= s + entry.dataLen) {
-          timeDelta = d[s + timeOffsetInGroup] | (d[s + timeOffsetInGroup + 1] << 8);
-          currentTimeMs += timeDelta;
-          durationMs += timeDelta;
-        }
-        
-        // Extract depth (uint16 cm, 0xFFFF = nil)
-        if (depthOffsetInGroup >= 0 && s + depthOffsetInGroup + 2 <= s + entry.dataLen) {
-          depthCm = d[s + depthOffsetInGroup] | (d[s + depthOffsetInGroup + 1] << 8);
-          if (depthCm !== 0xffff && depthCm > maxDepthCm) {
-            maxDepthCm = depthCm;
-          }
-        }
-        
-        // Extract temperature (int16 deci-C, -3000 = nil)
-        if (tempOffsetInGroup >= 0 && s + tempOffsetInGroup + 2 <= s + entry.dataLen) {
-          const tempRaw = d[s + tempOffsetInGroup] | (d[s + tempOffsetInGroup + 1] << 8);
-          tempDeciC = tempRaw > 32767 ? tempRaw - 65536 : tempRaw;
-          if (tempDeciC !== -3000) {
-            if (minTempDeciC === null || tempDeciC < minTempDeciC) {
-              minTempDeciC = tempDeciC;
-            }
-          }
-        }
-        
-        // Add sample to array (for dive profile graph)
-        const sample: DCDiveSample = {
-          time: { seconds: Math.round(currentTimeMs / 1000) },
-          depth: { mm: depthCm !== 0xffff ? depthCm * 10 : 0 } // cm to mm
-        };
-        
-        // Add temperature if valid
-        if (tempDeciC !== null && tempDeciC !== -3000) {
-          const tempC = tempDeciC / 10;
-          sample.temperature = { mkelvin: Math.round((tempC + 273.15) * 1000) };
-        }
-        
-        samples.push(sample);
-        sampleCount++;
-      }
-      
-      pos = entry.nextPos;
-    }
-    
-    // Merge pressure data into samples (they should be 1:1)
-    if (pressures.length > 0) {
-      logger.debug(`   Found ${pressures.length} pressure readings`);
-      for (let i = 0; i < Math.min(samples.length, pressures.length); i++) {
-        if (pressures[i] >= 0) {
-          // Convert centibar to mbar (centibar * 10 = mbar, or centibar / 100 = bar)
-          samples[i].pressure = [{ tank: 0, pressure: { mbar: pressures[i] * 10 } }];
-        }
-      }
-    }
-    
-    // Convert to final units
-    const maxDepthM = maxDepthCm / 100;
-    const durationSeconds = Math.round(durationMs / 1000);
-    const waterTempC = minTempDeciC !== null ? minTempDeciC / 10 : undefined;
-    const avgDepthM = maxDepthM * 0.6;
-    
-    const when = new Date(timestamp * 1000);
-    
-    logger.debug(`   ✅ ${sampleCount} samples: depth=${maxDepthM.toFixed(1)}m, duration=${durationSeconds}s (${Math.round(durationSeconds/60)} min), temp=${waterTempC?.toFixed(1) ?? 'unknown'}°C`);
-    
-    return {
-      id: timestamp,
-      when,
-      duration: { seconds: durationSeconds },
-      maxDepth: { mm: Math.round(maxDepthM * 1000) },
-      meanDepth: { mm: Math.round(avgDepthM * 1000) },
-      waterTemperature: waterTempC !== undefined 
-        ? { mkelvin: Math.round((waterTempC + 273.15) * 1000) }
-        : undefined,
-      surfaceTemperature: undefined,
-      diveSite: undefined,
-      diveComputers: [{
-        model: selectedProduct || 'Suunto EON',
-        serial: diveFile.name.replace(/\.LOG$/i, ''),
-        when: when,
-        samples: samples,
-        events: [],
-      }],
-      cylinders: o2Percent !== 21 ? [{
-        gasmix: {
-          oxygen: { permille: o2Percent * 10 },
-          helium: { permille: 0 },
-          nitrogen: { permille: (100 - o2Percent) * 10 },
-        },
-        start: undefined,
-        end: undefined,
-        workingPressure: undefined,
-      }] : [],
-    };
-  };
-  
-  const createDefaultDive = (timestamp: number, filename: string): DCDive => {
-    const when = new Date(timestamp * 1000);
-    return {
-      id: timestamp,
-      when,
-      duration: { seconds: 0 },
-      maxDepth: { mm: 0 },
-      meanDepth: { mm: 0 },
-      waterTemperature: undefined,
-      surfaceTemperature: undefined,
-      diveSite: undefined,
-      diveComputers: [{
-        model: selectedProduct || 'Suunto EON',
-        serial: filename.replace(/\.LOG$/i, ''),
-        when: when,
-        samples: [],
-        events: [],
-      }],
-      cylinders: [],
-    };
+    logger.debug(`📄 Parsing Suunto LOG file: ${diveFile.name}, ${diveFile.data.length} bytes`);
+    const result = parseSuuntoSbemFile(diveFile, { model: selectedProduct || 'Suunto EON' });
+    const dc = result.diveComputers[0];
+    logger.debug(`   ✅ ${dc?.samples?.length ?? 0} samples: depth=${(result.maxDepth.mm / 1000).toFixed(1)}m, duration=${result.duration.seconds}s`);
+    return result;
   };
 
   // Type for parsed file result from backend
@@ -1252,7 +1024,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           });
           
           setDownloadedDives(divesWithDuplicateCheck);
-          setStep('complete');
           openReviewModal();
         } else {
           setErrorMessage('No dives could be parsed from the selected files');
@@ -1299,31 +1070,36 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     setProgress({ current: 0, maximum: 100 });
     
     try {
-      const transport = new BLETransport(selectedDevice.address);
-      
-      const result = await downloadManager.download({
-        descriptor,
-        transport,
-        forceDownload: false,
-        syncTime: true,
+      // Use native Rust BLE download via libdivecomputer
+      const result = await invoke<ParsedFileResult>('download_dives_ble', {
+        vendor: selectedVendor,
+        product: selectedProduct,
+        deviceId: selectedDevice.address,
       });
-      
-      if (result.success) {
-        setDownloadedDives(result.dives.map(d => ({ ...d, selected: true })));
-        setStep('complete');
-        openReviewModal();
-      } else if (result.error) {
-        setErrorMessage(result.error.message);
+
+      if (result.dives.length === 0) {
+        setErrorMessage('No dives found on the device.');
         setStep('error');
+        return;
       }
+
+      const converted = result.dives.map(parsed => {
+        const dd = convertParsedDiveToDownloadedDive(parsed);
+        const isDup = isDuplicateDive(dd);
+        return { ...dd, isDuplicate: isDup, selected: !isDup };
+      });
+
+      setDownloadedDives(converted);
+      openReviewModal();
     } catch (error) {
-      setErrorMessage(`Download failed: ${(error as Error).message}`);
+      setErrorMessage(`Download failed: ${error}`);
       setStep('error');
     }
-  }, [descriptor, selectedDevice, downloadManager]);
+  }, [descriptor, selectedDevice, selectedVendor, selectedProduct, isDuplicateDive]);
 
   // Save raw dive files to disk for debugging
-  const saveRawDiveFiles = useCallback(async () => {
+  // @ts-expect-error kept for future debugging use
+  const _saveRawDiveFiles = useCallback(async () => {
     logger.debug('saveRawDiveFiles called, rawDiveFiles.length:', rawDiveFiles.length);
     if (rawDiveFiles.length === 0) {
       logger.debug('No raw dive files to save');
@@ -1393,22 +1169,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
   const cancelDownload = useCallback(() => {
     downloadManager.cancel();
   }, [downloadManager]);
-
-  const toggleDiveSelection = (index: number) => {
-    setDownloadedDives(prev => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], selected: !updated[index].selected };
-      return updated;
-    });
-  };
-
-  const selectAllDives = () => {
-    setDownloadedDives(prev => prev.map(d => ({ ...d, selected: true })));
-  };
-
-  const selectNoneDives = () => {
-    setDownloadedDives(prev => prev.map(d => ({ ...d, selected: false })));
-  };
 
   // Open the review modal when download completes
   const openReviewModal = () => {
@@ -1526,136 +1286,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     return null;
   };
 
-  const importSelectedDives = async () => {
-    if (!tripId) {
-      setErrorMessage('Please select a trip first');
-      return;
-    }
-    
-    try {
-      const selectedDiveData = downloadedDives.filter(d => d.selected);
-      const importedDives: Dive[] = [];
-      
-      // Calculate total samples for progress
-      const totalSamples = selectedDiveData.reduce((sum, d) => {
-        const dc = d.diveComputers[0];
-        return sum + (dc?.samples?.length || 0);
-      }, 0);
-      
-      // Switch to downloading step to show progress
-      setStep('downloading');
-      setImportStatus({
-        phase: 'saving',
-        currentDive: 0,
-        totalDives: selectedDiveData.length,
-        currentSamples: 0,
-        totalSamples,
-        message: 'Preparing to save dives...',
-      });
-      
-      let samplesProcessed = 0;
-      
-      for (let i = 0; i < selectedDiveData.length; i++) {
-        const dcDive = selectedDiveData[i];
-        const diveData = convertDive(dcDive, tripId, i + 1);
-        
-        // Update progress status
-        setImportStatus(prev => ({
-          ...prev,
-          currentDive: i + 1,
-          message: `Saving dive ${i + 1} of ${selectedDiveData.length}...`,
-        }));
-        
-        // Create the dive in the database
-        const diveId = await invoke<number>('create_dive_from_computer', {
-          tripId,
-          date: diveData.date,
-          time: diveData.time,
-          durationSeconds: diveData.duration_seconds,
-          maxDepthM: diveData.max_depth_m,
-          meanDepthM: diveData.mean_depth_m,
-          waterTempC: diveData.water_temp_c,
-          airTempC: diveData.air_temp_c,
-          surfacePressureBar: diveData.surface_pressure_bar,
-          cnsPercent: diveData.cns_percent,
-          diveComputerModel: diveData.dive_computer_model,
-          diveComputerSerial: diveData.dive_computer_serial,
-          latitude: diveData.latitude,
-          longitude: diveData.longitude,
-        });
-        
-        // Convert and insert samples if available
-        const dc = dcDive.diveComputers[0];
-        if (dc?.samples && dc.samples.length > 0) {
-          const samples = dc.samples.map(s => ({
-            id: 0, // Will be assigned by database
-            dive_id: diveId,
-            time_seconds: s.time.seconds,
-            depth_m: s.depth.mm / 1000,
-            temp_c: s.temperature ? (s.temperature.mkelvin / 1000) - 273.15 : undefined,
-            // Get pressure from first tank (if available) and convert mbar to bar
-            pressure_bar: s.pressure?.[0]?.pressure?.mbar ? s.pressure[0].pressure.mbar / 1000 : undefined,
-            // NDL (no-deco limit) and RBT (remaining bottom time) from dive computer
-            ndl_seconds: s.ndl?.seconds,
-            rbt_seconds: s.rbt?.seconds,
-          }));
-          
-          // Update status before batch insert
-          setImportStatus(prev => ({
-            ...prev,
-            message: `Saving ${samples.length} samples for dive ${i + 1}...`,
-          }));
-          
-          const count = await invoke<number>('insert_dive_samples', {
-            diveId,
-            samples,
-          });
-          
-          samplesProcessed += count;
-          setImportStatus(prev => ({
-            ...prev,
-            currentSamples: samplesProcessed,
-          }));
-          
-          logger.info(`✅ Inserted ${count} samples for dive ${diveId}`);
-        }
-        
-        importedDives.push({ ...diveData, id: diveId } as Dive);
-        
-        // Update progress bar
-        setProgress({
-          current: i + 1,
-          maximum: selectedDiveData.length,
-        });
-      }
-      
-      // Mark as complete
-      setImportStatus(prev => ({
-        ...prev,
-        phase: 'complete',
-        message: `Successfully imported ${importedDives.length} dive(s)`,
-      }));
-      
-      onDivesImported(importedDives);
-      onClose();
-    } catch (error) {
-      logger.error('Failed to import dives:', error);
-      setErrorMessage(`Failed to import dives: ${error}`);
-      setImportStatus(prev => ({ ...prev, phase: 'idle' }));
-      setStep('error');
-    }
-  };
-
-  const formatDuration = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const formatDepth = (mm: number): string => {
-    return `${(mm / 1000).toFixed(1)}m`;
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -1667,7 +1297,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
             {step === 'select-device' && 'Download from Dive Computer'}
             {step === 'scan-bluetooth' && 'Select Bluetooth Device'}
             {step === 'downloading' && 'Downloading Dives'}
-            {step === 'complete' && 'Download Complete'}
             {step === 'error' && 'Error'}
           </h2>
           <button className="modal-close" onClick={onClose}>×</button>
@@ -1799,6 +1428,45 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
                       This device may require a native application.
                     </p>
                   )}
+                  {connectionType === 'serial' && (
+                    <div className="serial-port-selection" style={{ marginTop: '12px' }}>
+                      <label>Serial Port</label>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <select
+                          value={selectedPort}
+                          onChange={(e) => setSelectedPort(e.target.value)}
+                          className="form-select"
+                          style={{ flex: 1 }}
+                        >
+                          <option value="">Select port...</option>
+                          {serialPorts.map(p => (
+                            <option key={p.name} value={p.name}>
+                              {p.name} — {p.description}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => {
+                            invoke<SerialPortInfo[]>('list_serial_ports')
+                              .then(ports => {
+                                setSerialPorts(ports);
+                                if (ports.length === 1) setSelectedPort(ports[0].name);
+                              })
+                              .catch(err => logger.error('Failed to refresh serial ports:', err));
+                          }}
+                          title="Refresh port list"
+                        >
+                          ↻
+                        </button>
+                      </div>
+                      {serialPorts.length === 0 && (
+                        <p className="warning-text" style={{ marginTop: '4px', fontSize: '0.85em' }}>
+                          No serial ports found. Connect your dive computer cable then click ↻ to refresh.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1914,46 +1582,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
             </div>
           )}
 
-          {step === 'complete' && (
-            <div className="download-complete">
-              <div className="complete-header">
-                <svg viewBox="0 0 24 24" width="48" height="48" fill="var(--accent-color)">
-                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                </svg>
-                <h3>Downloaded {downloadedDives.length} Dive{downloadedDives.length !== 1 ? 's' : ''}</h3>
-              </div>
-
-              <div className="dive-selection-header">
-                <span>Select dives to import:</span>
-                <div className="selection-actions">
-                  <button className="btn-link" onClick={selectAllDives}>Select All</button>
-                  <button className="btn-link" onClick={selectNoneDives}>Select None</button>
-                </div>
-              </div>
-
-              <div className="downloaded-dives-list">
-                {downloadedDives.map((dive, index) => (
-                  <label key={index} className={`dive-item ${dive.isDuplicate ? 'duplicate' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={dive.selected}
-                      onChange={() => toggleDiveSelection(index)}
-                    />
-                    <div className="dive-details">
-                      <span className="dive-date">
-                        {dive.when.toLocaleDateString()} {dive.when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {dive.isDuplicate && <span className="duplicate-badge">Already imported</span>}
-                      </span>
-                      <span className="dive-stats">
-                        {formatDepth(dive.maxDepth.mm)} • {formatDuration(dive.duration.seconds)}
-                      </span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
           {step === 'error' && (
             <div className="download-error">
               <svg viewBox="0 0 24 24" width="48" height="48" fill="var(--danger-color)">
@@ -1980,7 +1608,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
               <button 
                 className="btn btn-primary" 
                 onClick={handleConnect}
-                disabled={!descriptor || availableConnections.length === 0}
+                disabled={!descriptor || availableConnections.length === 0 || (connectionType === 'serial' && !selectedPort)}
               >
                 {requiresBluetoothScan(connectionType) ? 'Scan for Devices' : 'Connect'}
               </button>
@@ -2006,30 +1634,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
             <button className="btn btn-secondary" onClick={cancelDownload}>
               Cancel
             </button>
-          )}
-
-          {step === 'complete' && (
-            <>
-              <button className="btn btn-secondary" onClick={onClose}>
-                Close
-              </button>
-              {rawDiveFiles.length > 0 && (
-                <button 
-                  className="btn btn-secondary"
-                  onClick={saveRawDiveFiles}
-                  title="Save raw dive files for debugging"
-                >
-                  Save Raw Files
-                </button>
-              )}
-              <button 
-                className="btn btn-primary" 
-                onClick={importSelectedDives}
-                disabled={!downloadedDives.some(d => d.selected)}
-              >
-                Import {downloadedDives.filter(d => d.selected).length} Dive{downloadedDives.filter(d => d.selected).length !== 1 ? 's' : ''}
-              </button>
-            </>
           )}
 
           {step === 'error' && (
@@ -2069,16 +1673,6 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
 }
 
 // Type declarations for Web Bluetooth API
-interface RequestDeviceOptions {
-  acceptAllDevices?: boolean;
-  filters?: Array<{
-    services?: string[];
-    name?: string;
-    namePrefix?: string;
-  }>;
-  optionalServices?: string[];
-}
-
 interface BluetoothDevice {
   id: string;
   name?: string;

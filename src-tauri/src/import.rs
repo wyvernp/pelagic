@@ -35,6 +35,32 @@ pub fn parse_dive_file(path: &Path) -> Result<ImportResult, String> {
     }
 }
 
+/// Parse dive file from in-memory bytes, dispatching by file extension.
+/// Avoids writing to a temp file — SSRF/JSON are decoded to UTF-8 strings
+/// and FIT bytes are wrapped in a Cursor for the fitparser reader.
+pub fn parse_dive_file_from_bytes(file_name: &str, data: &[u8]) -> Result<ImportResult, String> {
+    let extension = file_name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    match extension.as_str() {
+        "ssrf" | "xml" => {
+            let content = std::str::from_utf8(data)
+                .map_err(|e| format!("File is not valid UTF-8: {}", e))?;
+            parse_ssrf_content(content)
+        }
+        "json" => {
+            let content = std::str::from_utf8(data)
+                .map_err(|e| format!("File is not valid UTF-8: {}", e))?;
+            parse_suunto_json_content(content)
+        }
+        "fit" => parse_fit_data(data),
+        _ => Err(format!("Unsupported file format: .{}", extension)),
+    }
+}
+
 /// Parse a .ssrf file and extract dive data
 pub fn parse_ssrf_file(path: &Path) -> Result<ImportResult, String> {
     let content = std::fs::read_to_string(path)
@@ -1171,6 +1197,18 @@ pub fn parse_fit_file(path: &Path) -> Result<ImportResult, String> {
     parse_fit_records(records)
 }
 
+/// Parse FIT data from an in-memory byte slice (no temp file needed).
+pub fn parse_fit_data(data: &[u8]) -> Result<ImportResult, String> {
+    let mut cursor = std::io::Cursor::new(data);
+    
+    let records = fitparser::from_reader(&mut cursor)
+        .map_err(|e| format!("Failed to parse FIT data: {}", e))?;
+    
+    log::info!("FIT data parsed, found {} records", records.len());
+    
+    parse_fit_records(records)
+}
+
 fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String> {
     let mut dives: Vec<ImportedDive> = Vec::new();
     let mut current_samples: Vec<DiveSample> = Vec::new();
@@ -1183,6 +1221,9 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     let mut record_types: Vec<String> = Vec::new();
     let mut sample_time_offset: i32 = 0;
     let mut start_timestamp: Option<chrono::DateTime<chrono::Utc>> = None;
+    
+    // Parallel vec of raw Unix timestamps per sample (for two-pass recalculation)
+    let mut sample_raw_timestamps: Vec<Option<i64>> = Vec::new();
     
     // Separate collection for tank pressure data (indexed by timestamp or sample number)
     // Format: (timestamp_or_index, pressure_bar, sensor_id, has_timestamp) - sensor_id distinguishes multiple tanks
@@ -1291,9 +1332,10 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
                     }
                 }
                 
-                let sample = parse_fit_record_to_sample(record, sample_time_offset, start_timestamp);
+                let (sample, raw_ts) = parse_fit_record_to_sample(record, sample_time_offset, start_timestamp);
                 if sample.depth_m > 0.0 {
                     current_samples.push(sample);
+                    sample_raw_timestamps.push(raw_ts);
                 }
                 sample_time_offset += 1; // Always increment for timing purposes
             }
@@ -1388,9 +1430,10 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
                 }
                 
                 if has_depth {
-                    let sample = parse_fit_record_to_sample(record, sample_time_offset, start_timestamp);
+                    let (sample, raw_ts) = parse_fit_record_to_sample(record, sample_time_offset, start_timestamp);
                     if sample.depth_m > 0.0 {
                         current_samples.push(sample);
+                        sample_raw_timestamps.push(raw_ts);
                         sample_time_offset += 1;
                     }
                 }
@@ -1411,28 +1454,77 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
     log::info!("Final start_timestamp: {:?}", start_timestamp);
     
     // ========================================================================
-    // IMPORTANT: FIT files have Session.start_time at the END of the file,
-    // but samples are parsed BEFORE we see it. We need to recalculate sample
-    // time_seconds now that we have the correct start_timestamp.
+    // Two-pass sample time calculation:
+    //   Pass 1 — Use real per-record timestamps (now that Session.start_time
+    //            is known, recompute relative offsets from raw timestamps).
+    //   Pass 2 — Fall back to even distribution only when real timestamps
+    //            are unavailable.
     // ========================================================================
     
-    // First, we need to get sample timestamps to recalculate. We stored them
-    // using time_offset initially - we need to find the actual timestamps.
-    // The simplest approach: use the dive duration from dive_summary or session.
     let dive_duration_from_metadata = all_data.get("total_elapsed_time")
         .or_else(|| all_data.get("total_timer_time"))
         .and_then(|v| extract_float(v))
         .map(|f| f as i32);
     
-    // If samples have bad time_seconds (negative or based on wrong start), recalculate
-    // by spreading them evenly across the dive duration
-    if let Some(duration) = dive_duration_from_metadata {
-        let sample_count = current_samples.len();
+    let sample_count = current_samples.len();
+    let timestamps_with_values = sample_raw_timestamps.iter().filter(|t| t.is_some()).count();
+    let have_real_timestamps = timestamps_with_values > sample_count / 2 && start_timestamp.is_some();
+    
+    if have_real_timestamps && sample_count > 0 {
+        // Pass 1: Recalculate from real per-record timestamps + final start_timestamp
+        let start_epoch = start_timestamp.unwrap().timestamp();
+        
+        for (i, sample) in current_samples.iter_mut().enumerate() {
+            if let Some(raw_ts) = sample_raw_timestamps.get(i).copied().flatten() {
+                sample.time_seconds = (raw_ts - start_epoch) as i32;
+            }
+            // Samples without a raw timestamp keep their sequential offset
+        }
+        
+        // Validate: times should be monotonically non-decreasing and non-negative.
+        // If any sample is negative or goes backwards, fall back to even distribution.
+        let mut valid = true;
+        let mut prev_time: i32 = -1;
+        for sample in current_samples.iter() {
+            if sample.time_seconds < 0 || sample.time_seconds < prev_time {
+                valid = false;
+                break;
+            }
+            prev_time = sample.time_seconds;
+        }
+        
+        // Also check that the last sample's time is within 10% of the metadata duration
+        if valid {
+            if let Some(duration) = dive_duration_from_metadata {
+                let last_time = current_samples.last().map(|s| s.time_seconds).unwrap_or(0);
+                if last_time > (duration as f64 * 1.1) as i32 {
+                    log::warn!("Sample timestamps exceed metadata duration by >10% ({} vs {}), falling back to even distribution",
+                        last_time, duration);
+                    valid = false;
+                }
+            }
+        }
+        
+        if valid {
+            log::info!("Recalculated {} sample times from real timestamps (start_epoch={})", sample_count, start_epoch);
+        } else {
+            // Fall back to even distribution
+            log::warn!("Real timestamps failed validation, falling back to even distribution");
+            if let Some(duration) = dive_duration_from_metadata {
+                if sample_count > 1 {
+                    for (i, sample) in current_samples.iter_mut().enumerate() {
+                        sample.time_seconds = (i as i32 * duration) / (sample_count as i32 - 1);
+                    }
+                }
+            }
+        }
+    } else if let Some(duration) = dive_duration_from_metadata {
+        // Pass 2: No real timestamps available — even distribution across duration
         if sample_count > 1 {
             for (i, sample) in current_samples.iter_mut().enumerate() {
                 sample.time_seconds = (i as i32 * duration) / (sample_count as i32 - 1);
             }
-            log::info!("Recalculated {} sample times over {} seconds", sample_count, duration);
+            log::info!("Distributed {} sample times evenly over {} seconds (no real timestamps)", sample_count, duration);
         }
     }
     
@@ -1761,11 +1853,14 @@ fn build_dive_from_fit_data(
     dive
 }
 
+/// Returns (DiveSample, Option<raw_unix_timestamp>) — the raw timestamp is
+/// preserved so the caller can recalculate time_seconds once the true
+/// Session.start_time is known (it appears at the end of FIT files).
 fn parse_fit_record_to_sample(
     record: &FitDataRecord, 
     time_offset: i32,
     _start_timestamp: Option<chrono::DateTime<chrono::Utc>>
-) -> DiveSample {
+) -> (DiveSample, Option<i64>) {
     let mut sample = DiveSample {
         id: 0,
         dive_id: 0,
@@ -1776,6 +1871,8 @@ fn parse_fit_record_to_sample(
         ndl_seconds: None,
         rbt_seconds: None,
     };
+    
+    let mut raw_timestamp: Option<i64> = None;
     
     // Log all fields in this record for debugging
     if time_offset == 0 {
@@ -1799,9 +1896,10 @@ fn parse_fit_record_to_sample(
                 sample.depth_m = depth;
             }
         }
-        // Timestamp for this sample - calculate relative time from dive start
+        // Timestamp for this sample - store raw value and compute relative time if possible
         else if name == "timestamp" {
             if let Value::Timestamp(ts) = field.value() {
+                raw_timestamp = Some(ts.with_timezone(&chrono::Utc).timestamp());
                 if let Some(start_ts) = _start_timestamp {
                     let elapsed = ts.signed_duration_since(start_ts);
                     sample.time_seconds = elapsed.num_seconds() as i32;
@@ -1844,7 +1942,7 @@ fn parse_fit_record_to_sample(
         }
     }
     
-    sample
+    (sample, raw_timestamp)
 }
 
 fn parse_fit_event(record: &FitDataRecord) -> DiveEvent {

@@ -39,6 +39,21 @@ export function PhotoViewer({
   const panStartRef = useRef({ x: 0, y: 0 });
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
+  // Touch gesture state
+  const touchStateRef = useRef<{
+    lastDistance: number;
+    lastCenter: { x: number; y: number };
+    initialZoom: number;
+    initialPan: { x: number; y: number };
+    isTouchPanning: boolean;
+  }>({
+    lastDistance: 0,
+    lastCenter: { x: 0, y: 0 },
+    initialZoom: 1,
+    initialPan: { x: 0, y: 0 },
+    isTouchPanning: false,
+  });
+
   // Reset zoom when photo changes
   useEffect(() => {
     setZoom(1);
@@ -104,7 +119,7 @@ export function PhotoViewer({
         : rawPhoto.file_path;
       
       const editorPath = settings.defaultImageEditor || undefined;
-      await invoke('open_in_editor', { filePath, editorPath });
+      await invoke('open_in_editor', { filePath, editorPath, photoId: rawPhoto.id });
     } catch (error) {
       logger.error('Failed to open in editor:', error);
     }
@@ -130,6 +145,81 @@ export function PhotoViewer({
   const handleMouseUp = useCallback(() => {
     setIsPanning(false);
   }, []);
+
+  // Touch gesture handlers
+  const getTouchDistance = (touches: React.TouchList) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const getTouchCenter = (touches: React.TouchList) => ({
+    x: (touches[0].clientX + touches[1].clientX) / 2,
+    y: (touches[0].clientY + touches[1].clientY) / 2,
+  });
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      // Pinch start
+      e.preventDefault();
+      touchStateRef.current.lastDistance = getTouchDistance(e.touches);
+      touchStateRef.current.lastCenter = getTouchCenter(e.touches);
+      touchStateRef.current.initialZoom = zoom;
+      touchStateRef.current.initialPan = { ...pan };
+      touchStateRef.current.isTouchPanning = false;
+    } else if (e.touches.length === 1 && zoom > 1) {
+      // Single finger pan when zoomed in
+      touchStateRef.current.isTouchPanning = true;
+      touchStateRef.current.lastCenter = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+      };
+    }
+  }, [zoom, pan]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      // Pinch zoom
+      e.preventDefault();
+      const newDistance = getTouchDistance(e.touches);
+      const newCenter = getTouchCenter(e.touches);
+      const scale = newDistance / touchStateRef.current.lastDistance;
+      const newZoom = Math.min(Math.max(0.5, touchStateRef.current.initialZoom * scale), 5);
+
+      // Pan while pinching to follow the gesture center
+      const centerDx = newCenter.x - touchStateRef.current.lastCenter.x;
+      const centerDy = newCenter.y - touchStateRef.current.lastCenter.y;
+
+      setZoom(newZoom);
+      setPan({
+        x: touchStateRef.current.initialPan.x + centerDx,
+        y: touchStateRef.current.initialPan.y + centerDy,
+      });
+    } else if (e.touches.length === 1 && touchStateRef.current.isTouchPanning && zoom > 1) {
+      // Single finger pan
+      const dx = e.touches[0].clientX - touchStateRef.current.lastCenter.x;
+      const dy = e.touches[0].clientY - touchStateRef.current.lastCenter.y;
+      touchStateRef.current.lastCenter = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+      };
+      setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+    }
+  }, [zoom]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length < 2) {
+      touchStateRef.current.isTouchPanning = false;
+    }
+    // If one finger remains after pinch, set up for single-finger pan
+    if (e.touches.length === 1 && zoom > 1) {
+      touchStateRef.current.isTouchPanning = true;
+      touchStateRef.current.lastCenter = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+      };
+    }
+  }, [zoom]);
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -307,6 +397,9 @@ export function PhotoViewer({
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         >
           <div 
             className="photo-viewer-image-wrapper"

@@ -122,7 +122,6 @@ export function DiveProfile({
   const hasSamplePressure = samples.some(s => s.pressure_bar != null);
   const hasPressure = hasTankPressures || hasSamplePressure;
   const hasTemp = samples.some(s => s.temp_c != null);
-  const hasRbt = samples.some(s => s.rbt_seconds != null);
   
   // Count how many right axes we need
   const rightAxisCount = [hasPressure, hasTemp].filter(Boolean).length;
@@ -191,7 +190,6 @@ export function DiveProfile({
   // Filter samples with valid data for each line
   const pressureSamples = samples.filter(s => s.pressure_bar != null);
   const tempSamples = samples.filter(s => s.temp_c != null);
-  const rbtSamples = samples.filter(s => s.rbt_seconds != null);
 
   // Calculate air consumption stats - use primary tank (most readings) if tank pressures available
   const airUsed = useMemo(() => {
@@ -215,11 +213,6 @@ export function DiveProfile({
     return startPressure && endPressure ? startPressure - endPressure : null;
   }, [hasTankPressures, tanksBySensor, pressureSamples]);
   
-  // Get minimum RBT during dive (most critical point)
-  const minRbt = rbtSamples.length > 0 
-    ? Math.min(...rbtSamples.map(s => s.rbt_seconds!)) 
-    : null;
-
   // Tank sensor array for rendering multiple lines
   const tankSensors = useMemo(() => {
     return Array.from(tanksBySensor.entries()).map(([sensorId, readings], index) => ({
@@ -265,12 +258,6 @@ export function DiveProfile({
               }).filter(Boolean).join(', ')}
             </span>
             <span className="stat-label">Gas</span>
-          </div>
-        )}
-        {hasRbt && minRbt != null && (
-          <div className="stat">
-            <span className="stat-value">{Math.floor(minRbt / 60)}min</span>
-            <span className="stat-label">Min RBT</span>
           </div>
         )}
         {dive.cns_percent != null && dive.cns_percent > 0 && (

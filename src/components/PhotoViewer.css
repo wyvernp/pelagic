@@ -124,6 +124,7 @@
   padding: 60px 80px;
   overflow: hidden;
   cursor: grab;
+  touch-action: none;
 }
 
 .photo-viewer-image-container.panning {

@@ -101,6 +101,20 @@ export interface DiveEvent {
   value?: number;
 }
 
+export interface PhotoDiveContext {
+  depth_at_capture_m?: number;
+  temp_at_capture_c?: number;
+  time_into_dive_seconds?: number;
+  dive_date: string;
+  dive_time: string;
+  dive_duration_seconds: number;
+  max_depth_m: number;
+  mean_depth_m: number;
+  water_temp_c?: number;
+  dive_location?: string;
+  dive_site?: string;
+}
+
 export interface GearProfile {
   id: number;
   name: string;

@@ -1965,6 +1965,47 @@ impl<'a> Db<'a> {
         let mut photos = stmt.query_map(params![trip_id, pattern], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos.pop())
     }
+
+    /// Get all photo IDs (lightweight, for bulk metadata sync)
+    pub fn get_all_photo_ids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM photos ORDER BY id")?;
+        let ids = stmt.query_map([], |row| row.get(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
+    /// Find a photo by its exact file path
+    pub fn find_photo_by_path(&self, file_path: &str) -> Result<Option<Photo>> {
+        let normalized = file_path.replace("/", "\\");
+        let mut stmt = self.conn.prepare(
+            "SELECT id, trip_id, dive_id, file_path, thumbnail_path, filename, capture_time,
+                    width, height, file_size_bytes, is_processed, raw_photo_id, rating,
+                    camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
+                    exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
+                    created_at, updated_at FROM photos WHERE file_path = ? OR file_path = ? COLLATE NOCASE LIMIT 1"
+        )?;
+        let mut photos = stmt.query_map(params![file_path, normalized], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
+        Ok(photos.pop())
+    }
+
+    // ── Device fingerprint helpers (delegates to Database:: statics) ───────
+
+    pub fn fingerprint_key(device_model: &str, transport_hint: &str) -> String {
+        Database::fingerprint_key(device_model, transport_hint)
+    }
+
+    pub fn get_device_fingerprint(conn: &Connection, device_key: &str) -> Option<Vec<u8>> {
+        Database::get_device_fingerprint(conn, device_key)
+    }
+
+    pub fn save_device_fingerprint(
+        conn: &Connection,
+        device_key: &str,
+        fingerprint: &[u8],
+        device_serial: Option<&str>,
+        device_model: Option<&str>,
+    ) -> Result<()> {
+        Database::save_device_fingerprint(conn, device_key, fingerprint, device_serial, device_model)
+    }
 }
 
 impl Database {
@@ -2000,6 +2041,47 @@ impl Database {
         base.join("pelagic.db")
     }
     
+    // ── Device fingerprint helpers (incremental dive-computer sync) ───────
+
+    /// Build a unique key for a (descriptor, transport_address) pair.
+    /// e.g. "Suunto_EON_Core:COM5" or "Garmin_Descent_Mk3i:usb_hid".
+    pub fn fingerprint_key(device_model: &str, transport_hint: &str) -> String {
+        format!("{}:{}", device_model.replace(' ', "_"), transport_hint)
+    }
+
+    /// Load the latest fingerprint for a device key. Returns None if the
+    /// device has never been synced before.
+    pub fn get_device_fingerprint(conn: &Connection, device_key: &str) -> Option<Vec<u8>> {
+        conn.query_row(
+            "SELECT fingerprint FROM device_fingerprints WHERE device_key = ?1",
+            [device_key],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .ok()
+    }
+
+    /// Upsert the fingerprint for a device key, storing optional serial/model
+    /// metadata for diagnostics.
+    pub fn save_device_fingerprint(
+        conn: &Connection,
+        device_key: &str,
+        fingerprint: &[u8],
+        device_serial: Option<&str>,
+        device_model: Option<&str>,
+    ) -> Result<()> {
+        conn.execute(
+            r#"INSERT INTO device_fingerprints (device_key, fingerprint, device_serial, device_model, updated_at)
+               VALUES (?1, ?2, ?3, ?4, datetime('now'))
+               ON CONFLICT(device_key) DO UPDATE SET
+                   fingerprint  = excluded.fingerprint,
+                   device_serial = COALESCE(excluded.device_serial, device_fingerprints.device_serial),
+                   device_model  = COALESCE(excluded.device_model,  device_fingerprints.device_model),
+                   updated_at   = excluded.updated_at"#,
+            rusqlite::params![device_key, fingerprint, device_serial, device_model],
+        )?;
+        Ok(())
+    }
+
     /// Initialize schema on a raw connection (for async use via tokio-rusqlite)
     pub fn init_schema_on_conn(conn: &Connection) -> Result<()> {
         conn.execute_batch(r#"
@@ -2242,7 +2324,7 @@ impl Database {
     }
     
     // Current schema version - increment this when adding new migrations
-    pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+    pub const CURRENT_SCHEMA_VERSION: i64 = 5;
     
     /// Check if migrations are needed without running them
     pub fn needs_migration(conn: &Connection) -> bool {
@@ -2313,6 +2395,12 @@ impl Database {
         if current_version < 4 {
             progress("Adding social sharing tables...");
             Self::run_migration_v4(conn)?;
+        }
+        
+        // Version 4 -> 5: Add device_fingerprints table for dive computer incremental sync
+        if current_version < 5 {
+            progress("Adding dive computer fingerprint storage...");
+            Self::run_migration_v5(conn)?;
         }
         
         // Seed default equipment categories if table is empty
@@ -2580,6 +2668,23 @@ impl Database {
         "#)?;
         
         log::info!("Migration v4 complete");
+        Ok(())
+    }
+    
+    /// Migration v5: Add device_fingerprints table for dive computer incremental sync
+    fn run_migration_v5(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v5: adding device_fingerprints table...");
+        conn.execute_batch(r#"
+            CREATE TABLE IF NOT EXISTS device_fingerprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_key TEXT NOT NULL UNIQUE,
+                fingerprint BLOB NOT NULL,
+                device_serial TEXT,
+                device_model TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        "#)?;
+        log::info!("Migration v5 complete");
         Ok(())
     }
     
@@ -3311,7 +3416,7 @@ impl Database {
         let photos = stmt.query_map([], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos)
     }
-    
+
     /// Get photos for trip (unassigned to dive), excluding processed versions
     /// Returns RAW photos with their processed version's thumbnail if available
     pub fn get_photos_for_trip(&self, trip_id: i64) -> Result<Vec<Photo>> {

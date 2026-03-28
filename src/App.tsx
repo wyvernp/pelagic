@@ -123,6 +123,7 @@ function App() {
   useEffect(() => {
     let unlistenProgress: UnlistenFn | undefined;
     let unlistenComplete: UnlistenFn | undefined;
+    let unlistenProcessedImport: UnlistenFn | undefined;
 
     const setupListeners = async () => {
       unlistenProgress = await listen<MigrationProgress>('migration-progress', (event) => {
@@ -132,6 +133,24 @@ function App() {
       unlistenComplete = await listen('migration-complete', () => {
         setMigrationProgress(null);
       });
+
+      // Listen for auto-imported processed files from the file watcher
+      unlistenProcessedImport = await listen<{ trip_id: number; dive_id: number | null }>('processed-file-imported', async (event) => {
+        const { trip_id, dive_id } = event.payload;
+        logger.info('Processed file auto-imported, refreshing photos');
+        const currentNav = useNavigationStore.getState();
+        // Invalidate caches for the affected trip
+        useDataStore.getState().invalidateTripCache(trip_id);
+        if (dive_id) {
+          useDataStore.getState().invalidateDiveCache(dive_id);
+        }
+        // Reload if we're currently viewing the affected trip/dive
+        if (currentNav.selectedDiveId && dive_id === currentNav.selectedDiveId) {
+          await useDataStore.getState().loadPhotosForDive(currentNav.selectedDiveId);
+        } else if (currentNav.selectedTripId === trip_id) {
+          await useDataStore.getState().loadPhotosForTrip(trip_id);
+        }
+      });
     };
 
     setupListeners();
@@ -139,6 +158,44 @@ function App() {
     return () => {
       unlistenProgress?.();
       unlistenComplete?.();
+      unlistenProcessedImport?.();
+    };
+  }, []);
+
+  // Report user activity to the backend so the metadata sync worker pauses
+  useEffect(() => {
+    let activityTimeout: ReturnType<typeof setTimeout> | null = null;
+    let lastReported = 0;
+
+    const reportActivity = () => {
+      const now = Date.now();
+      // Throttle to at most once every 5 seconds
+      if (now - lastReported < 5000) return;
+      lastReported = now;
+      invoke('report_user_activity').catch(() => {});
+    };
+
+    const handleActivity = () => {
+      reportActivity();
+    };
+
+    // Listen for various user activity signals
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('mousedown', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('scroll', handleActivity, true);
+    window.addEventListener('wheel', handleActivity);
+
+    // Report immediately on mount
+    reportActivity();
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('scroll', handleActivity, true);
+      window.removeEventListener('wheel', handleActivity);
+      if (activityTimeout) clearTimeout(activityTimeout);
     };
   }, []);
 
@@ -905,7 +962,7 @@ function App() {
     hideContextMenu();
     try {
       const editorPath = settings.defaultImageEditor || undefined;
-      await invoke('open_in_editor', { filePath: photo.file_path, editorPath });
+      await invoke('open_in_editor', { filePath: photo.file_path, editorPath, photoId: photo.id });
     } catch (error) {
       logger.error('Failed to open in editor:', error);
       alert('Failed to open photo in editor: ' + error);

@@ -402,6 +402,41 @@
   line-height: 1.6;
 }
 
+/* Dive context depth display */
+.dive-context-depth {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 12px;
+  background: rgba(0, 153, 204, 0.08);
+  border: 1px solid rgba(0, 153, 204, 0.2);
+  border-radius: 8px;
+}
+
+.dive-context-depth .depth-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--accent-primary);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.dive-context-depth .depth-unit {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--accent-primary);
+  opacity: 0.7;
+}
+
+.dive-context-depth .depth-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 /* Equipment sets section */
 .equipment-sets-section {
   margin-top: 12px;

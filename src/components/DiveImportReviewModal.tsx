@@ -232,31 +232,29 @@ export function DiveImportReviewModal({
       if (groupIndex === -1) return prev;
       
       const group = prev[groupIndex];
-      const diveIndex = group.dives.findIndex(d => d.id === diveId);
-      if (diveIndex === -1) return prev;
+      if (group.dives.findIndex(d => d.id === diveId) === -1) return prev;
       
       // Can't split if only one dive in group
       if (group.dives.length <= 1) return prev;
       
-      const diveToSplit = group.dives[diveIndex];
+      const diveToSplit = group.dives.find(d => d.id === diveId)!;
       const remainingDives = group.dives.filter(d => d.id !== diveId);
       
-      // Update the original group
-      const origDateStart = new Date(Math.min(...remainingDives.map(d => d.date.getTime())));
-      const origDateEnd = new Date(Math.max(...remainingDives.map(d => d.date.getTime())));
-      
-      const updatedOrigGroup: DiveGroup = {
+      // Build the remaining group (original minus the split dive)
+      const remainDateStart = new Date(Math.min(...remainingDives.map(d => d.date.getTime())));
+      const remainDateEnd = new Date(Math.max(...remainingDives.map(d => d.date.getTime())));
+      const remainingGroup: DiveGroup = {
         ...group,
         dives: remainingDives,
-        dateStart: origDateStart,
-        dateEnd: origDateEnd,
-        defaultTripName: formatDateRange(origDateStart, origDateEnd),
-        newTripName: formatDateRange(origDateStart, origDateEnd),
+        dateStart: remainDateStart,
+        dateEnd: remainDateEnd,
+        defaultTripName: formatDateRange(remainDateStart, remainDateEnd),
+        newTripName: formatDateRange(remainDateStart, remainDateEnd),
       };
       
-      // Create new group for the split dive
-      const newGroup: DiveGroup = {
-        id: `group-${Date.now()}`,
+      // Build a new single-dive group for the split dive
+      const splitGroup: DiveGroup = {
+        id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         dives: [diveToSplit],
         dateStart: diveToSplit.date,
         dateEnd: diveToSplit.date,
@@ -266,20 +264,13 @@ export function DiveImportReviewModal({
         status: 'pending',
       };
       
-      // Insert the new group in the right position (after original, maintaining time order)
+      // Replace the original group with the two new groups, ordered by date
       const newGroups = [...prev];
-      newGroups[groupIndex] = updatedOrigGroup;
-      
-      // Find the right position to insert based on date
-      let insertIndex = groupIndex + 1;
-      if (diveToSplit.date < origDateStart) {
-        insertIndex = groupIndex; // Insert before if the split dive is earlier
-        newGroups[groupIndex] = newGroup;
-        newGroups.splice(groupIndex + 1, 0, updatedOrigGroup);
-        return newGroups.filter((_, i) => i !== groupIndex + 2); // Remove the duplicate original
+      if (diveToSplit.date.getTime() < remainDateStart.getTime()) {
+        newGroups.splice(groupIndex, 1, splitGroup, remainingGroup);
+      } else {
+        newGroups.splice(groupIndex, 1, remainingGroup, splitGroup);
       }
-      
-      newGroups.splice(insertIndex, 0, newGroup);
       return newGroups;
     });
   };

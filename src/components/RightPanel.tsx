@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
-import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank, EquipmentSet } from '../types';
+import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank, EquipmentSet, PhotoDiveContext } from '../types';
 import { useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import './RightPanel.css';
@@ -46,6 +46,7 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [diveTanks, setDiveTanks] = useState<DiveTank[]>([]);
   const [diveEquipmentSets, setDiveEquipmentSets] = useState<EquipmentSet[]>([]);
   const [cameraEquipmentSets, setCameraEquipmentSets] = useState<EquipmentSet[]>([]);
+  const [diveContext, setDiveContext] = useState<PhotoDiveContext | null>(null);
   const { apiKey: geminiApiKey } = useGeminiApiKey();
 
   // Load tags when photo changes (separate from rating to avoid unnecessary reloads)
@@ -58,6 +59,15 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       setGeneralTags([]);
     }
   }, [photo?.id]);
+
+  // Load dive context when photo changes (depth at capture, etc.)
+  useEffect(() => {
+    if (photo?.dive_id) {
+      loadDiveContext(photo.id);
+    } else {
+      setDiveContext(null);
+    }
+  }, [photo?.id, photo?.dive_id]);
 
   // Sync rating state when photo or its rating changes
   useEffect(() => {
@@ -107,6 +117,16 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
       logger.error('Failed to load equipment sets:', error);
       setDiveEquipmentSets([]);
       setCameraEquipmentSets([]);
+    }
+  };
+
+  const loadDiveContext = async (photoId: number) => {
+    try {
+      const ctx = await invoke<PhotoDiveContext | null>('get_photo_dive_context', { photoId });
+      setDiveContext(ctx);
+    } catch (error) {
+      logger.error('Failed to load dive context:', error);
+      setDiveContext(null);
     }
   };
 
@@ -591,6 +611,49 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                     <dt>GPS</dt>
                     <dd>{Number(photo.gps_latitude).toFixed(6)}, {Number(photo.gps_longitude).toFixed(6)}</dd>
                   </div>
+                </dl>
+              </div>
+            )}
+
+            {diveContext && (
+              <div className="panel-section">
+                <h4 className="panel-section-title">Dive Context</h4>
+                {diveContext.depth_at_capture_m != null && (
+                  <div className="dive-context-depth">
+                    <span className="depth-value">{diveContext.depth_at_capture_m.toFixed(1)}</span>
+                    <span className="depth-unit">m</span>
+                    <span className="depth-label">depth at capture</span>
+                  </div>
+                )}
+                <dl className="info-list">
+                  {diveContext.time_into_dive_seconds != null && (
+                    <div className="info-item">
+                      <dt>Time into dive</dt>
+                      <dd>{Math.floor(diveContext.time_into_dive_seconds / 60)}:{String(diveContext.time_into_dive_seconds % 60).padStart(2, '0')}</dd>
+                    </div>
+                  )}
+                  {diveContext.temp_at_capture_c != null && (
+                    <div className="info-item">
+                      <dt>Temp at depth</dt>
+                      <dd>{diveContext.temp_at_capture_c.toFixed(1)} °C</dd>
+                    </div>
+                  )}
+                  <div className="info-item">
+                    <dt>Dive duration</dt>
+                    <dd>{Math.floor(diveContext.dive_duration_seconds / 60)} min</dd>
+                  </div>
+                  {diveContext.water_temp_c != null && (
+                    <div className="info-item">
+                      <dt>Water temp</dt>
+                      <dd>{diveContext.water_temp_c.toFixed(1)} °C</dd>
+                    </div>
+                  )}
+                  {diveContext.dive_location && (
+                    <div className="info-item">
+                      <dt>Dive site</dt>
+                      <dd>{diveContext.dive_location}</dd>
+                    </div>
+                  )}
                 </dl>
               </div>
             )}

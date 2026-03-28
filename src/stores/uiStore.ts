@@ -41,7 +41,6 @@ export interface ModalContext {
   addDiveTripId?: number | null;
   photoImportPaths?: string[];
   viewerPhotoId?: number | null;
-  // Share card context
   shareType?: 'dive' | 'trip' | 'photo';
   sharePhotoId?: number | null;
 }

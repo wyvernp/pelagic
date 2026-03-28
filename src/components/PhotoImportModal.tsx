@@ -114,6 +114,9 @@ export function PhotoImportModal({
         overwrite: overwriteExisting,
       });
       
+      // Nudge the background metadata sync to write XMP to imported files
+      invoke('nudge_metadata_sync').catch(() => {});
+      
       alert(`Successfully imported ${count} photos!`);
       onImportComplete();
       onClose();

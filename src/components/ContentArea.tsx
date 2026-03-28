@@ -98,7 +98,7 @@ export function ContentArea({
       if (photo) {
         try {
           const editorPath = settings.defaultImageEditor || undefined;
-          await invoke('open_in_editor', { filePath: photo.file_path, editorPath });
+          await invoke('open_in_editor', { filePath: photo.file_path, editorPath, photoId: photo.id });
         } catch (error) {
           logger.error('Failed to open in editor:', error);
         }

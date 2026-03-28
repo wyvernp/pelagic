@@ -1,6 +1,6 @@
 use tauri::{State, Emitter};
 use std::path::Path;
-use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveTank, DiveStats, DiveWithDetails, Db}, import, photos};
+use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveTank, DiveStats, DiveWithDetails, Db, CaptionTemplate}, import, photos, metadata};
 use crate::validation::{Validator, MAX_NAME_LENGTH, MAX_LOCATION_LENGTH, MAX_BATCH_SIZE};
 
 #[tauri::command]
@@ -321,29 +321,6 @@ pub fn import_dive_file(state: State<AppState>, file_path: String, trip_id: Opti
     import::import_to_database(&db, result, trip_id)
 }
 
-/// Import dive log from file data (bytes) instead of file path
-/// Used for USB storage devices where files are read via File System Access API
-#[tauri::command]
-pub fn import_dive_file_data(state: State<AppState>, file_name: String, file_data: Vec<u8>, trip_id: Option<i64>) -> Result<i64, String> {
-    // Create a temporary file to parse the data
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-    
-    let mut temp_file = NamedTempFile::with_suffix(&format!(".{}", file_name.split('.').last().unwrap_or("tmp")))
-        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
-    
-    temp_file.write_all(&file_data)
-        .map_err(|e| format!("Failed to write file data: {}", e))?;
-    
-    let path = temp_file.path().to_path_buf();
-    
-    // Auto-detect format and parse
-    let result = import::parse_dive_file(&path)?;
-    
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    import::import_to_database(&db, result, trip_id)
-}
-
 /// Preview/parse dive log from file data without importing
 /// Returns parsed dive data for the review UI
 #[derive(serde::Serialize)]
@@ -634,19 +611,8 @@ pub fn bulk_import_dives(
 
 #[tauri::command]
 pub fn parse_dive_file_data(file_name: String, file_data: Vec<u8>) -> Result<ParsedFileResult, String> {
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-    
-    let mut temp_file = NamedTempFile::with_suffix(&format!(".{}", file_name.split('.').last().unwrap_or("tmp")))
-        .map_err(|e| format!("Failed to create temporary file: {}", e))?;
-    
-    temp_file.write_all(&file_data)
-        .map_err(|e| format!("Failed to write file data: {}", e))?;
-    
-    let path = temp_file.path().to_path_buf();
-    
-    // Parse without importing
-    let result = import::parse_dive_file(&path)?;
+    // Parse directly from bytes — no temp file needed
+    let result = import::parse_dive_file_from_bytes(&file_name, &file_data)?;
     
     // Convert to preview format
     let dives = result.dives.into_iter().map(|imported| {
@@ -919,6 +885,25 @@ pub fn import_photos(
 pub fn get_photo(state: State<AppState>, id: i64) -> Result<Option<Photo>, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_photo(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_photo_dive_context(state: State<AppState>, photo_id: i64) -> Result<Option<metadata::PhotoDiveContext>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    let photo = db.get_photo(photo_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Photo {} not found", photo_id))?;
+    let dive_id = match photo.dive_id {
+        Some(id) => id,
+        None => return Ok(None),
+    };
+    let dive = match db.get_dive(dive_id).map_err(|e| e.to_string())? {
+        Some(d) => d,
+        None => return Ok(None),
+    };
+    let samples = db.get_dive_samples(dive_id).map_err(|e| e.to_string())?;
+    Ok(Some(metadata::compute_photo_dive_context(&photo, &dive, &samples)))
 }
 
 #[tauri::command]
@@ -1458,8 +1443,10 @@ pub fn add_species_tag_to_photos(
     species_tag_id: i64,
 ) -> Result<i64, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.add_species_tag_to_photos(&photo_ids, species_tag_id)
-        .map_err(|e| e.to_string())
+    let result = db.add_species_tag_to_photos(&photo_ids, species_tag_id)
+        .map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecars_for_photos(&db, &photo_ids);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1470,7 +1457,9 @@ pub fn remove_species_tag_from_photo(
 ) -> Result<(), String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_species_tag_from_photo(photo_id, species_tag_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecar_for_photo(&db, photo_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1480,8 +1469,10 @@ pub fn remove_species_tag_from_photos(
     species_tag_id: i64,
 ) -> Result<i64, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.remove_species_tag_from_photos(&photo_ids, species_tag_id)
-        .map_err(|e| e.to_string())
+    let result = db.remove_species_tag_from_photos(&photo_ids, species_tag_id)
+        .map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecars_for_photos(&db, &photo_ids);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1528,11 +1519,50 @@ pub fn remove_general_tag_from_photos(
     general_tag_id: i64,
 ) -> Result<i64, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.remove_general_tag_from_photos(&photo_ids, general_tag_id)
-        .map_err(|e| e.to_string())
+    let result = db.remove_general_tag_from_photos(&photo_ids, general_tag_id)
+        .map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecars_for_photos(&db, &photo_ids);
+    Ok(result)
 }
 
 // Photo management commands
+
+#[tauri::command]
+pub fn sync_photo_metadata(state: State<AppState>, photo_ids: Vec<i64>) -> Result<u64, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    let mut count: u64 = 0;
+    for &photo_id in &photo_ids {
+        metadata::write_xmp_sidecar_for_photo(&db, photo_id);
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+pub fn sync_all_photo_metadata(state: State<AppState>) -> Result<u64, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    let photo_ids = db.get_all_photo_ids().map_err(|e| e.to_string())?;
+    let mut count: u64 = 0;
+    for photo_id in &photo_ids {
+        metadata::write_xmp_sidecar_for_photo(&db, *photo_id);
+        count += 1;
+    }
+    Ok(count)
+}
+
+#[tauri::command]
+pub fn report_user_activity(state: State<AppState>) -> Result<(), String> {
+    state.sync_worker.record_activity();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn nudge_metadata_sync(state: State<AppState>) -> Result<(), String> {
+    state.sync_worker.nudge();
+    Ok(())
+}
 
 #[tauri::command]
 pub fn delete_photos(state: State<AppState>, photo_ids: Vec<i64>) -> Result<u64, String> {
@@ -1560,7 +1590,9 @@ pub fn update_photo_rating(state: State<AppState>, photo_id: i64, rating: i32) -
     }
 
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.update_photo_rating(photo_id, rating).map_err(|e| e.to_string())
+    db.update_photo_rating(photo_id, rating).map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecar_for_photo(&db, photo_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1576,7 +1608,9 @@ pub fn update_photos_rating(state: State<AppState>, photo_ids: Vec<i64>, rating:
     }
 
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.update_photos_rating(&photo_ids, rating).map_err(|e| e.to_string())
+    db.update_photos_rating(&photo_ids, rating).map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecars_for_photos(&db, &photo_ids);
+    Ok(())
 }
 
 // General tag commands
@@ -1614,8 +1648,10 @@ pub fn add_general_tag_to_photos(
     general_tag_id: i64,
 ) -> Result<i64, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.add_general_tag_to_photos(&photo_ids, general_tag_id)
-        .map_err(|e| e.to_string())
+    let result = db.add_general_tag_to_photos(&photo_ids, general_tag_id)
+        .map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecars_for_photos(&db, &photo_ids);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1626,7 +1662,9 @@ pub fn remove_general_tag_from_photo(
 ) -> Result<(), String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.remove_general_tag_from_photo(photo_id, general_tag_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecar_for_photo(&db, photo_id);
+    Ok(())
 }
 
 // Statistics commands
@@ -2414,52 +2452,66 @@ fn detect_image_editors_sync() -> Result<Vec<ImageEditor>, String> {
     Ok(editors)
 }
 
-/// Open a file in an external editor
+/// Open a file in an external editor and start watching for processed output files.
+///
+/// Two monitoring strategies are used:
+/// 1. Real-time filesystem watcher on the photo's parent directory (recursive).
+/// 2. Process monitoring: when the editor exits, scan the directory tree for new files.
 #[tauri::command]
-pub fn open_in_editor(file_path: String, editor_path: Option<String>) -> Result<(), String> {
+pub fn open_in_editor(state: State<AppState>, file_path: String, editor_path: Option<String>, photo_id: Option<i64>) -> Result<(), String> {
     let path = std::path::Path::new(&file_path);
     
     if !path.exists() {
         return Err(format!("File not found: {}", file_path));
     }
     
-    match editor_path {
-        Some(editor) => {
+    // Launch the editor and capture the Child process handle
+    let child: Option<std::process::Child> = match editor_path {
+        Some(ref editor) => {
             // Use specified editor
             #[cfg(target_os = "windows")]
             {
-                std::process::Command::new(&editor)
-                    .arg(&file_path)
-                    .spawn()
-                    .map_err(|e| format!("Failed to open editor: {}", e))?;
+                Some(
+                    std::process::Command::new(editor)
+                        .arg(&file_path)
+                        .spawn()
+                        .map_err(|e| format!("Failed to open editor: {}", e))?
+                )
             }
             
             #[cfg(target_os = "macos")]
             {
-                // On macOS, .app bundles need 'open -a'
                 if editor.ends_with(".app") {
-                    std::process::Command::new("open")
-                        .args(["-a", &editor, &file_path])
-                        .spawn()
-                        .map_err(|e| format!("Failed to open editor: {}", e))?;
+                    Some(
+                        std::process::Command::new("open")
+                            .args(["-a", editor, &file_path])
+                            .spawn()
+                            .map_err(|e| format!("Failed to open editor: {}", e))?
+                    )
                 } else {
-                    std::process::Command::new(&editor)
-                        .arg(&file_path)
-                        .spawn()
-                        .map_err(|e| format!("Failed to open editor: {}", e))?;
+                    Some(
+                        std::process::Command::new(editor)
+                            .arg(&file_path)
+                            .spawn()
+                            .map_err(|e| format!("Failed to open editor: {}", e))?
+                    )
                 }
             }
             
             #[cfg(target_os = "linux")]
             {
-                std::process::Command::new(&editor)
-                    .arg(&file_path)
-                    .spawn()
-                    .map_err(|e| format!("Failed to open editor: {}", e))?;
+                Some(
+                    std::process::Command::new(editor)
+                        .arg(&file_path)
+                        .spawn()
+                        .map_err(|e| format!("Failed to open editor: {}", e))?
+                )
             }
         }
         None => {
-            // Use system default
+            // Use system default — the intermediate process (cmd/open/xdg-open)
+            // exits immediately, so process monitoring won't help here.
+            // The filesystem watcher will still catch saved files.
             #[cfg(target_os = "windows")]
             {
                 std::process::Command::new("cmd")
@@ -2483,67 +2535,18 @@ pub fn open_in_editor(file_path: String, editor_path: Option<String>) -> Result<
                     .spawn()
                     .map_err(|e| format!("Failed to open with default app: {}", e))?;
             }
+            
+            None
         }
+    };
+    
+    // Start watching for processed files if we know which photo this is.
+    // Pass the editor's Child handle so we can also scan when the editor exits.
+    if let Some(pid) = photo_id {
+        state.file_watcher.watch_for_processed_file(pid, &file_path, child);
     }
     
     Ok(())
-}
-
-// ==================== Caption Template Commands ====================
-
-use crate::db::CaptionTemplate;
-
-/// Get caption templates, optionally filtered by content type
-#[tauri::command]
-pub fn get_caption_templates(
-    state: State<AppState>,
-    content_type: Option<String>,
-) -> Result<Vec<CaptionTemplate>, String> {
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
-    let db = Db::new(&*conn);
-    db.get_caption_templates(content_type.as_deref()).map_err(|e| e.to_string())
-}
-
-/// Save a new caption template
-#[tauri::command]
-pub fn save_caption_template(
-    state: State<AppState>,
-    name: String,
-    template: String,
-    content_type: String,
-) -> Result<i64, String> {
-    // Validate content type
-    if !["photo", "dive", "trip"].contains(&content_type.as_str()) {
-        return Err("Invalid content type. Must be 'photo', 'dive', or 'trip'.".to_string());
-    }
-    
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
-    let db = Db::new(&*conn);
-    db.save_caption_template(&name, &template, &content_type).map_err(|e| e.to_string())
-}
-
-/// Update an existing caption template
-#[tauri::command]
-pub fn update_caption_template(
-    state: State<AppState>,
-    id: i64,
-    name: String,
-    template: String,
-) -> Result<(), String> {
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
-    let db = Db::new(&*conn);
-    db.update_caption_template(id, &name, &template).map_err(|e| e.to_string())
-}
-
-/// Delete a caption template
-#[tauri::command]
-pub fn delete_caption_template(
-    state: State<AppState>,
-    id: i64,
-) -> Result<(), String> {
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
-    let db = Db::new(&*conn);
-    db.delete_caption_template(id).map_err(|e| e.to_string())
 }
 
 // ==================== Secure Settings Commands ====================
@@ -2575,44 +2578,377 @@ pub fn set_secure_setting(app: tauri::AppHandle, key: String, value: String) -> 
     Ok(())
 }
 
-// ==================== Storage Path Commands ====================
+// ====================== Caption Template Commands ======================
 
-/// Get the current storage path (database and thumbnails location)
 #[tauri::command]
-pub fn get_storage_path(app: tauri::AppHandle) -> Result<String, String> {
-    // Check if a custom path is saved in secure settings
-    let store = app.store("secure-settings.json")
-        .map_err(|e| format!("Failed to open secure store: {}", e))?;
-    
-    if let Some(custom_path) = store.get("storagePath").and_then(|v| v.as_str().map(|s| s.to_string())) {
-        if !custom_path.is_empty() {
-            return Ok(custom_path);
-        }
-    }
-    
-    // Return default path
-    let mut path = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    path.push("Pelagic");
-    Ok(path.to_string_lossy().to_string())
+pub fn get_caption_templates(
+    state: State<AppState>,
+    content_type: Option<String>,
+) -> Result<Vec<CaptionTemplate>, String> {
+    let conn = state.db.get().map_err(|e| e.to_string())?;
+    let db = Db::new(&*conn);
+    db.get_caption_templates(content_type.as_deref()).map_err(|e| e.to_string())
 }
 
-/// Set a custom storage path for database and thumbnails
+#[tauri::command]
+pub fn save_caption_template(
+    state: State<AppState>,
+    name: String,
+    template: String,
+    content_type: String,
+) -> Result<i64, String> {
+    let conn = state.db.get().map_err(|e| e.to_string())?;
+    let db = Db::new(&*conn);
+    db.save_caption_template(&name, &template, &content_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_caption_template(
+    state: State<AppState>,
+    id: i64,
+    name: String,
+    template: String,
+) -> Result<(), String> {
+    let conn = state.db.get().map_err(|e| e.to_string())?;
+    let db = Db::new(&*conn);
+    db.update_caption_template(id, &name, &template).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_caption_template(
+    state: State<AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = state.db.get().map_err(|e| e.to_string())?;
+    let db = Db::new(&*conn);
+    db.delete_caption_template(id).map_err(|e| e.to_string())
+}
+
+// ====================== Storage Path Commands ======================
+
+#[tauri::command]
+pub fn get_storage_path() -> Result<String, String> {
+    Ok(crate::get_storage_base_path().to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub fn set_storage_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    // Validate the path exists or can be created
-    let storage_path = std::path::Path::new(&path);
-    if !storage_path.exists() {
-        std::fs::create_dir_all(storage_path)
-            .map_err(|e| format!("Failed to create storage directory: {}", e))?;
-    }
-    
     let store = app.store("secure-settings.json")
-        .map_err(|e| format!("Failed to open secure store: {}", e))?;
-    
+        .map_err(|e| format!("Failed to open store: {}", e))?;
     store.set("storagePath", serde_json::json!(path));
     store.save()
-        .map_err(|e| format!("Failed to save secure store: {}", e))?;
-    
+        .map_err(|e| format!("Failed to save store: {}", e))?;
     Ok(())
 }
 
+// ====================== libdivecomputer Commands ======================
+
+/// List all dive computers supported by libdivecomputer.
+/// Returns a sorted array of { vendor, product, family, model, transports }.
+#[tauri::command]
+pub fn get_supported_dive_computers() -> Result<Vec<crate::libdc::DeviceDescriptorInfo>, String> {
+    crate::libdc::list_supported_devices().map_err(|e| e.to_string())
+}
+
+/// List available serial ports on this system.
+#[tauri::command]
+pub fn list_serial_ports() -> Vec<crate::transport::SerialPortInfo> {
+    crate::transport::list_serial_ports()
+}
+
+/// List available USB HID devices on this system.
+#[tauri::command]
+pub fn list_hid_devices() -> Vec<crate::transport::HidDeviceInfo> {
+    crate::transport::list_hid_devices()
+}
+
+/// Download dives from a dive computer over a serial port.
+/// Returns parsed dive data for the review UI.
+#[tauri::command]
+pub async fn download_dives_serial(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    vendor: String,
+    product: String,
+    port_name: String,
+) -> Result<ParsedFileResult, String> {
+    let pool = state.db.clone();
+    // Run blocking I/O on a dedicated thread
+    tokio::task::spawn_blocking(move || {
+        download_dives_serial_blocking(&window, &pool, &vendor, &product, &port_name)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+fn download_dives_serial_blocking(
+    window: &tauri::Window,
+    pool: &crate::DbPool,
+    vendor: &str,
+    product: &str,
+    port_name: &str,
+) -> Result<ParsedFileResult, String> {
+    use crate::libdc::*;
+    use crate::transport::*;
+    use crate::db::Db;
+
+    // 1. Find the device descriptor
+    let descriptor = find_descriptor(vendor, product)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Unknown device: {} {}", vendor, product))?;
+
+    // 2. Open serial port
+    let transport = SerialTransport::open(port_name)?;
+
+    // 3. Create libdivecomputer context
+    let context = Context::new().map_err(|e| e.to_string())?;
+    context.set_loglevel(2).ok(); // DC_LOGLEVEL_WARNING
+
+    // 4. Create custom iostream backed by our serial transport
+    let stream = CustomIoStream::new(
+        &context,
+        dc_transport_t::DC_TRANSPORT_SERIAL,
+        Box::new(transport),
+    )?;
+
+    // 5. Build session with event streaming + fingerprint
+    let device_key = Db::fingerprint_key(&format!("{} {}", vendor, product), port_name);
+    let conn = pool.get().map_err(|e| format!("Database error: {}", e))?;
+
+    let mut session = DownloadSession::new();
+    if let Some(fp) = Db::get_device_fingerprint(&conn, &device_key) {
+        log::info!("Loaded existing fingerprint for {} ({} bytes)", device_key, fp.len());
+        session = session.with_fingerprint(fp);
+    }
+    let win = window.clone();
+    session = session.with_event_callback(move |evt| {
+        let _ = win.emit("dive-download-progress", evt);
+    });
+
+    // 6. Download and parse
+    let previews = download_and_parse_dives(&context, &descriptor, stream.iostream, &mut session)?;
+
+    // 7. Save fingerprint of the newest dive for next incremental sync
+    if let Some(fp) = session.fingerprints.first() {
+        let serial_str = session.devinfo.as_ref().map(|d| d.serial.to_string());
+        Db::save_device_fingerprint(
+            &conn,
+            &device_key,
+            fp,
+            serial_str.as_deref(),
+            Some(&format!("{} {}", vendor, product)),
+        ).map_err(|e| format!("Failed to save fingerprint: {}", e))?;
+        log::info!("Saved fingerprint for {} ({} bytes)", device_key, fp.len());
+    }
+
+    // 8. Build result
+    let (date_start, date_end) = compute_date_range(&previews);
+    let trip_name = format!("{} {} Download", vendor, product);
+
+    Ok(ParsedFileResult {
+        dives: previews,
+        trip_name,
+        date_start,
+        date_end,
+    })
+}
+
+/// Download dives from a dive computer over USB HID.
+/// Returns parsed dive data for the review UI.
+#[tauri::command]
+pub async fn download_dives_usbhid(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    vendor: String,
+    product: String,
+    vid: u16,
+    pid: u16,
+) -> Result<ParsedFileResult, String> {
+    let pool = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        download_dives_usbhid_blocking(&window, &pool, &vendor, &product, vid, pid)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+fn download_dives_usbhid_blocking(
+    window: &tauri::Window,
+    pool: &crate::DbPool,
+    vendor: &str,
+    product: &str,
+    vid: u16,
+    pid: u16,
+) -> Result<ParsedFileResult, String> {
+    use crate::libdc::*;
+    use crate::transport::*;
+    use crate::db::Db;
+
+    let descriptor = find_descriptor(vendor, product)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Unknown device: {} {}", vendor, product))?;
+
+    let transport = HidTransport::open(vid, pid)?;
+
+    let context = Context::new().map_err(|e| e.to_string())?;
+    context.set_loglevel(2).ok();
+
+    let stream = CustomIoStream::new(
+        &context,
+        dc_transport_t::DC_TRANSPORT_USBHID,
+        Box::new(transport),
+    )?;
+
+    // Build session with event streaming + fingerprint
+    let device_key = Db::fingerprint_key(&format!("{} {}", vendor, product), "usb_hid");
+    let conn = pool.get().map_err(|e| format!("Database error: {}", e))?;
+
+    let mut session = DownloadSession::new();
+    if let Some(fp) = Db::get_device_fingerprint(&conn, &device_key) {
+        log::info!("Loaded existing fingerprint for {} ({} bytes)", device_key, fp.len());
+        session = session.with_fingerprint(fp);
+    }
+    let win = window.clone();
+    session = session.with_event_callback(move |evt| {
+        let _ = win.emit("dive-download-progress", evt);
+    });
+
+    let previews = download_and_parse_dives(&context, &descriptor, stream.iostream, &mut session)?;
+
+    // Save fingerprint of the newest dive for next incremental sync
+    if let Some(fp) = session.fingerprints.first() {
+        let serial_str = session.devinfo.as_ref().map(|d| d.serial.to_string());
+        Db::save_device_fingerprint(
+            &conn,
+            &device_key,
+            fp,
+            serial_str.as_deref(),
+            Some(&format!("{} {}", vendor, product)),
+        ).map_err(|e| format!("Failed to save fingerprint: {}", e))?;
+        log::info!("Saved fingerprint for {} ({} bytes)", device_key, fp.len());
+    }
+
+    let (date_start, date_end) = compute_date_range(&previews);
+    let trip_name = format!("{} {} Download", vendor, product);
+
+    Ok(ParsedFileResult {
+        dives: previews,
+        trip_name,
+        date_start,
+        date_end,
+    })
+}
+
+/// Helper: compute date range from a list of parsed dives.
+fn compute_date_range(previews: &[ParsedDivePreview]) -> (String, String) {
+    if previews.is_empty() {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        return (today.clone(), today);
+    }
+    let mut dates: Vec<&str> = previews.iter().map(|d| d.date.as_str()).collect();
+    dates.sort();
+    (
+        dates.first().unwrap().to_string(),
+        dates.last().unwrap().to_string(),
+    )
+}
+
+/// Scan for BLE dive computer devices.
+/// Returns a list of discovered BLE peripherals.
+#[tauri::command]
+pub async fn scan_ble_devices(duration_secs: Option<u64>) -> Result<Vec<crate::transport::BleDeviceInfo>, String> {
+    crate::transport::scan_ble_devices(duration_secs.unwrap_or(5)).await
+}
+
+/// Download dives from a dive computer over BLE.
+/// `device_id` is the peripheral ID from a previous scan.
+#[tauri::command]
+pub async fn download_dives_ble(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    vendor: String,
+    product: String,
+    device_id: String,
+) -> Result<ParsedFileResult, String> {
+    let pool = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        download_dives_ble_blocking(&window, &pool, &vendor, &product, &device_id)
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+fn download_dives_ble_blocking(
+    window: &tauri::Window,
+    pool: &crate::DbPool,
+    vendor: &str,
+    product: &str,
+    device_id: &str,
+) -> Result<ParsedFileResult, String> {
+    use crate::libdc::*;
+    use crate::transport::*;
+    use crate::db::Db;
+
+    let runtime = tokio::runtime::Handle::current();
+
+    // 1. Find the device descriptor
+    let descriptor = find_descriptor(vendor, product)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Unknown device: {} {}", vendor, product))?;
+
+    // 2. Connect to BLE device
+    let (peripheral, name) = runtime.block_on(connect_ble_device(device_id))?;
+    let transport = BleTransport::connect(peripheral, name)?;
+
+    // 3. Create libdivecomputer context
+    let context = Context::new().map_err(|e| e.to_string())?;
+    context.set_loglevel(2).ok();
+
+    // 4. Create custom iostream backed by our BLE transport
+    let stream = CustomIoStream::new(
+        &context,
+        dc_transport_t::DC_TRANSPORT_BLE,
+        Box::new(transport),
+    )?;
+
+    // 5. Build session with event streaming + fingerprint
+    let device_key = Db::fingerprint_key(&format!("{} {}", vendor, product), "ble");
+    let conn = pool.get().map_err(|e| format!("Database error: {}", e))?;
+
+    let mut session = DownloadSession::new();
+    if let Some(fp) = Db::get_device_fingerprint(&conn, &device_key) {
+        log::info!("Loaded existing fingerprint for {} ({} bytes)", device_key, fp.len());
+        session = session.with_fingerprint(fp);
+    }
+    let win = window.clone();
+    session = session.with_event_callback(move |evt| {
+        let _ = win.emit("dive-download-progress", evt);
+    });
+
+    // 6. Download and parse
+    let previews = download_and_parse_dives(&context, &descriptor, stream.iostream, &mut session)?;
+
+    // 7. Save fingerprint
+    if let Some(fp) = session.fingerprints.first() {
+        let serial_str = session.devinfo.as_ref().map(|d| d.serial.to_string());
+        Db::save_device_fingerprint(
+            &conn,
+            &device_key,
+            fp,
+            serial_str.as_deref(),
+            Some(&format!("{} {}", vendor, product)),
+        ).map_err(|e| format!("Failed to save fingerprint: {}", e))?;
+        log::info!("Saved fingerprint for {} ({} bytes)", device_key, fp.len());
+    }
+
+    // 8. Build result
+    let (date_start, date_end) = compute_date_range(&previews);
+    let trip_name = format!("{} {} Download", vendor, product);
+
+    Ok(ParsedFileResult {
+        dives: previews,
+        trip_name,
+        date_start,
+        date_end,
+    })
+}

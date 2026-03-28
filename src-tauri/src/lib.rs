@@ -4,6 +4,11 @@ mod commands;
 mod photos;
 mod ai;
 mod validation;
+mod metadata;
+mod watcher;
+mod sync_worker;
+mod libdc;
+mod transport;
 
 use db::Database;
 use r2d2::Pool;
@@ -17,6 +22,8 @@ pub type DbPool = Pool<SqliteConnectionManager>;
 
 pub struct AppState {
     pub db: DbPool,
+    pub file_watcher: watcher::FileWatcher,
+    pub sync_worker: sync_worker::SyncWorker,
 }
 
 /// Global storage base path (set once at startup from store or default)
@@ -155,7 +162,9 @@ pub fn run() {
             }
             
             log::info!("Total startup time: {:?}", startup_start.elapsed());
-            app.manage(AppState { db: pool });
+            let file_watcher = watcher::FileWatcher::new(pool.clone(), app.handle().clone());
+            let sync_worker = sync_worker::SyncWorker::new(pool.clone());
+            app.manage(AppState { db: pool, file_watcher, sync_worker });
             
             Ok(())
         })
@@ -178,7 +187,6 @@ pub fn run() {
             commands::insert_tank_pressures,
             commands::import_ssrf_file,
             commands::import_dive_file,
-            commands::import_dive_file_data,
             commands::parse_dive_file_data,
             commands::bulk_import_dives,
             commands::create_dive_from_computer,
@@ -190,6 +198,7 @@ pub fn run() {
             commands::get_dive_stats,
             commands::get_dives_with_details,
             commands::get_photo,
+            commands::get_photo_dive_context,
             commands::scan_photos_for_import,
             commands::import_photos,
             commands::regenerate_thumbnails,
@@ -208,6 +217,10 @@ pub fn run() {
             commands::delete_photos,
             commands::update_photo_rating,
             commands::update_photos_rating,
+            commands::sync_photo_metadata,
+            commands::sync_all_photo_metadata,
+            commands::report_user_activity,
+            commands::nudge_metadata_sync,
             // Species tag commands
             commands::get_all_species_tags,
             commands::search_species_tags,
@@ -301,6 +314,14 @@ pub fn run() {
             // Storage path commands
             commands::get_storage_path,
             commands::set_storage_path,
+            // libdivecomputer commands
+            commands::get_supported_dive_computers,
+            commands::list_serial_ports,
+            commands::list_hid_devices,
+            commands::download_dives_serial,
+            commands::download_dives_usbhid,
+            commands::scan_ble_devices,
+            commands::download_dives_ble,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

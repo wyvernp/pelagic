@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
+cc = "1"
 
 [dependencies]
 serde_json = "1.0"
@@ -62,10 +63,24 @@ base64 = "0.22"
 rexif = "0.7.5"
 
 # Temporary files
-tempfile = "3"
+# tempfile removed — imports now parse from memory (no temp file roundtrip)
 
 # HTTP client for AI API
 reqwest = { version = "0.12", features = ["json"] }
 
 # Secure local storage for sensitive data
 tauri-plugin-store = "2.0"
+
+# Filesystem watching (for detecting saved processed files from external editors)
+notify = "7"
+
+# Serial port I/O (for libdivecomputer serial transport)
+serialport = "4"
+
+# USB HID I/O (for libdivecomputer USB HID transport)
+hidapi = "2"
+
+# BLE I/O (for libdivecomputer Bluetooth Low Energy transport)
+btleplug = "0.11"
+tokio-stream = "0.1"
+uuid = "1"

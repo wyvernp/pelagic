@@ -131,6 +131,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }
   };
 
+
   const handleImportDiveSites = async () => {
     try {
       const selected = await open({
@@ -345,6 +346,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 {rescanResult}
               </div>
             )}
+
+
           </div>
 
           <div className="settings-section">

@@ -1,0 +1,3 @@
+[submodule "src-tauri/third-party/libdivecomputer"]
+	path = src-tauri/third-party/libdivecomputer
+	url = https://github.com/libdivecomputer/libdivecomputer.git

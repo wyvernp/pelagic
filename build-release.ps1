@@ -5,6 +5,7 @@
 .DESCRIPTION
     This script reads the current version from tauri.conf.json, increments it,
     updates all version files, and builds installers for Windows, Mac, and Linux.
+    Optionally commits, tags, and pushes the release to GitHub.
 
 .PARAMETER Major
     Bump the major version (X.0.0) instead of minor version.
@@ -21,8 +22,13 @@
 .PARAMETER Platform
     Build only for specific platform: 'windows', 'mac', 'linux', or 'all' (default).
 
+.PARAMETER Push
+    After a successful build, commit version bump changes, create a git tag (vX.Y.Z),
+    and push both the commit and tag to the remote. This gives you a revertable checkpoint.
+
 .PARAMETER Upload
-    Upload the built MSI to a GitHub release after building.
+    Upload the built MSI to a GitHub release after building. Implies -Push (the tag
+    must exist on the remote for the release). Uses GitHub CLI (gh).
 
 .EXAMPLE
     .\build-release.ps1
@@ -41,8 +47,16 @@
     # Builds Windows installer without version bump
 
 .EXAMPLE
+    .\build-release.ps1 -Push
+    # Bumps patch version, builds, commits, tags vX.Y.Z, and pushes to remote
+
+.EXAMPLE
     .\build-release.ps1 -Upload
-    # Bumps patch version, builds, and uploads MSI to GitHub release
+    # Bumps patch version, builds, commits, tags, pushes, and uploads MSI to GitHub release
+
+.EXAMPLE
+    .\build-release.ps1 -Push -SkipBump
+    # Builds with current version, tags, and pushes (useful for re-tagging)
 #>
 
 param(
@@ -50,10 +64,14 @@ param(
     [switch]$Minor,
     [switch]$Patch,
     [switch]$SkipBump,
+    [switch]$Push,
     [switch]$Upload,
     [ValidateSet('windows', 'mac', 'linux', 'all')]
     [string]$Platform = 'all'
 )
+
+# -Upload implies -Push (need the tag on remote for the GitHub release)
+if ($Upload) { $Push = $true }
 
 $ErrorActionPreference = "Stop"
 
@@ -243,6 +261,83 @@ if (Test-Path $BundlePath) {
     }
 }
 
+# Git tag and push if requested
+if ($Push) {
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "  Git Tag & Push" -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host ""
+    
+    # Check if git is available
+    if (-not (Get-Command "git" -ErrorAction SilentlyContinue)) {
+        Write-Host "Error: git is not installed or not on PATH." -ForegroundColor Red
+        exit 1
+    }
+    
+    $TagName = "v$BuildVersion"
+    
+    # Check for uncommitted changes and commit version bump files
+    $GitStatus = git status --porcelain 2>&1
+    if ($GitStatus) {
+        Write-Host "Committing changes..." -ForegroundColor Yellow
+        git add -A
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: git add failed." -ForegroundColor Red
+            exit 1
+        }
+        
+        git commit -m "Release $TagName"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: git commit failed." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  Committed: Release $TagName" -ForegroundColor Green
+    }
+    else {
+        Write-Host "  No uncommitted changes, skipping commit." -ForegroundColor Gray
+    }
+    
+    # Check if tag already exists locally
+    $ExistingTag = git tag -l $TagName 2>&1
+    if ($ExistingTag) {
+        Write-Host "  Tag $TagName already exists locally. Deleting and re-creating..." -ForegroundColor Yellow
+        git tag -d $TagName | Out-Null
+        
+        # Also delete remote tag if it exists
+        git push origin --delete $TagName 2>$null | Out-Null
+    }
+    
+    # Create annotated tag
+    git tag -a $TagName -m "Pelagic $TagName"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Error: Failed to create git tag $TagName" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  Created tag: $TagName" -ForegroundColor Green
+    
+    # Push commit and tag
+    Write-Host "Pushing to remote..." -ForegroundColor Yellow
+    git push
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Error: git push failed." -ForegroundColor Red
+        exit 1
+    }
+    
+    git push origin $TagName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Error: Failed to push tag $TagName" -ForegroundColor Red
+        exit 1
+    }
+    
+    Write-Host "  Pushed commit and tag $TagName to remote" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  To revert to this release later:" -ForegroundColor Gray
+    Write-Host "    git checkout $TagName" -ForegroundColor White
+    Write-Host "  To reset branch to this release:" -ForegroundColor Gray
+    Write-Host "    git reset --hard $TagName" -ForegroundColor White
+}
+
 # Upload to GitHub Release if requested
 if ($Upload) {
     Write-Host ""
@@ -266,8 +361,8 @@ if ($Upload) {
         exit 1
     }
     
-    $TagName = "v$BuildVersion"
-    $ReleaseName = "Pelagic v$BuildVersion"
+    # $TagName is already set by the Push block above
+    $ReleaseName = "Pelagic $TagName"
     
     # Find the MSI file
     $MsiPath = Join-Path $BundlePath "msi"
