@@ -2006,6 +2006,119 @@ impl<'a> Db<'a> {
     ) -> Result<()> {
         Database::save_device_fingerprint(conn, device_key, fingerprint, device_serial, device_model)
     }
+
+    // ====================== External Submissions ======================
+
+    /// Record a sighting submission to an external platform
+    pub fn create_external_submission(
+        &self,
+        photo_id: Option<i64>,
+        dive_id: Option<i64>,
+        platform: &str,
+        external_url: Option<&str>,
+        external_id: Option<&str>,
+    ) -> Result<i64> {
+        self.conn.execute(
+            r#"INSERT INTO external_submissions (photo_id, dive_id, platform, external_url, external_id, status, submitted_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, 'submitted', datetime('now'))"#,
+            rusqlite::params![photo_id, dive_id, platform, external_url, external_id],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get all submissions for a photo
+    pub fn get_submissions_for_photo(&self, photo_id: i64) -> Result<Vec<ExternalSubmission>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, photo_id, dive_id, platform, external_url, external_id, status, submitted_at
+             FROM external_submissions WHERE photo_id = ?1 ORDER BY submitted_at DESC"
+        )?;
+        let rows = stmt.query_map([photo_id], |row| {
+            Ok(ExternalSubmission {
+                id: row.get(0)?,
+                photo_id: row.get(1)?,
+                dive_id: row.get(2)?,
+                platform: row.get(3)?,
+                external_url: row.get(4)?,
+                external_id: row.get(5)?,
+                status: row.get(6)?,
+                submitted_at: row.get(7)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Check if a photo has already been submitted to a specific platform
+    pub fn has_submission(&self, photo_id: i64, platform: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM external_submissions WHERE photo_id = ?1 AND platform = ?2",
+            rusqlite::params![photo_id, platform],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    // ====================== Species Enrichment Cache ======================
+
+    /// Get cached enrichment data for a species tag
+    pub fn get_species_enrichment(&self, species_tag_id: i64) -> Result<Option<SpeciesEnrichmentCache>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT species_tag_id, gbif_taxon_key, iucn_status, kingdom, phylum, class_name, order_name, family, genus, fetched_at
+             FROM species_enrichment_cache WHERE species_tag_id = ?1"
+        )?;
+        let mut rows = stmt.query_map([species_tag_id], |row| {
+            Ok(SpeciesEnrichmentCache {
+                species_tag_id: row.get(0)?,
+                gbif_taxon_key: row.get(1)?,
+                iucn_status: row.get(2)?,
+                kingdom: row.get(3)?,
+                phylum: row.get(4)?,
+                class_name: row.get(5)?,
+                order_name: row.get(6)?,
+                family: row.get(7)?,
+                genus: row.get(8)?,
+                fetched_at: row.get(9)?,
+            })
+        })?;
+        match rows.next() {
+            Some(Ok(cache)) => Ok(Some(cache)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Upsert enrichment cache for a species tag
+    pub fn save_species_enrichment(
+        &self,
+        species_tag_id: i64,
+        gbif_taxon_key: Option<i64>,
+        iucn_status: Option<&str>,
+        kingdom: Option<&str>,
+        phylum: Option<&str>,
+        class_name: Option<&str>,
+        order_name: Option<&str>,
+        family: Option<&str>,
+        genus: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"INSERT OR REPLACE INTO species_enrichment_cache
+               (species_tag_id, gbif_taxon_key, iucn_status, kingdom, phylum, class_name, order_name, family, genus, fetched_at)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))"#,
+            rusqlite::params![species_tag_id, gbif_taxon_key, iucn_status, kingdom, phylum, class_name, order_name, family, genus],
+        )?;
+        Ok(())
+    }
+
+    /// Check if cached enrichment is stale (older than given days)
+    pub fn is_enrichment_stale(&self, species_tag_id: i64, max_age_days: i64) -> Result<bool> {
+        let is_stale: bool = self.conn.query_row(
+            r#"SELECT COALESCE(
+                (SELECT julianday('now') - julianday(fetched_at) > ?2
+                 FROM species_enrichment_cache WHERE species_tag_id = ?1),
+                1)"#,
+            rusqlite::params![species_tag_id, max_age_days],
+            |row| row.get(0),
+        )?;
+        Ok(is_stale)
+    }
 }
 
 impl Database {
@@ -2324,7 +2437,7 @@ impl Database {
     }
     
     // Current schema version - increment this when adding new migrations
-    pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+    pub const CURRENT_SCHEMA_VERSION: i64 = 6;
     
     /// Check if migrations are needed without running them
     pub fn needs_migration(conn: &Connection) -> bool {
@@ -2401,6 +2514,12 @@ impl Database {
         if current_version < 5 {
             progress("Adding dive computer fingerprint storage...");
             Self::run_migration_v5(conn)?;
+        }
+        
+        // Version 5 -> 6: Add external_submissions table + species enrichment columns
+        if current_version < 6 {
+            progress("Adding citizen science integration tables...");
+            Self::run_migration_v6(conn)?;
         }
         
         // Seed default equipment categories if table is empty
@@ -2685,6 +2804,41 @@ impl Database {
             );
         "#)?;
         log::info!("Migration v5 complete");
+        Ok(())
+    }
+
+    fn run_migration_v6(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v6: adding citizen science tables...");
+        conn.execute_batch(r#"
+            -- Track sightings submitted to external platforms
+            CREATE TABLE IF NOT EXISTS external_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                photo_id INTEGER REFERENCES photos(id) ON DELETE CASCADE,
+                dive_id INTEGER REFERENCES dives(id) ON DELETE SET NULL,
+                platform TEXT NOT NULL,
+                external_url TEXT,
+                external_id TEXT,
+                status TEXT NOT NULL DEFAULT 'submitted',
+                submitted_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_external_submissions_photo ON external_submissions(photo_id);
+            CREATE INDEX IF NOT EXISTS idx_external_submissions_platform ON external_submissions(platform);
+
+            -- Cache biodiversity enrichment data for species
+            CREATE TABLE IF NOT EXISTS species_enrichment_cache (
+                species_tag_id INTEGER PRIMARY KEY REFERENCES species_tags(id) ON DELETE CASCADE,
+                gbif_taxon_key INTEGER,
+                iucn_status TEXT,
+                kingdom TEXT,
+                phylum TEXT,
+                class_name TEXT,
+                order_name TEXT,
+                family TEXT,
+                genus TEXT,
+                fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        "#)?;
+        log::info!("Migration v6 complete");
         Ok(())
     }
     
@@ -5842,4 +5996,32 @@ pub struct SpeciesExport {
     pub photo_count: i64,
     pub dive_count: i64,
     pub trip_count: i64,
+}
+
+// ── Citizen Science / Biodiversity types ────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExternalSubmission {
+    pub id: i64,
+    pub photo_id: Option<i64>,
+    pub dive_id: Option<i64>,
+    pub platform: String,
+    pub external_url: Option<String>,
+    pub external_id: Option<String>,
+    pub status: String,
+    pub submitted_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SpeciesEnrichmentCache {
+    pub species_tag_id: i64,
+    pub gbif_taxon_key: Option<i64>,
+    pub iucn_status: Option<String>,
+    pub kingdom: Option<String>,
+    pub phylum: Option<String>,
+    pub class_name: Option<String>,
+    pub order_name: Option<String>,
+    pub family: Option<String>,
+    pub genus: Option<String>,
+    pub fetched_at: String,
 }

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import { useSettings } from './SettingsModal';
 import { formatDiveName } from '../utils/diveNames';
-import type { DiveMapPoint } from '../types';
+import type { DiveMapPoint, NearbySighting } from '../types';
 import './MapView.css';
 
 interface MapViewProps {
@@ -17,9 +17,14 @@ export function MapView({ isOpen, onClose, onSelectDive }: MapViewProps) {
   const [divePoints, setDivePoints] = useState<DiveMapPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showMegafauna, setShowMegafauna] = useState(false);
+  const [megafaunaSightings, setMegafaunaSightings] = useState<NearbySighting[]>([]);
+  const [loadingSightings, setLoadingSightings] = useState(false);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const megafaunaLayerRef = useRef<any>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -39,6 +44,102 @@ export function MapView({ isOpen, onClose, onSelectDive }: MapViewProps) {
       }
     };
   }, [isOpen, divePoints]);
+
+  // Load megafauna sightings when toggled on
+  useEffect(() => {
+    if (!showMegafauna || !mapRef.current || divePoints.length === 0) {
+      // Remove layer if toggled off
+      if (megafaunaLayerRef.current && mapRef.current) {
+        mapRef.current.removeLayer(megafaunaLayerRef.current);
+        megafaunaLayerRef.current = null;
+      }
+      return;
+    }
+
+    const loadMegafauna = async () => {
+      setLoadingSightings(true);
+      try {
+        // Use center of dive points as reference
+        const centerLat = divePoints.reduce((sum, p) => sum + p.latitude, 0) / divePoints.length;
+        const centerLon = divePoints.reduce((sum, p) => sum + p.longitude, 0) / divePoints.length;
+        
+        const sightings = await invoke<NearbySighting[]>('get_megafauna_sightings', {
+          lat: centerLat,
+          lon: centerLon,
+          radiusDeg: 3.0,
+          limit: 300,
+        });
+        setMegafaunaSightings(sightings);
+        
+        // Add markers to map
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const L = (await import('leaflet')) as any;
+        
+        if (megafaunaLayerRef.current) {
+          mapRef.current.removeLayer(megafaunaLayerRef.current);
+        }
+        
+        const layerGroup = L.layerGroup();
+        
+        const speciesIcons: Record<string, string> = {
+          'Rhincodon typus': '🦈',
+          'Mobula alfredi': '🐙',    // reef manta
+          'Mobula birostris': '🐙',   // giant manta
+        };
+
+        sightings.forEach((s: NearbySighting) => {
+          if (s.latitude == null || s.longitude == null) return;
+          const icon = speciesIcons[s.scientific_name || ''] || '📍';
+          const marker = L.marker([s.latitude, s.longitude], {
+            icon: L.divIcon({
+              className: 'megafauna-marker',
+              html: `<div class="megafauna-marker-icon">${icon}</div>`,
+              iconSize: [24, 24],
+              iconAnchor: [12, 24],
+              popupAnchor: [0, -24],
+            }),
+          });
+          
+          const dateStr = s.date ? new Date(s.date).toLocaleDateString() : 'Unknown date';
+          marker.bindPopup(`
+            <div class="dive-popup">
+              <h4>${s.scientific_name || 'Unknown species'}</h4>
+              <p>📅 ${dateStr}</p>
+              <p>Source: ${s.source.toUpperCase()}</p>
+            </div>
+          `);
+          
+          layerGroup.addLayer(marker);
+        });
+        
+        layerGroup.addTo(mapRef.current);
+        megafaunaLayerRef.current = layerGroup;
+
+        // Handle link clicks in popups
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        mapRef.current.on('popupopen', (e: any) => {
+          const popup = e.popup.getElement();
+          if (popup) {
+            const link = popup.querySelector('.megafauna-link');
+            if (link) {
+              link.addEventListener('click', (evt: Event) => {
+                evt.preventDefault();
+                const url = (evt.target as HTMLElement).getAttribute('data-url');
+                if (url) invoke('open_url', { url });
+              });
+            }
+          }
+        });
+        
+      } catch (err) {
+        logger.error('Failed to load megafauna sightings:', err);
+      } finally {
+        setLoadingSightings(false);
+      }
+    };
+
+    loadMegafauna();
+  }, [showMegafauna, divePoints]);
 
   const loadDivePoints = async () => {
     setLoading(true);
@@ -165,6 +266,16 @@ export function MapView({ isOpen, onClose, onSelectDive }: MapViewProps) {
           <span className="map-view-count">
             {divePoints.length} dive{divePoints.length !== 1 ? 's' : ''} with GPS coordinates
           </span>
+          <button
+            className={`btn btn-secondary btn-small ${showMegafauna ? 'active' : ''}`}
+            onClick={() => setShowMegafauna(!showMegafauna)}
+            disabled={loadingSightings || divePoints.length === 0}
+            title="Toggle whale shark & manta ray sightings from GBIF/OBIS"
+            style={{ marginLeft: 'auto', marginRight: '8px' }}
+          >
+            {loadingSightings ? '⏳' : '🦈'} Megafauna {showMegafauna ? 'ON' : 'OFF'}
+            {megafaunaSightings.length > 0 && showMegafauna && ` (${megafaunaSightings.length})`}
+          </button>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
         

@@ -189,6 +189,25 @@
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
 }
 
+/* Megafauna sighting markers */
+.megafauna-marker {
+  background: none !important;
+  border: none !important;
+}
+
+.megafauna-marker-icon {
+  font-size: 18px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+  opacity: 0.85;
+}
+
+.megafauna-link {
+  color: #2196f3;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 12px;
+}
+
 /* Popup Styles */
 .dive-popup {
   min-width: 200px;

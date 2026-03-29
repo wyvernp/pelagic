@@ -441,7 +441,7 @@ export function SpeciesTagModal({
                 No species found matching "{searchQuery}"
               </div>
             )}
-            
+
             {searchResults.length === 0 && !searchQuery && (
               <div className="no-results">
                 No species tags yet. Start typing to create one!

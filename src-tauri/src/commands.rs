@@ -2952,3 +2952,309 @@ fn download_dives_ble_blocking(
         date_end,
     })
 }
+
+// ====================== Citizen Science / Biodiversity Commands ======================
+
+use crate::biodiversity;
+use crate::inaturalist;
+use crate::db::{ExternalSubmission, SpeciesEnrichmentCache};
+
+// ── iNaturalist OAuth ──────────────────────────────────────────────────────
+
+/// Start the iNaturalist OAuth flow: returns the URL to open in the browser.
+#[tauri::command]
+pub fn inat_get_auth_url(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_store::StoreExt;
+    let store = app.store("secure-settings.json").map_err(|e| format!("Store error: {}", e))?;
+    let client_id = store.get("inatClientId")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "iNaturalist Client ID not configured. Set it in Settings.".to_string())?;
+    Ok(inaturalist::get_auth_url(&client_id))
+}
+
+/// Wait for the OAuth callback and exchange the code for a token.
+#[tauri::command]
+pub async fn inat_complete_auth(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_store::StoreExt;
+
+    let code = inaturalist::wait_for_auth_code().await?;
+
+    let store = app.store("secure-settings.json").map_err(|e| format!("Store error: {}", e))?;
+    let client_id = store.get("inatClientId")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "iNaturalist Client ID not set".to_string())?;
+    let client_secret = store.get("inatClientSecret")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "iNaturalist Client Secret not set".to_string())?;
+
+    let token_response = inaturalist::exchange_code(&client_id, &client_secret, &code).await?;
+    let api_token = inaturalist::get_api_token(&token_response.access_token).await?;
+
+    store.set("inatApiToken", serde_json::json!(api_token));
+    store.save().map_err(|e| format!("Failed to save token: {}", e))?;
+
+    let user = inaturalist::get_current_user(&api_token).await?;
+    let username = user.login.unwrap_or_else(|| "unknown".to_string());
+
+    store.set("inatUsername", serde_json::json!(username));
+    store.save().map_err(|e| format!("Failed to save username: {}", e))?;
+
+    Ok(username)
+}
+
+/// Get the currently connected iNaturalist username (if any).
+#[tauri::command]
+pub fn inat_get_username(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_store::StoreExt;
+    let store = app.store("secure-settings.json").map_err(|e| format!("Store error: {}", e))?;
+    Ok(store.get("inatUsername").and_then(|v| v.as_str().map(|s| s.to_string())))
+}
+
+/// Disconnect iNaturalist (clear stored credentials).
+#[tauri::command]
+pub fn inat_disconnect(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+    let store = app.store("secure-settings.json").map_err(|e| format!("Store error: {}", e))?;
+    store.delete("inatApiToken");
+    store.delete("inatUsername");
+    store.save().map_err(|e| format!("Failed to save store: {}", e))?;
+    Ok(())
+}
+
+// ── iNaturalist Taxa Search ────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn inat_search_taxa(query: String) -> Result<Vec<inaturalist::INatTaxonSimple>, String> {
+    inaturalist::search_taxa(&query, 10).await
+}
+
+// ── iNaturalist Submission ─────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn inat_submit_observation(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    photo_id: i64,
+) -> Result<inaturalist::INatSubmissionResult, String> {
+    use tauri_plugin_store::StoreExt;
+
+    let store = app.store("secure-settings.json").map_err(|e| format!("Store error: {}", e))?;
+    let api_token = store.get("inatApiToken")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "Not connected to iNaturalist. Connect in Settings first.".to_string())?;
+
+    // Gather all DB data before the async call (conn/db are not Send)
+    let (photo_path, dive_id, species_guess, lat, lon, observed_on, description) = {
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+        let db = Db::new(&*conn);
+
+        if db.has_submission(photo_id, "inaturalist").map_err(|e| e.to_string())? {
+            return Err("This photo has already been submitted to iNaturalist".to_string());
+        }
+
+        let photo = db.get_photo(photo_id).map_err(|e| e.to_string())?
+            .ok_or_else(|| "Photo not found".to_string())?;
+
+        let dive = if let Some(did) = photo.dive_id {
+            db.get_dive(did).ok().flatten()
+        } else {
+            None
+        };
+
+        let species_tags = db.get_species_tags_for_photo(photo_id).map_err(|e| e.to_string())?;
+        let species_guess = species_tags.first().map(|t| {
+            t.scientific_name.as_deref().unwrap_or(&t.name).to_string()
+        });
+
+        let (lat, lon) = dive.as_ref()
+            .and_then(|d| match (d.latitude, d.longitude) {
+                (Some(la), Some(lo)) => Some((la, lo)),
+                _ => None,
+            })
+            .or_else(|| match (photo.gps_latitude, photo.gps_longitude) {
+                (Some(la), Some(lo)) => Some((la, lo)),
+                _ => None,
+            })
+            .map(|(la, lo)| (Some(la), Some(lo)))
+            .unwrap_or((None, None));
+
+        let observed_on = dive.as_ref().map(|d| d.date.clone())
+            .or_else(|| photo.capture_time.as_ref().and_then(|ct| ct.get(..10).map(|s| s.to_string())));
+
+        let description = if let Some(d) = &dive {
+            Some(format!(
+                "Observed while SCUBA diving at {:.1}m depth. Dive duration: {} min.",
+                d.max_depth_m,
+                d.duration_seconds / 60
+            ))
+        } else {
+            None
+        };
+
+        (photo.file_path.clone(), photo.dive_id, species_guess, lat, lon, observed_on, description)
+    }; // conn/db dropped here
+
+    let result = inaturalist::submit_observation(
+        &api_token,
+        &photo_path,
+        species_guess.as_deref(),
+        lat, lon,
+        observed_on.as_deref(),
+        description.as_deref(),
+    ).await?;
+
+    // Re-acquire connection to record the submission
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.create_external_submission(
+        Some(photo_id),
+        dive_id,
+        "inaturalist",
+        Some(&result.url),
+        Some(&result.observation_id.to_string()),
+    ).map_err(|e| format!("Failed to record submission: {}", e))?;
+
+    Ok(result)
+}
+
+/// Get external submissions for a photo.
+#[tauri::command]
+pub fn get_photo_submissions(
+    state: State<AppState>,
+    photo_id: i64,
+) -> Result<Vec<ExternalSubmission>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.get_submissions_for_photo(photo_id).map_err(|e| e.to_string())
+}
+
+// ── Biodiversity Enrichment ────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_species_enrichment(
+    state: State<'_, AppState>,
+    species_tag_id: i64,
+) -> Result<Option<SpeciesEnrichmentCache>, String> {
+    // Do all DB reads before any .await (conn/db are not Send)
+    let lookup_name = {
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+        let db = Db::new(&*conn);
+
+        let is_stale = db.is_enrichment_stale(species_tag_id, 7).map_err(|e| e.to_string())?;
+
+        if !is_stale {
+            return db.get_species_enrichment(species_tag_id).map_err(|e| e.to_string());
+        }
+
+        // Get the species tag to know what to look up
+        let species_tags: Vec<crate::db::SpeciesTag> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, name, category, scientific_name FROM species_tags WHERE id = ?1"
+            ).map_err(|e| format!("DB error: {}", e))?;
+            let rows = stmt.query_map([species_tag_id], |row| {
+                Ok(crate::db::SpeciesTag {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    category: row.get(2)?,
+                    scientific_name: row.get(3)?,
+                })
+            }).map_err(|e| format!("DB error: {}", e))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(|e| format!("DB error: {}", e))?
+        };
+
+        let tag = match species_tags.first() {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        tag.scientific_name.as_deref().unwrap_or(&tag.name).to_string()
+    }; // conn/db dropped here
+
+    // Now do the async API call
+    match biodiversity::enrich_species(&lookup_name).await {
+        Ok(enrichment) => {
+            // Re-acquire connection to save results
+            let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+            let db = Db::new(&*conn);
+            db.save_species_enrichment(
+                species_tag_id,
+                enrichment.gbif_taxon_key,
+                enrichment.iucn_status.as_deref(),
+                enrichment.kingdom.as_deref(),
+                enrichment.phylum.as_deref(),
+                enrichment.class_name.as_deref(),
+                enrichment.order.as_deref(),
+                enrichment.family.as_deref(),
+                enrichment.genus.as_deref(),
+            ).map_err(|e| format!("Failed to cache enrichment: {}", e))?;
+
+            db.get_species_enrichment(species_tag_id).map_err(|e| e.to_string())
+        }
+        Err(e) => {
+            log::warn!("Failed to enrich species '{}': {}", lookup_name, e);
+            let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+            let db = Db::new(&*conn);
+            db.get_species_enrichment(species_tag_id).map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Get nearby sightings of a species from GBIF and OBIS.
+#[tauri::command]
+pub async fn get_nearby_sightings(
+    scientific_name: String,
+    lat: f64,
+    lon: f64,
+    radius_deg: Option<f64>,
+    limit: Option<u32>,
+) -> Result<Vec<biodiversity::NearbySighting>, String> {
+    let radius = radius_deg.unwrap_or(0.5);
+    let max = limit.unwrap_or(100);
+    let mut all_sightings = Vec::new();
+
+    if let Ok(matched) = biodiversity::gbif_species_match(&scientific_name).await {
+        if let Some(key) = matched.usageKey {
+            if let Ok(mut sightings) = biodiversity::gbif_occurrences_nearby(key, lat, lon, radius, max / 2).await {
+                all_sightings.append(&mut sightings);
+            }
+        }
+    }
+
+    if let Ok(mut sightings) = biodiversity::obis_occurrences_nearby(&scientific_name, lat, lon, radius, max / 2).await {
+        all_sightings.append(&mut sightings);
+    }
+
+    Ok(all_sightings)
+}
+
+/// Get nearby sightings for megafauna (whale sharks + mantas) near a location.
+#[tauri::command]
+pub async fn get_megafauna_sightings(
+    lat: f64,
+    lon: f64,
+    radius_deg: Option<f64>,
+    limit: Option<u32>,
+) -> Result<Vec<biodiversity::NearbySighting>, String> {
+    let radius = radius_deg.unwrap_or(2.0);
+    let max = limit.unwrap_or(200);
+    let mut all_sightings = Vec::new();
+
+    // Whale shark: GBIF taxon key 2417858 (Rhincodon typus)
+    if let Ok(mut s) = biodiversity::gbif_occurrences_nearby(2417858, lat, lon, radius, max / 4).await {
+        all_sightings.append(&mut s);
+    }
+    // Reef manta: GBIF taxon key 2418451 (Mobula alfredi)
+    if let Ok(mut s) = biodiversity::gbif_occurrences_nearby(2418451, lat, lon, radius, max / 4).await {
+        all_sightings.append(&mut s);
+    }
+    // Giant oceanic manta: GBIF taxon key 2418449 (Mobula birostris)
+    if let Ok(mut s) = biodiversity::gbif_occurrences_nearby(2418449, lat, lon, radius, max / 4).await {
+        all_sightings.append(&mut s);
+    }
+    // OBIS for whale sharks
+    if let Ok(mut s) = biodiversity::obis_occurrences_nearby("Rhincodon typus", lat, lon, radius, max / 4).await {
+        all_sightings.append(&mut s);
+    }
+
+    Ok(all_sightings)
+}

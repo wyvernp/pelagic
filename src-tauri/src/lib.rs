@@ -9,6 +9,8 @@ mod watcher;
 mod sync_worker;
 mod libdc;
 mod transport;
+mod biodiversity;
+mod inaturalist;
 
 use db::Database;
 use r2d2::Pool;
@@ -322,6 +324,17 @@ pub fn run() {
             commands::download_dives_usbhid,
             commands::scan_ble_devices,
             commands::download_dives_ble,
+            // Citizen Science / Biodiversity commands
+            commands::inat_get_auth_url,
+            commands::inat_complete_auth,
+            commands::inat_get_username,
+            commands::inat_disconnect,
+            commands::inat_search_taxa,
+            commands::inat_submit_observation,
+            commands::get_photo_submissions,
+            commands::get_species_enrichment,
+            commands::get_nearby_sightings,
+            commands::get_megafauna_sightings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

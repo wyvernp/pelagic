@@ -66,7 +66,7 @@ rexif = "0.7.5"
 # tempfile removed — imports now parse from memory (no temp file roundtrip)
 
 # HTTP client for AI API
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 
 # Secure local storage for sensitive data
 tauri-plugin-store = "2.0"
@@ -84,3 +84,7 @@ hidapi = "2"
 btleplug = "0.11"
 tokio-stream = "0.1"
 uuid = "1"
+
+# URL encoding/parsing (citizen science APIs)
+urlencoding = "2"
+url = "2"

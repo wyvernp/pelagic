@@ -48,6 +48,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [rescanResult, setRescanResult] = useState<string | null>(null);
   const [detectedEditors, setDetectedEditors] = useState<ImageEditor[]>([]);
   const [loadingEditors, setLoadingEditors] = useState(false);
+  const [inatUsername, setInatUsername] = useState<string | null>(null);
+  const [inatConnecting, setInatConnecting] = useState(false);
+  const [inatClientId, setInatClientId] = useState('');
+  const [inatClientSecret, setInatClientSecret] = useState('');
+  const [inatError, setInatError] = useState<string | null>(null);
   
   const resetTour = useUIStore((state) => state.resetTour);
 
@@ -114,6 +119,19 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         .finally(() => {
           setLoadingEditors(false);
         });
+
+      // Load iNaturalist connection state
+      invoke<string | null>('inat_get_username')
+        .then((username) => setInatUsername(username))
+        .catch(() => setInatUsername(null));
+      
+      // Load iNat client credentials
+      invoke<string | null>('get_secure_setting', { key: 'inatClientId' })
+        .then((val) => setInatClientId(val || ''))
+        .catch(() => {});
+      invoke<string | null>('get_secure_setting', { key: 'inatClientSecret' })
+        .then((val) => setInatClientSecret(val || ''))
+        .catch(() => {});
     }
   }, [isOpen]);
 
@@ -203,11 +221,54 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     } catch (error) {
       logger.error('Failed to save API key to secure storage:', error);
     }
+
+    // Save iNaturalist client credentials
+    try {
+      await invoke('set_secure_setting', { key: 'inatClientId', value: inatClientId });
+      await invoke('set_secure_setting', { key: 'inatClientSecret', value: inatClientSecret });
+    } catch (error) {
+      logger.error('Failed to save iNat credentials:', error);
+    }
     
     // Dispatch a custom event so useSettings hook can update in the same window
     window.dispatchEvent(new CustomEvent('pelagic-settings-changed'));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleInatConnect = async () => {
+    if (!inatClientId || !inatClientSecret) {
+      setInatError('Please enter your iNaturalist Client ID and Secret first.');
+      return;
+    }
+    setInatConnecting(true);
+    setInatError(null);
+    try {
+      // Save credentials before starting flow
+      await invoke('set_secure_setting', { key: 'inatClientId', value: inatClientId });
+      await invoke('set_secure_setting', { key: 'inatClientSecret', value: inatClientSecret });
+
+      const authUrl = await invoke<string>('inat_get_auth_url');
+      await invoke('open_url', { url: authUrl });
+
+      // Wait for callback (up to 120s)
+      const username = await invoke<string>('inat_complete_auth');
+      setInatUsername(username);
+    } catch (error) {
+      logger.error('iNaturalist connection failed:', error);
+      setInatError(String(error));
+    } finally {
+      setInatConnecting(false);
+    }
+  };
+
+  const handleInatDisconnect = async () => {
+    try {
+      await invoke('inat_disconnect');
+      setInatUsername(null);
+    } catch (error) {
+      logger.error('Failed to disconnect iNaturalist:', error);
+    }
   };
 
   const handleChange = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
@@ -428,6 +489,68 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 placeholder="Enter API key..."
               />
             </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Citizen Science</h3>
+            <p className="setting-desc" style={{ marginBottom: '12px' }}>
+              Connect to iNaturalist to submit marine species sightings. GBIF and OBIS enrichment data is fetched automatically for all species tags.
+            </p>
+
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">iNaturalist Client ID</span>
+                <span className="setting-desc">From your <a href="#" onClick={(e) => { e.preventDefault(); openExternalUrl('https://www.inaturalist.org/oauth/applications'); }}>iNaturalist app settings</a></span>
+              </label>
+              <input
+                type="text"
+                className="setting-input"
+                value={inatClientId}
+                onChange={(e) => setInatClientId(e.target.value)}
+                placeholder="Your app Client ID..."
+              />
+            </div>
+
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">iNaturalist Client Secret</span>
+                <span className="setting-desc">Keep this confidential</span>
+              </label>
+              <input
+                type="password"
+                className="setting-input"
+                value={inatClientSecret}
+                onChange={(e) => setInatClientSecret(e.target.value)}
+                placeholder="Your app Client Secret..."
+              />
+            </div>
+
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">iNaturalist Account</span>
+                <span className="setting-desc">
+                  {inatUsername 
+                    ? <>Connected as <strong>{inatUsername}</strong></>
+                    : 'Not connected'}
+                </span>
+              </label>
+              {inatUsername ? (
+                <button className="btn btn-secondary" onClick={handleInatDisconnect}>
+                  Disconnect
+                </button>
+              ) : (
+                <button 
+                  className="btn btn-primary" 
+                  onClick={handleInatConnect}
+                  disabled={inatConnecting || !inatClientId || !inatClientSecret}
+                >
+                  {inatConnecting ? 'Waiting for auth...' : 'Connect'}
+                </button>
+              )}
+            </div>
+            {inatError && (
+              <div className="rescan-result error">{inatError}</div>
+            )}
           </div>
 
           <div className="settings-section">

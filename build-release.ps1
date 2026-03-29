@@ -24,11 +24,12 @@
 
 .PARAMETER Push
     After a successful build, commit version bump changes, create a git tag (vX.Y.Z),
-    and push both the commit and tag to the remote. This gives you a revertable checkpoint.
+    push both the commit and tag to the remote, and upload the MSI to a GitHub release.
+    This is the full release flow.
 
 .PARAMETER Upload
-    Upload the built MSI to a GitHub release after building. Implies -Push (the tag
-    must exist on the remote for the release). Uses GitHub CLI (gh).
+    Upload the built MSI to a GitHub release for the current version tag (vX.Y.Z).
+    Does NOT commit, tag, or push. Useful for re-uploading an MSI without changing git state.
 
 .EXAMPLE
     .\build-release.ps1
@@ -48,15 +49,15 @@
 
 .EXAMPLE
     .\build-release.ps1 -Push
-    # Bumps patch version, builds, commits, tags vX.Y.Z, and pushes to remote
+    # Bumps patch, builds, commits, tags, pushes, and uploads MSI to GitHub release
 
 .EXAMPLE
     .\build-release.ps1 -Upload
-    # Bumps patch version, builds, commits, tags, pushes, and uploads MSI to GitHub release
+    # Builds and uploads MSI to GitHub release for current version (no git changes)
 
 .EXAMPLE
-    .\build-release.ps1 -Push -SkipBump
-    # Builds with current version, tags, and pushes (useful for re-tagging)
+    .\build-release.ps1 -Upload -SkipBump
+    # Skips version bump, builds, and uploads MSI to current tag
 #>
 
 param(
@@ -69,9 +70,6 @@ param(
     [ValidateSet('windows', 'mac', 'linux', 'all')]
     [string]$Platform = 'all'
 )
-
-# -Upload implies -Push (need the tag on remote for the GitHub release)
-if ($Upload) { $Push = $true }
 
 $ErrorActionPreference = "Stop"
 
@@ -120,6 +118,15 @@ $CurrentVersion = $TauriConfig.version
 $ParsedVersion = Parse-Version $CurrentVersion
 
 Write-Host "  Current version: $CurrentVersion" -ForegroundColor White
+
+# Upload-only mode: skip build entirely and jump to upload
+if ($Upload -and -not $Push) {
+    $BuildVersion = $CurrentVersion
+    $BundlePath = Join-Path $ScriptDir "src-tauri\target\release\bundle"
+    $TagName = "v$BuildVersion"
+    Write-Host "  Upload-only mode: skipping build, uploading existing MSI for $TagName" -ForegroundColor Yellow
+}
+else {
 
 # Calculate new version
 if (-not $SkipBump) {
@@ -261,6 +268,8 @@ if (Test-Path $BundlePath) {
     }
 }
 
+} # end of build block (skipped in upload-only mode)
+
 # Git tag and push if requested
 if ($Push) {
     Write-Host ""
@@ -338,8 +347,8 @@ if ($Push) {
     Write-Host "    git reset --hard $TagName" -ForegroundColor White
 }
 
-# Upload to GitHub Release if requested
-if ($Upload) {
+# Upload MSI to GitHub Release (-Push includes this, -Upload is standalone)
+if ($Push -or $Upload) {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host "  Uploading to GitHub Release" -ForegroundColor Cyan
@@ -361,7 +370,8 @@ if ($Upload) {
         exit 1
     }
     
-    # $TagName is already set by the Push block above
+    # Set TagName if not already set by -Push block
+    if (-not $TagName) { $TagName = "v$BuildVersion" }
     $ReleaseName = "Pelagic $TagName"
     
     # Find the MSI file

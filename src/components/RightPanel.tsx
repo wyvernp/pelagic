@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
-import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank, EquipmentSet, PhotoDiveContext } from '../types';
+import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank, EquipmentSet, PhotoDiveContext, ExternalSubmission, SpeciesEnrichmentCache, INatSubmissionResult } from '../types';
+import { IUCN_LABELS, IUCN_COLORS, MEGAFAUNA_DEEP_LINKS } from '../types';
 import { useGeminiApiKey } from './SettingsModal';
 import { logger } from '../utils/logger';
 import './RightPanel.css';
@@ -47,7 +48,19 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [diveEquipmentSets, setDiveEquipmentSets] = useState<EquipmentSet[]>([]);
   const [cameraEquipmentSets, setCameraEquipmentSets] = useState<EquipmentSet[]>([]);
   const [diveContext, setDiveContext] = useState<PhotoDiveContext | null>(null);
+  const [submissions, setSubmissions] = useState<ExternalSubmission[]>([]);
+  const [inatConnected, setInatConnected] = useState(false);
+  const [enrichments, setEnrichments] = useState<Map<number, SpeciesEnrichmentCache>>(new Map());
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const { apiKey: geminiApiKey } = useGeminiApiKey();
+
+  // Check iNaturalist connection on mount
+  useEffect(() => {
+    invoke<string | null>('inat_get_username')
+      .then((username) => setInatConnected(!!username))
+      .catch(() => setInatConnected(false));
+  }, []);
 
   // Load tags when photo changes (separate from rating to avoid unnecessary reloads)
   useEffect(() => {
@@ -73,6 +86,35 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   useEffect(() => {
     setRating(photo?.rating || 0);
   }, [photo?.id, photo?.rating]);
+
+  // Load external submissions and enrichment data
+  useEffect(() => {
+    if (photo) {
+      loadSubmissions(photo.id);
+    } else {
+      setSubmissions([]);
+    }
+    setSubmitError(null);
+  }, [photo?.id]);
+
+  useEffect(() => {
+    // Fetch enrichment data for each species tag
+    const newEnrichments = new Map<number, SpeciesEnrichmentCache>();
+    if (speciesTags.length > 0) {
+      Promise.all(
+        speciesTags.map(async (tag) => {
+          try {
+            const data = await invoke<SpeciesEnrichmentCache | null>('get_species_enrichment', { speciesTagId: tag.id });
+            if (data) newEnrichments.set(tag.id, data);
+          } catch {
+            // silently skip
+          }
+        })
+      ).then(() => setEnrichments(newEnrichments));
+    } else {
+      setEnrichments(newEnrichments);
+    }
+  }, [speciesTags]);
 
   // Load tank data and equipment sets when dive changes
   useEffect(() => {
@@ -127,6 +169,40 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     } catch (error) {
       logger.error('Failed to load dive context:', error);
       setDiveContext(null);
+    }
+  };
+
+  const loadSubmissions = async (photoId: number) => {
+    try {
+      const subs = await invoke<ExternalSubmission[]>('get_photo_submissions', { photoId });
+      setSubmissions(subs);
+    } catch (error) {
+      logger.error('Failed to load submissions:', error);
+      setSubmissions([]);
+    }
+  };
+
+  const handleSubmitToINat = async () => {
+    if (!photo) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await invoke<INatSubmissionResult>('inat_submit_observation', { photoId: photo.id });
+      await loadSubmissions(photo.id);
+      await invoke('open_url', { url: result.url });
+    } catch (error) {
+      logger.error('Failed to submit to iNaturalist:', error);
+      setSubmitError(String(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openExternalUrl = async (url: string) => {
+    try {
+      await invoke('open_url', { url });
+    } catch (error) {
+      logger.error('Failed to open URL:', error);
     }
   };
 
@@ -719,19 +795,52 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                 <label className="tag-label">Species</label>
                 <div className={`tag-list ${speciesTags.length === 0 ? 'empty' : ''}`}>
                   {speciesTags.length > 0 ? (
-                    speciesTags.map((tag) => (
-                      <div key={tag.id} className="tag-chip">
-                        <span className="tag-chip-icon">🐠</span>
-                        <span className="tag-chip-name">{tag.name}</span>
-                        <button 
-                          className="tag-chip-remove" 
-                          onClick={() => handleRemoveSpeciesTag(tag.id)}
-                          title="Remove tag"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))
+                    speciesTags.map((tag) => {
+                      const enrichment = enrichments.get(tag.id);
+                      const iucnStatus = enrichment?.iucn_status;
+                      const scientificName = tag.scientific_name;
+                      const deepLink = scientificName ? MEGAFAUNA_DEEP_LINKS[scientificName] : undefined;
+                      return (
+                        <div key={tag.id} className="tag-chip">
+                          <span className="tag-chip-icon">🐠</span>
+                          <span className="tag-chip-name">{tag.name}</span>
+                          {iucnStatus && iucnStatus !== 'NE' && (
+                            <span
+                              className="iucn-badge"
+                              style={{ backgroundColor: IUCN_COLORS[iucnStatus] || '#9e9e9e' }}
+                              title={IUCN_LABELS[iucnStatus] || iucnStatus}
+                            >
+                              {iucnStatus}
+                            </span>
+                          )}
+                          {deepLink?.sharkbookUrl && (
+                            <button
+                              className="btn-icon-tiny"
+                              title={`Submit to Sharkbook (${deepLink.name})`}
+                              onClick={(e) => { e.stopPropagation(); openExternalUrl(deepLink.sharkbookUrl!); }}
+                            >
+                              🦈
+                            </button>
+                          )}
+                          {deepLink?.mantaMatcherUrl && (
+                            <button
+                              className="btn-icon-tiny"
+                              title={`Submit to MantaMatcher (${deepLink.name})`}
+                              onClick={(e) => { e.stopPropagation(); openExternalUrl(deepLink.mantaMatcherUrl!); }}
+                            >
+                              🐙
+                            </button>
+                          )}
+                          <button 
+                            className="tag-chip-remove" 
+                            onClick={() => handleRemoveSpeciesTag(tag.id)}
+                            title="Remove tag"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })
                   ) : (
                     <span className="text-muted">No species tagged</span>
                   )}
@@ -759,6 +868,58 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                 </div>
               </div>
             </div>
+
+            {/* Citizen Science Section */}
+            {speciesTags.length > 0 && (
+              <div className="panel-section">
+                <h4 className="panel-section-title">Citizen Science</h4>
+                
+                {/* iNaturalist submission */}
+                {submissions.some(s => s.platform === 'inaturalist') ? (
+                  <div className="submission-status">
+                    <span className="submission-icon">✅</span>
+                    <span>Submitted to iNaturalist</span>
+                    {submissions.filter(s => s.platform === 'inaturalist').map(s => (
+                      s.external_url && (
+                        <button
+                          key={s.id}
+                          className="btn-link"
+                          onClick={() => openExternalUrl(s.external_url!)}
+                          title="View on iNaturalist"
+                        >
+                          View →
+                        </button>
+                      )
+                    ))}
+                  </div>
+                ) : inatConnected ? (
+                  <button
+                    className="btn btn-secondary btn-small citizen-science-btn"
+                    onClick={handleSubmitToINat}
+                    disabled={submitting}
+                    title="Submit this sighting to iNaturalist"
+                  >
+                    {submitting ? '⏳ Submitting...' : '🌿 Submit to iNaturalist'}
+                  </button>
+                ) : (
+                  <p className="citizen-science-hint">Connect your iNaturalist account in Settings to submit sightings.</p>
+                )}
+                {submitError && (
+                  <div className="identify-error">{submitError}</div>
+                )}
+
+                {/* Enrichment taxonomy info */}
+                {Array.from(enrichments.values()).map((e, i) => (
+                  e.family && (
+                    <div key={i} className="taxonomy-info">
+                      <span className="taxonomy-path">
+                        {[e.kingdom, e.phylum, e.class_name, e.order_name, e.family].filter(Boolean).join(' › ')}
+                      </span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
           </div>
         </>
       )}

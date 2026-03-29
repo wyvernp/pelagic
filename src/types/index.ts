@@ -456,3 +456,97 @@ export interface ImageEditor {
   name: string;
   path: string;
 }
+
+// ── Citizen Science / Biodiversity types ───────────────────────────────────
+
+export interface ExternalSubmission {
+  id: number;
+  photo_id?: number;
+  dive_id?: number;
+  platform: string;       // 'inaturalist' | 'sharkbook' | etc.
+  external_url?: string;
+  external_id?: string;
+  status: string;
+  submitted_at: string;
+}
+
+export interface SpeciesEnrichmentCache {
+  species_tag_id: number;
+  gbif_taxon_key?: number;
+  iucn_status?: string;   // 'LC' | 'NT' | 'VU' | 'EN' | 'CR' | 'EW' | 'EX' | 'DD' | 'NE'
+  kingdom?: string;
+  phylum?: string;
+  class_name?: string;
+  order_name?: string;
+  family?: string;
+  genus?: string;
+  fetched_at: string;
+}
+
+export interface NearbySighting {
+  source: string;        // 'gbif' | 'obis'
+  scientific_name?: string;
+  latitude?: number;
+  longitude?: number;
+  date?: string;
+  year?: number;
+  depth?: number;
+  country?: string;
+  dataset?: string;
+}
+
+export interface INatTaxonSimple {
+  id: number;
+  scientific_name: string;
+  common_name?: string;
+  rank?: string;
+  iconic_group?: string;
+  photo_url?: string;
+  observations_count?: number;
+}
+
+export interface INatSubmissionResult {
+  observation_id: number;
+  url: string;
+}
+
+// IUCN status display helpers
+export const IUCN_LABELS: Record<string, string> = {
+  LC: 'Least Concern',
+  NT: 'Near Threatened',
+  VU: 'Vulnerable',
+  EN: 'Endangered',
+  CR: 'Critically Endangered',
+  EW: 'Extinct in the Wild',
+  EX: 'Extinct',
+  DD: 'Data Deficient',
+  NE: 'Not Evaluated',
+};
+
+export const IUCN_COLORS: Record<string, string> = {
+  LC: '#4caf50',
+  NT: '#8bc34a',
+  VU: '#ff9800',
+  EN: '#f44336',
+  CR: '#b71c1c',
+  EW: '#4a148c',
+  EX: '#000000',
+  DD: '#9e9e9e',
+  NE: '#bdbdbd',
+};
+
+// Megafauna species for deep-linking to Sharkbook/MantaMatcher
+export const MEGAFAUNA_DEEP_LINKS: Record<string, { name: string; sharkbookUrl?: string; mantaMatcherUrl?: string }> = {
+  'Rhincodon typus': {
+    name: 'Whale Shark',
+    sharkbookUrl: 'https://www.sharkbook.ai/',
+  },
+  'Mobula alfredi': {
+    name: 'Reef Manta Ray',
+    mantaMatcherUrl: 'https://www.mantamatcher.org/',
+  },
+  'Mobula birostris': {
+    name: 'Giant Oceanic Manta Ray',
+    mantaMatcherUrl: 'https://www.mantamatcher.org/',
+  },
+};

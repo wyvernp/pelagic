@@ -1,6 +1,6 @@
 {
   "name": "pelagic",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "Dive photo manager for organizing underwater photography by trips and dives",
   "type": "module",
   "scripts": {

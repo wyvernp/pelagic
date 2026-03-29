@@ -314,6 +314,85 @@
   opacity: 1;
 }
 
+/* IUCN badge */
+.iucn-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  padding: 1px 4px;
+  border-radius: 3px;
+  line-height: 1.2;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+/* Megafauna deep-link buttons */
+.btn-icon-tiny {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+
+.btn-icon-tiny:hover {
+  opacity: 1;
+}
+
+/* Citizen Science section */
+.citizen-science-btn {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.citizen-science-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 8px 0;
+  line-height: 1.4;
+}
+
+.submission-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.submission-icon {
+  font-size: 14px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.btn-link:hover {
+  color: var(--accent-blue-hover, #5dade2);
+}
+
+.taxonomy-info {
+  margin-top: 6px;
+}
+
+.taxonomy-path {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.4;
+}
+
 /* Rating stars */
 .rating-stars {
   display: flex;

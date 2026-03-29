@@ -149,6 +149,37 @@ function ContentGridStepContent() {
   );
 }
 
+function CitizenScienceStepContent() {
+  return (
+    <div className="tour-content tour-content-citizen-science">
+      <h3>Citizen Science</h3>
+      <p>
+        Your dive photos can contribute to <strong>real scientific research</strong>.
+        Submit your AI-identified sightings directly to iNaturalist.
+      </p>
+
+      <div className="tour-citizen-science-grid">
+        <div className="tour-cs-card">
+          <span className="tour-cs-icon">🌿</span>
+          <span className="tour-cs-label">iNaturalist</span>
+          <span className="tour-cs-desc">Contribute your sightings to science</span>
+        </div>
+      </div>
+
+      <div className="tour-features-list">
+        <div className="tour-feature-item">
+          <span className="tour-feature-badge auto">🤖</span>
+          <span>AI-identified species are enriched with <strong>IUCN conservation status</strong></span>
+        </div>
+      </div>
+
+      <p className="tour-hint">
+        Connect your iNaturalist account in Settings to get started.
+      </p>
+    </div>
+  );
+}
+
 function SearchStepContent() {
   return (
     <div className="tour-content">
@@ -212,6 +243,13 @@ const tourSteps: Step[] = [
     target: '.content',
     content: <ContentGridStepContent />,
     placement: 'center',
+    disableBeacon: true,
+    spotlightPadding: 0,
+  },
+  {
+    target: '.panel',
+    content: <CitizenScienceStepContent />,
+    placement: 'left',
     disableBeacon: true,
     spotlightPadding: 0,
   },
