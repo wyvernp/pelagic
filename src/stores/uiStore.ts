@@ -32,7 +32,8 @@ export type ModalName =
   | 'bulkEditDive'
   | 'photoViewer'
   | 'setupWizard'
-  | 'shareCard';
+  | 'shareCard'
+  | 'community';
 
 // Context that modals might need
 export interface ModalContext {

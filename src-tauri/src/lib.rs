@@ -12,6 +12,7 @@ mod transport;
 mod biodiversity;
 mod inaturalist;
 mod backup;
+mod community;
 
 use db::Database;
 use r2d2::Pool;
@@ -343,6 +344,18 @@ pub fn run() {
             commands::create_backup,
             commands::restore_backup,
             commands::read_backup_manifest,
+            // Community commands
+            commands::community_sign_up,
+            commands::community_sign_in,
+            commands::community_refresh_token,
+            commands::community_get_dive_sites,
+            commands::community_get_nearby_dive_sites,
+            commands::community_submit_dive_site,
+            commands::community_get_site_observations,
+            commands::community_get_site_species_summary,
+            commands::community_submit_observation,
+            commands::community_submit_observations_batch,
+            commands::community_get_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

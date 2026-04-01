@@ -20,6 +20,7 @@ export interface AppSettings {
   diveNamePrefix: string; // Prefix for dive names, e.g., "Dive", "#", ".", etc.
   hasCompletedWelcome: boolean; // Whether user has completed the welcome setup
   hasCompletedSetup: boolean; // Whether user has completed the setup wizard
+  communitySharing: boolean; // Whether user has opted in to community data sharing
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -30,6 +31,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   diveNamePrefix: 'Dive',
   hasCompletedWelcome: false,
   hasCompletedSetup: false,
+  communitySharing: false,
 };
 
 // Format dive name based on prefix type
@@ -57,6 +59,12 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [backupResult, setBackupResult] = useState<string | null>(null);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const [restoreResult, setRestoreResult] = useState<string | null>(null);
+  const [communityEmail, setCommunityEmail] = useState('');
+  const [communityPassword, setCommunityPassword] = useState('');
+  const [communityUser, setCommunityUser] = useState<string | null>(null);
+  const [communityLoading, setCommunityLoading] = useState(false);
+  const [communityError, setCommunityError] = useState<string | null>(null);
+  const [communityStats, setCommunityStats] = useState<{ total_sites: number; total_observations: number; total_species: number } | null>(null);
   
   const resetTour = useUIStore((state) => state.resetTour);
 
@@ -136,8 +144,63 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       invoke<string | null>('get_secure_setting', { key: 'inatClientSecret' })
         .then((val) => setInatClientSecret(val || ''))
         .catch(() => {});
+
+      // Load community account state
+      invoke<string | null>('get_secure_setting', { key: 'community_email' })
+        .then((email) => setCommunityUser(email))
+        .catch(() => setCommunityUser(null));
+      
+      // Load community stats
+      invoke<{ total_sites: number; total_observations: number; total_species: number }>('community_get_stats')
+        .then((stats) => setCommunityStats(stats))
+        .catch(() => {});
     }
   }, [isOpen]);
+
+  const handleCommunitySignUp = async () => {
+    if (!communityEmail || !communityPassword) return;
+    setCommunityLoading(true);
+    setCommunityError(null);
+    try {
+      const result = await invoke<{ access_token: string; refresh_token: string; user: { email: string | null } }>('community_sign_up', { email: communityEmail, password: communityPassword });
+      await invoke('set_secure_setting', { key: 'community_access_token', value: result.access_token });
+      await invoke('set_secure_setting', { key: 'community_refresh_token', value: result.refresh_token });
+      await invoke('set_secure_setting', { key: 'community_email', value: communityEmail });
+      setCommunityUser(communityEmail);
+      setCommunityPassword('');
+    } catch (error) {
+      setCommunityError(String(error));
+    } finally {
+      setCommunityLoading(false);
+    }
+  };
+
+  const handleCommunitySignIn = async () => {
+    if (!communityEmail || !communityPassword) return;
+    setCommunityLoading(true);
+    setCommunityError(null);
+    try {
+      const result = await invoke<{ access_token: string; refresh_token: string; user: { email: string | null } }>('community_sign_in', { email: communityEmail, password: communityPassword });
+      await invoke('set_secure_setting', { key: 'community_access_token', value: result.access_token });
+      await invoke('set_secure_setting', { key: 'community_refresh_token', value: result.refresh_token });
+      await invoke('set_secure_setting', { key: 'community_email', value: communityEmail });
+      setCommunityUser(communityEmail);
+      setCommunityPassword('');
+    } catch (error) {
+      setCommunityError(String(error));
+    } finally {
+      setCommunityLoading(false);
+    }
+  };
+
+  const handleCommunitySignOut = async () => {
+    await invoke('set_secure_setting', { key: 'community_access_token', value: '' });
+    await invoke('set_secure_setting', { key: 'community_refresh_token', value: '' });
+    await invoke('set_secure_setting', { key: 'community_email', value: '' });
+    setCommunityUser(null);
+    setCommunityEmail('');
+    setCommunityError(null);
+  };
 
   const handleRescanAllExif = async () => {
     setRescanning(true);
@@ -660,6 +723,105 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </div>
             {inatError && (
               <div className="rescan-result error">{inatError}</div>
+            )}
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Community</h3>
+            <p className="setting-desc" style={{ marginBottom: '12px' }}>
+              Contribute your dive sites and species observations to a shared community database. When enabled, your data syncs automatically — no manual steps needed.
+            </p>
+
+            {communityStats && (
+              <div className="setting-row" style={{ justifyContent: 'flex-start', gap: '24px', marginBottom: '8px' }}>
+                <span className="setting-desc"><strong>{communityStats.total_sites}</strong> dive sites</span>
+                <span className="setting-desc"><strong>{communityStats.total_observations}</strong> observations</span>
+                <span className="setting-desc"><strong>{communityStats.total_species}</strong> species</span>
+              </div>
+            )}
+
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">Community Sharing</span>
+                <span className="setting-desc">
+                  {settings.communitySharing
+                    ? 'Your dive sites and species sightings sync automatically'
+                    : 'Enable to share your dive data with the community'}
+                </span>
+              </label>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.communitySharing}
+                  onChange={(e) => handleChange('communitySharing', e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            </div>
+
+            {settings.communitySharing && (
+              <>
+                {communityUser ? (
+                  <div className="setting-row">
+                    <label className="setting-label">
+                      <span className="setting-name">Community Account</span>
+                      <span className="setting-desc">Signed in as <strong>{communityUser}</strong>. Data syncs on app start and when you create dive sites or tag species.</span>
+                    </label>
+                    <button className="btn btn-secondary" onClick={handleCommunitySignOut}>
+                      Sign Out
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <p className="setting-desc" style={{ marginBottom: '8px' }}>
+                      Create an account or sign in to start sharing. Your email is only used for authentication.
+                    </p>
+                    <div className="setting-row">
+                      <label className="setting-label">
+                        <span className="setting-name">Email</span>
+                      </label>
+                      <input
+                        type="email"
+                        className="setting-input"
+                        value={communityEmail}
+                        onChange={(e) => setCommunityEmail(e.target.value)}
+                        placeholder="your@email.com"
+                      />
+                    </div>
+                    <div className="setting-row">
+                      <label className="setting-label">
+                        <span className="setting-name">Password</span>
+                      </label>
+                      <input
+                        type="password"
+                        className="setting-input"
+                        value={communityPassword}
+                        onChange={(e) => setCommunityPassword(e.target.value)}
+                        placeholder="Password (min 6 chars)"
+                      />
+                    </div>
+                    <div className="setting-row" style={{ justifyContent: 'flex-end', gap: '8px' }}>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={handleCommunitySignUp}
+                        disabled={communityLoading || !communityEmail || communityPassword.length < 6}
+                      >
+                        {communityLoading ? 'Working...' : 'Sign Up'}
+                      </button>
+                      <button
+                        className="btn btn-primary"
+                        onClick={handleCommunitySignIn}
+                        disabled={communityLoading || !communityEmail || !communityPassword}
+                      >
+                        {communityLoading ? 'Working...' : 'Sign In'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+            {communityError && (
+              <div className="rescan-result error">{communityError}</div>
             )}
           </div>
 

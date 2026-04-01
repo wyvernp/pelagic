@@ -629,3 +629,73 @@
   width: 14px;
   height: 14px;
 }
+
+/* Community Sightings in Location section */
+.community-sightings-section {
+  margin-top: 8px;
+}
+
+.community-sightings-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.15s, color 0.15s;
+}
+
+.community-sightings-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.community-sightings-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.community-sightings-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.community-sightings-empty {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 8px 0;
+}
+
+.community-sighting-item {
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+.community-sighting-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.community-sighting-sci {
+  font-weight: 400;
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.community-sighting-meta {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}

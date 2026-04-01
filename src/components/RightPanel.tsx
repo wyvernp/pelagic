@@ -1,11 +1,21 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { format } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
 import type { Photo, Dive, SpeciesTag, GeneralTag, Trip, IdentificationResult, TankPressure, DiveTank, EquipmentSet, PhotoDiveContext, ExternalSubmission, SpeciesEnrichmentCache, INatSubmissionResult } from '../types';
 import { IUCN_LABELS, IUCN_COLORS, MEGAFAUNA_DEEP_LINKS } from '../types';
-import { useGeminiApiKey } from './SettingsModal';
+import { useGeminiApiKey, useSettings } from './SettingsModal';
 import { logger } from '../utils/logger';
 import './RightPanel.css';
+
+interface CommunitySiteSpecies {
+  species_name: string;
+  scientific_name: string | null;
+  category: string | null;
+  sighting_count: number;
+  last_seen: string | null;
+  min_depth: number | null;
+  max_depth: number | null;
+}
 
 interface RightPanelProps {
   photo: Photo | null;
@@ -56,6 +66,57 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const { apiKey: geminiApiKey } = useGeminiApiKey();
+  const settings = useSettings();
+
+  // Community sightings state
+  const [communitySightings, setCommunitySightings] = useState<CommunitySiteSpecies[]>([]);
+  const [communitySightingsOpen, setCommunitySightingsOpen] = useState(false);
+  const [communitySightingsLoading, setCommunitySightingsLoading] = useState(false);
+
+  // Reset community sightings when dive changes
+  useEffect(() => {
+    setCommunitySightings([]);
+    setCommunitySightingsOpen(false);
+  }, [dive?.id]);
+
+  const handleLoadCommunitySightings = useCallback(async () => {
+    if (!dive?.latitude || !dive?.longitude) return;
+    if (communitySightingsOpen) {
+      setCommunitySightingsOpen(false);
+      return;
+    }
+    setCommunitySightingsLoading(true);
+    setCommunitySightingsOpen(true);
+    try {
+      const nearbySites = await invoke<Array<{ id: string | null }>>('community_get_nearby_dive_sites', {
+        lat: dive.latitude,
+        lon: dive.longitude,
+        radiusKm: 1.0,
+      });
+      // Fetch species summary for each nearby site
+      const allSpecies: CommunitySiteSpecies[] = [];
+      for (const site of nearbySites) {
+        if (site.id) {
+          const summary = await invoke<CommunitySiteSpecies[]>('community_get_site_species_summary', { diveSiteId: site.id });
+          allSpecies.push(...summary);
+        }
+      }
+      // Deduplicate by species_name, keeping highest sighting_count
+      const speciesMap = new Map<string, CommunitySiteSpecies>();
+      for (const sp of allSpecies) {
+        const existing = speciesMap.get(sp.species_name);
+        if (!existing || sp.sighting_count > existing.sighting_count) {
+          speciesMap.set(sp.species_name, sp);
+        }
+      }
+      setCommunitySightings(Array.from(speciesMap.values()).sort((a, b) => b.sighting_count - a.sighting_count));
+    } catch (err) {
+      logger.error('Failed to load community sightings:', err);
+      setCommunitySightings([]);
+    } finally {
+      setCommunitySightingsLoading(false);
+    }
+  }, [dive?.latitude, dive?.longitude, communitySightingsOpen]);
 
   // Check iNaturalist connection on mount
   useEffect(() => {
@@ -1198,6 +1259,43 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                     </div>
                   )}
                 </dl>
+                {dive.latitude != null && dive.longitude != null && settings.communitySharing && (
+                  <div className="community-sightings-section">
+                    <button
+                      className="community-sightings-btn"
+                      onClick={handleLoadCommunitySightings}
+                      disabled={communitySightingsLoading}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                      </svg>
+                      {communitySightingsLoading ? 'Loading...' : communitySightingsOpen ? 'Hide Community Sightings' : 'Community Sightings'}
+                    </button>
+                    {communitySightingsOpen && !communitySightingsLoading && (
+                      <div className="community-sightings-list">
+                        {communitySightings.length === 0 ? (
+                          <div className="community-sightings-empty">No community observations near this location yet.</div>
+                        ) : (
+                          communitySightings.map((sp, i) => (
+                            <div key={i} className="community-sighting-item">
+                              <div className="community-sighting-name">
+                                {sp.species_name}
+                                {sp.scientific_name && <span className="community-sighting-sci"> ({sp.scientific_name})</span>}
+                              </div>
+                              <div className="community-sighting-meta">
+                                {sp.sighting_count} sighting{sp.sighting_count !== 1 ? 's' : ''}
+                                {sp.last_seen && <> &middot; Last seen {sp.last_seen}</>}
+                                {sp.min_depth != null && sp.max_depth != null && (
+                                  <> &middot; {sp.min_depth === sp.max_depth ? `${sp.min_depth}m` : `${sp.min_depth}-${sp.max_depth}m`}</>
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

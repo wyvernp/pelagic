@@ -39,6 +39,8 @@ import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import { MigrationScreen, type MigrationProgress } from './components/MigrationScreen';
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { ShareCardModal } from './components/ShareCardModal';
+import { CommunityModal } from './components/CommunityModal';
+import { useCommunitySync } from './hooks/useCommunitySync';
 import type { Photo } from './types';
 
 // Check if we're in dev mode
@@ -116,6 +118,9 @@ function App() {
     showContextMenu,
     hideContextMenu,
   } = useUIStore();
+
+  // Community auto-sync hook (declared early — used by dive/photo handlers)
+  const { syncDiveSite, syncDiveObservations } = useCommunitySync();
 
   // Migration state - tracks if database migration is in progress
   const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
@@ -704,11 +709,15 @@ function App() {
         invalidateTripCache(selectedTripId);
         await loadDivesForTrip(selectedTripId);
       }
+      // Auto-sync dive site to community if location + coords present
+      if (data.location && data.latitude != null && data.longitude != null) {
+        syncDiveSite(data.location, data.latitude, data.longitude);
+      }
     } catch (error) {
       logger.error('Failed to update dive:', error);
       alert('Failed to update dive: ' + error);
     }
-  }, [closeModal, selectedTripId, loadDivesForTrip, invalidateTripCache]);
+  }, [closeModal, selectedTripId, loadDivesForTrip, invalidateTripCache, syncDiveSite]);
 
   const handleDeleteDive = useCallback(async (diveId: number) => {
     try {
@@ -785,7 +794,14 @@ function App() {
     } else if (selectedTripId) {
       await loadPhotosForTrip(selectedTripId);
     }
-  }, [selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
+    // Auto-sync species observations to community after photo updates (AI identification, etc.)
+    if (selectedDive && selectedDive.dive_site_id && selectedPhotoIds.size > 0) {
+      syncDiveObservations(
+        { dive_site_id: selectedDive.dive_site_id, date: selectedDive.date, max_depth_m: selectedDive.max_depth_m },
+        Array.from(selectedPhotoIds)
+      );
+    }
+  }, [selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache, selectedDive, selectedPhotoIds, syncDiveObservations]);
 
   const handleClearSearch = useCallback(() => {
     clearSearch();
@@ -1316,6 +1332,7 @@ function App() {
         onOpenMap={() => openModal('map')}
         onOpenDiveComputer={() => openModal('diveComputer')}
         onOpenEquipment={() => openModal('equipment')}
+        onOpenCommunity={() => openModal('community')}
       />
       <UpdateChecker />
       {thumbnailProgress && (
@@ -1441,6 +1458,13 @@ function App() {
         onClose={closeModal}
         onTagsAdded={() => {
           logger.debug('Tags added successfully');
+          // Auto-sync species observations to community
+          if (selectedDive && selectedDive.dive_site_id) {
+            syncDiveObservations(
+              { dive_site_id: selectedDive.dive_site_id, date: selectedDive.date, max_depth_m: selectedDive.max_depth_m },
+              Array.from(selectedPhotoIds)
+            );
+          }
         }}
       />
       <GeneralTagModal
@@ -1519,6 +1543,10 @@ function App() {
         trip={selectedTrip}
         photos={currentPhotos}
         initialPhotoId={modalContext.sharePhotoId}
+      />
+      <CommunityModal
+        isOpen={activeModal === 'community'}
+        onClose={closeModal}
       />
       <WalkthroughTour
         run={isTourRunning}

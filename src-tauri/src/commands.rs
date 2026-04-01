@@ -1,6 +1,6 @@
 use tauri::{State, Emitter};
 use std::path::Path;
-use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveTank, DiveStats, DiveWithDetails, Db, CaptionTemplate}, import, photos, metadata};
+use crate::{AppState, db::{Trip, Dive, DiveSample, Photo, TankPressure, DiveTank, DiveStats, DiveWithDetails, Db, CaptionTemplate}, import, photos, metadata, community};
 use crate::validation::{Validator, MAX_NAME_LENGTH, MAX_LOCATION_LENGTH, MAX_BATCH_SIZE};
 
 #[tauri::command]
@@ -3298,4 +3298,85 @@ pub fn read_backup_manifest(zip_path: String) -> Result<backup::BackupManifest, 
 pub fn restore_backup(zip_path: String) -> Result<backup::RestoreResult, String> {
     let path = std::path::Path::new(&zip_path);
     backup::restore_backup(path)
+}
+
+// ====================== Community Commands ======================
+
+#[tauri::command]
+pub async fn community_sign_up(email: String, password: String) -> Result<community::AuthResponse, String> {
+    community::sign_up(&email, &password).await
+}
+
+#[tauri::command]
+pub async fn community_sign_in(email: String, password: String) -> Result<community::AuthResponse, String> {
+    community::sign_in(&email, &password).await
+}
+
+#[tauri::command]
+pub async fn community_refresh_token(refresh_token: String) -> Result<community::AuthRefreshResponse, String> {
+    community::refresh_token(&refresh_token).await
+}
+
+#[tauri::command]
+pub async fn community_get_dive_sites() -> Result<Vec<community::CommunityDiveSite>, String> {
+    community::get_community_dive_sites().await
+}
+
+#[tauri::command]
+pub async fn community_get_nearby_dive_sites(lat: f64, lon: f64, radius_km: f64) -> Result<Vec<community::CommunityDiveSite>, String> {
+    community::get_nearby_dive_sites(lat, lon, radius_km).await
+}
+
+#[tauri::command]
+pub async fn community_submit_dive_site(
+    app: tauri::AppHandle,
+    site: community::CommunityDiveSite,
+) -> Result<community::CommunityDiveSite, String> {
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    let token = store.get("community_access_token")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+    community::submit_dive_site(&token, &site).await
+}
+
+#[tauri::command]
+pub async fn community_get_site_observations(dive_site_id: String) -> Result<Vec<community::CommunityObservation>, String> {
+    community::get_site_observations(&dive_site_id).await
+}
+
+#[tauri::command]
+pub async fn community_get_site_species_summary(dive_site_id: String) -> Result<Vec<community::SiteSpeciesSummary>, String> {
+    community::get_site_species_summary(&dive_site_id).await
+}
+
+#[tauri::command]
+pub async fn community_submit_observation(
+    app: tauri::AppHandle,
+    observation: community::CommunityObservation,
+) -> Result<community::CommunityObservation, String> {
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    let token = store.get("community_access_token")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+    community::submit_observation(&token, &observation).await
+}
+
+#[tauri::command]
+pub async fn community_submit_observations_batch(
+    app: tauri::AppHandle,
+    observations: Vec<community::CommunityObservation>,
+) -> Result<Vec<community::CommunityObservation>, String> {
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    let token = store.get("community_access_token")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+    community::submit_observations_batch(&token, &observations).await
+}
+
+#[tauri::command]
+pub async fn community_get_stats() -> Result<community::CommunityStats, String> {
+    community::get_community_stats().await
 }
