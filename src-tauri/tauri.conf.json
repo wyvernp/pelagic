@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -82,7 +82,9 @@
       }
     },
     "windows": {
-      "wix": null,
+      "wix": {
+        "upgradeCode": "e82d8404-d686-5f8a-98db-d1f718fd9203"
+      },
       "nsis": null
     },
     "createUpdaterArtifacts": true
