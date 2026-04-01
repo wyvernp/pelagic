@@ -24,12 +24,12 @@
 
 .PARAMETER Push
     After a successful build, commit version bump changes, create a git tag (vX.Y.Z),
-    push both the commit and tag to the remote, and upload the MSI to a GitHub release.
+    push both the commit and tag to the remote, and upload the installer to a GitHub release.
     This is the full release flow.
 
 .PARAMETER Upload
-    Upload the built MSI to a GitHub release for the current version tag (vX.Y.Z).
-    Does NOT commit, tag, or push. Useful for re-uploading an MSI without changing git state.
+    Upload the built installer to a GitHub release for the current version tag (vX.Y.Z).
+    Does NOT commit, tag, or push. Useful for re-uploading an installer without changing git state.
 
 .EXAMPLE
     .\build-release.ps1
@@ -49,15 +49,15 @@
 
 .EXAMPLE
     .\build-release.ps1 -Push
-    # Bumps patch, builds, commits, tags, pushes, and uploads MSI to GitHub release
+    # Bumps patch, builds, commits, tags, pushes, and uploads installer to GitHub release
 
 .EXAMPLE
     .\build-release.ps1 -Upload
-    # Builds and uploads MSI to GitHub release for current version (no git changes)
+    # Builds and uploads installer to GitHub release for current version (no git changes)
 
 .EXAMPLE
     .\build-release.ps1 -Upload -SkipBump
-    # Skips version bump, builds, and uploads MSI to current tag
+    # Skips version bump, builds, and uploads installer to current tag
 #>
 
 param(
@@ -133,7 +133,7 @@ if ($Upload -and -not $Push) {
     $BuildVersion = $CurrentVersion
     $BundlePath = Join-Path $ScriptDir "src-tauri\target\release\bundle"
     $TagName = "v$BuildVersion"
-    Write-Host "  Upload-only mode: skipping build, uploading existing MSI for $TagName" -ForegroundColor Yellow
+    Write-Host "  Upload-only mode: skipping build, uploading existing installer for $TagName" -ForegroundColor Yellow
 }
 else {
 
@@ -366,7 +366,7 @@ if ($Push) {
     Write-Host "    git reset --hard $TagName" -ForegroundColor White
 }
 
-# Upload MSI to GitHub Release (-Push includes this, -Upload is standalone)
+# Upload installer to GitHub Release (-Push includes this, -Upload is standalone)
 if ($Push -or $Upload) {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Cyan
@@ -393,16 +393,16 @@ if ($Push -or $Upload) {
     if (-not $TagName) { $TagName = "v$BuildVersion" }
     $ReleaseName = "Pelagic $TagName"
     
-    # Find the MSI file
-    $MsiPath = Join-Path $BundlePath "msi"
-    $MsiFile = Get-ChildItem -Path $MsiPath -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Find the NSIS installer
+    $NsisPath = Join-Path $BundlePath "nsis"
+    $InstallerFile = Get-ChildItem -Path $NsisPath -Filter "*-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     
-    if (-not $MsiFile) {
-        Write-Host "Error: No MSI file found in $MsiPath" -ForegroundColor Red
+    if (-not $InstallerFile) {
+        Write-Host "Error: No NSIS installer found in $NsisPath" -ForegroundColor Red
         exit 1
     }
     
-    Write-Host "MSI file: $($MsiFile.Name)" -ForegroundColor White
+    Write-Host "Installer: $($InstallerFile.Name)" -ForegroundColor White
     Write-Host "Tag: $TagName" -ForegroundColor White
     Write-Host ""
     
@@ -414,11 +414,11 @@ if ($Push -or $Upload) {
     
     if ($ReleaseExists) {
         Write-Host "Release $TagName already exists. Uploading asset..." -ForegroundColor Yellow
-        gh release upload $TagName $MsiFile.FullName --clobber
+        gh release upload $TagName $InstallerFile.FullName --clobber
     }
     else {
         Write-Host "Creating new release $TagName..." -ForegroundColor Yellow
-        gh release create $TagName $MsiFile.FullName --title $ReleaseName --generate-notes
+        gh release create $TagName $InstallerFile.FullName --title $ReleaseName --generate-notes
     }
     
     if ($LASTEXITCODE -eq 0) {
@@ -431,8 +431,8 @@ if ($Push -or $Upload) {
         exit 1
     }
 
-    # Upload MSI signature file for Tauri updater
-    $SigFile = Get-ChildItem -Path $MsiPath -Filter "*.msi.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Upload NSIS signature file for Tauri updater
+    $SigFile = Get-ChildItem -Path $NsisPath -Filter "*-setup.exe.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($SigFile) {
         Write-Host ""
         Write-Host "Uploading updater signature: $($SigFile.Name)" -ForegroundColor Yellow
@@ -447,7 +447,7 @@ if ($Push -or $Upload) {
         Write-Host ""
         Write-Host "Generating latest.json for Tauri updater..." -ForegroundColor Yellow
         $SigContent = (Get-Content $SigFile.FullName -Raw).Trim()
-        $MsiUrl = "https://github.com/wyvernp/pelagic/releases/download/$TagName/$($MsiFile.Name)"
+        $InstallerUrl = "https://github.com/wyvernp/pelagic/releases/download/$TagName/$($InstallerFile.Name)"
         $PubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         $LatestJson = @{
             version = $BuildVersion
@@ -456,7 +456,7 @@ if ($Push -or $Upload) {
             platforms = @{
                 "windows-x86_64" = @{
                     signature = $SigContent
-                    url = $MsiUrl
+                    url = $InstallerUrl
                 }
             }
         } | ConvertTo-Json -Depth 5
@@ -474,7 +474,7 @@ if ($Push -or $Upload) {
     }
     else {
         Write-Host ""
-        Write-Host "  No .msi.sig found - skipping updater manifest." -ForegroundColor Yellow
+        Write-Host "  No .exe.sig found - skipping updater manifest." -ForegroundColor Yellow
         Write-Host "  Set TAURI_SIGNING_PRIVATE_KEY env var before building to enable update signing." -ForegroundColor Yellow
     }
 }
