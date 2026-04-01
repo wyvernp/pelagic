@@ -205,6 +205,7 @@ export interface Photo {
   metering_mode?: string;           // Spot, Matrix, Center-weighted
   gps_latitude?: number;
   gps_longitude?: number;
+  caption?: string;
   
   created_at: string;
   updated_at: string;

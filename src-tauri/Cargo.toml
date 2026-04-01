@@ -1,6 +1,6 @@
 [package]
 name = "pelagic"
-version = "0.2.0"
+version = "0.3.16"
 description = "Dive photo manager for organizing underwater photography"
 authors = ["you"]
 license = "MIT"
@@ -71,6 +71,10 @@ reqwest = { version = "0.12", features = ["json", "multipart"] }
 # Secure local storage for sensitive data
 tauri-plugin-store = "2.0"
 
+# Auto-updater & process (relaunch)
+tauri-plugin-updater = "2.0"
+tauri-plugin-process = "2.0"
+
 # Filesystem watching (for detecting saved processed files from external editors)
 notify = "7"
 
@@ -88,3 +92,6 @@ uuid = "1"
 # URL encoding/parsing (citizen science APIs)
 urlencoding = "2"
 url = "2"
+
+# Zip archive support (backup/restore)
+zip = { version = "2", default-features = false, features = ["deflate"] }

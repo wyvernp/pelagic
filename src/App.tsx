@@ -13,6 +13,7 @@ import {
   useUIStore,
 } from './stores';
 import { Header } from './components/Header';
+import { UpdateChecker } from './components/UpdateChecker';
 import { Sidebar } from './components/Sidebar';
 import { ContentArea } from './components/ContentArea';
 import { RightPanel } from './components/RightPanel';
@@ -1316,6 +1317,7 @@ function App() {
         onOpenDiveComputer={() => openModal('diveComputer')}
         onOpenEquipment={() => openModal('equipment')}
       />
+      <UpdateChecker />
       {thumbnailProgress && (
         <div className="thumbnail-progress">
           Generating thumbnails: {thumbnailProgress.current} / {thumbnailProgress.total}

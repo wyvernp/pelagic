@@ -130,6 +130,7 @@ pub struct Photo {
     pub metering_mode: Option<String>,
     pub gps_latitude: Option<f64>,
     pub gps_longitude: Option<f64>,
+    pub caption: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -900,6 +901,7 @@ impl<'a> Db<'a> {
             flash_fired: row.get::<_, Option<i32>>(22)?.map(|i| i != 0),
             metering_mode: row.get(23)?, gps_latitude: row.get(24)?, gps_longitude: row.get(25)?,
             created_at: row.get(26)?, updated_at: row.get(27)?,
+            caption: row.get(28).unwrap_or(None),
         })
     }
 
@@ -910,7 +912,7 @@ impl<'a> Db<'a> {
                     p.filename, p.capture_time, p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.dive_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -927,7 +929,7 @@ impl<'a> Db<'a> {
                     p.filename, p.capture_time, p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.trip_id = ? AND p.dive_id IS NULL AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -944,7 +946,7 @@ impl<'a> Db<'a> {
                     p.filename, p.capture_time, p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.trip_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -962,7 +964,7 @@ impl<'a> Db<'a> {
                     COALESCE(p.rating, 0) as rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.dive_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -1033,7 +1035,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos WHERE id = ?"
+                    created_at, updated_at, caption FROM photos WHERE id = ?"
         )?;
         let mut rows = stmt.query([id])?;
         match rows.next()? { Some(row) => Ok(Some(Self::map_photo_row(row)?)), None => Ok(None) }
@@ -1045,7 +1047,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos WHERE thumbnail_path IS NULL OR thumbnail_path = '' ORDER BY id"
+                    created_at, updated_at, caption FROM photos WHERE thumbnail_path IS NULL OR thumbnail_path = '' ORDER BY id"
         )?;
         let photos = stmt.query_map([], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos)
@@ -1057,7 +1059,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos ORDER BY id"
+                    created_at, updated_at, caption FROM photos ORDER BY id"
         )?;
         let photos = stmt.query_map([], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos)
@@ -1069,7 +1071,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos WHERE raw_photo_id = ?"
+                    created_at, updated_at, caption FROM photos WHERE raw_photo_id = ?"
         )?;
         let mut photos = stmt.query_map([raw_photo_id], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos.pop())
@@ -1118,6 +1120,11 @@ impl<'a> Db<'a> {
 
     pub fn update_photo_rating(&self, photo_id: i64, rating: i32) -> Result<()> {
         self.conn.execute("UPDATE photos SET rating = ?, updated_at = datetime('now') WHERE id = ?", params![rating, photo_id])?;
+        Ok(())
+    }
+
+    pub fn update_photo_caption(&self, photo_id: i64, caption: Option<&str>) -> Result<()> {
+        self.conn.execute("UPDATE photos SET caption = ?, updated_at = datetime('now') WHERE id = ?", params![caption, photo_id])?;
         Ok(())
     }
 
@@ -1241,7 +1248,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos WHERE id IN ({}) ORDER BY capture_time", placeholders
+                    created_at, updated_at, caption FROM photos WHERE id IN ({}) ORDER BY capture_time", placeholders
         );
         let mut stmt = self.conn.prepare(&query)?;
         let photos = stmt.query_map(rusqlite::params_from_iter(photo_ids.iter()), Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
@@ -1425,7 +1432,7 @@ impl<'a> Db<'a> {
                     p.raw_photo_id, p.rating, p.camera_make, p.camera_model, p.lens_info,
                     p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode,
-                    p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at
+                    p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photo_species_tags pst ON pst.photo_id = p.id
              LEFT JOIN species_tags st ON st.id = pst.species_tag_id
@@ -1467,6 +1474,7 @@ impl<'a> Db<'a> {
                 gps_longitude: row.get(25)?,
                 created_at: row.get(26)?,
                 updated_at: row.get(27)?,
+                caption: row.get(28).unwrap_or(None),
             })
         })?.collect::<std::result::Result<Vec<_>, _>>()?;
         
@@ -1539,7 +1547,7 @@ impl<'a> Db<'a> {
                     p.filename, p.capture_time, p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE (p.is_processed = 0 OR p.raw_photo_id IS NULL)"
         );
@@ -1960,7 +1968,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos WHERE trip_id = ? AND is_processed = 0 AND filename LIKE ? ORDER BY id LIMIT 1"
+                    created_at, updated_at, caption FROM photos WHERE trip_id = ? AND is_processed = 0 AND filename LIKE ? ORDER BY id LIMIT 1"
         )?;
         let mut photos = stmt.query_map(params![trip_id, pattern], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos.pop())
@@ -1981,7 +1989,7 @@ impl<'a> Db<'a> {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at FROM photos WHERE file_path = ? OR file_path = ? COLLATE NOCASE LIMIT 1"
+                    created_at, updated_at, caption FROM photos WHERE file_path = ? OR file_path = ? COLLATE NOCASE LIMIT 1"
         )?;
         let mut photos = stmt.query_map(params![file_path, normalized], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
         Ok(photos.pop())
@@ -2331,6 +2339,7 @@ impl Database {
                 metering_mode TEXT,
                 gps_latitude REAL,
                 gps_longitude REAL,
+                caption TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -2437,7 +2446,7 @@ impl Database {
     }
     
     // Current schema version - increment this when adding new migrations
-    pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+    pub const CURRENT_SCHEMA_VERSION: i64 = 7;
     
     /// Check if migrations are needed without running them
     pub fn needs_migration(conn: &Connection) -> bool {
@@ -2520,6 +2529,12 @@ impl Database {
         if current_version < 6 {
             progress("Adding citizen science integration tables...");
             Self::run_migration_v6(conn)?;
+        }
+        
+        // Version 6 -> 7: Add caption column to photos
+        if current_version < 7 {
+            progress("Adding photo captions...");
+            Self::run_migration_v7(conn)?;
         }
         
         // Seed default equipment categories if table is empty
@@ -2839,6 +2854,14 @@ impl Database {
             );
         "#)?;
         log::info!("Migration v6 complete");
+        Ok(())
+    }
+    
+    /// Migration v7: Add caption column to photos table
+    fn run_migration_v7(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v7: adding caption to photos...");
+        conn.execute("ALTER TABLE photos ADD COLUMN caption TEXT", []).ok();
+        log::info!("Migration v7 complete");
         Ok(())
     }
     
@@ -3562,7 +3585,7 @@ impl Database {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at
+                    created_at, updated_at, caption
              FROM photos 
              ORDER BY id"
         )?;
@@ -3581,7 +3604,7 @@ impl Database {
                     p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.trip_id = ? AND p.dive_id IS NULL AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -3602,7 +3625,7 @@ impl Database {
                     p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.trip_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -3623,7 +3646,7 @@ impl Database {
                     p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.dive_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -3645,7 +3668,7 @@ impl Database {
                     COALESCE(p.rating, 0) as rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE p.dive_id = ? AND (p.is_processed = 0 OR p.raw_photo_id IS NULL)
@@ -3802,7 +3825,7 @@ impl Database {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at
+                    created_at, updated_at, caption
              FROM photos 
              WHERE trip_id = ? AND is_processed = 0 AND filename LIKE ?
              ORDER BY id LIMIT 1"
@@ -3893,7 +3916,7 @@ impl Database {
              width, height, file_size_bytes, is_processed, raw_photo_id, rating, camera_make, camera_model,
              lens_info, focal_length_mm, aperture, shutter_speed, iso,
              exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-             created_at, updated_at
+             created_at, updated_at, caption
              FROM photos WHERE raw_photo_id = ?"
         )?;
         let mut photos = stmt.query_map([raw_photo_id], Self::map_photo_row)?.collect::<Result<Vec<_>>>()?;
@@ -3946,6 +3969,7 @@ impl Database {
             gps_longitude: row.get(25)?,
             created_at: row.get(26)?,
             updated_at: row.get(27)?,
+            caption: row.get(28).unwrap_or(None),
         })
     }
     
@@ -3964,7 +3988,7 @@ impl Database {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at
+                    created_at, updated_at, caption
              FROM photos WHERE thumbnail_path IS NULL OR thumbnail_path = '' ORDER BY id"
         )?;
         
@@ -3979,7 +4003,7 @@ impl Database {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture, shutter_speed, iso,
                     exposure_compensation, white_balance, flash_fired, metering_mode, gps_latitude, gps_longitude,
-                    created_at, updated_at
+                    created_at, updated_at, caption
              FROM photos WHERE id = ?"
         )?;
         
@@ -4066,6 +4090,15 @@ impl Database {
         Ok(())
     }
     
+    /// Update photo caption
+    pub fn update_photo_caption(&self, photo_id: i64, caption: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE photos SET caption = ?, updated_at = datetime('now') WHERE id = ?",
+            params![caption, photo_id],
+        )?;
+        Ok(())
+    }
+    
     /// Update rating for multiple photos (batch update for performance)
     pub fn update_photos_rating(&self, photo_ids: &[i64], rating: i32) -> Result<()> {
         if photo_ids.is_empty() {
@@ -4100,7 +4133,7 @@ impl Database {
                     p.width, p.height, p.file_size_bytes, p.is_processed, p.raw_photo_id, p.rating,
                     p.camera_make, p.camera_model, p.lens_info, p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode, p.gps_latitude, p.gps_longitude,
-                    p.created_at, p.updated_at
+                    p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photos proc ON proc.raw_photo_id = p.id AND proc.is_processed = 1
              WHERE (p.is_processed = 0 OR p.raw_photo_id IS NULL)"
@@ -4998,7 +5031,7 @@ impl Database {
                     width, height, file_size_bytes, is_processed, raw_photo_id, rating,
                     camera_make, camera_model, lens_info, focal_length_mm, aperture,
                     shutter_speed, iso, exposure_compensation, white_balance, flash_fired,
-                    metering_mode, gps_latitude, gps_longitude, created_at, updated_at
+                    metering_mode, gps_latitude, gps_longitude, created_at, updated_at, caption
              FROM photos WHERE id IN ({})",
             placeholders
         );
@@ -5036,6 +5069,7 @@ impl Database {
                 gps_longitude: row.get(25)?,
                 created_at: row.get(26)?,
                 updated_at: row.get(27)?,
+                caption: row.get(28).unwrap_or(None),
             })
         })?.collect::<std::result::Result<Vec<_>, _>>()?;
         
@@ -5322,7 +5356,7 @@ impl Database {
                     p.raw_photo_id, p.rating, p.camera_make, p.camera_model, p.lens_info,
                     p.focal_length_mm, p.aperture, p.shutter_speed, p.iso,
                     p.exposure_compensation, p.white_balance, p.flash_fired, p.metering_mode,
-                    p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at
+                    p.gps_latitude, p.gps_longitude, p.created_at, p.updated_at, p.caption
              FROM photos p
              LEFT JOIN photo_species_tags pst ON pst.photo_id = p.id
              LEFT JOIN species_tags st ON st.id = pst.species_tag_id
@@ -5364,6 +5398,7 @@ impl Database {
                 gps_longitude: row.get(25)?,
                 created_at: row.get(26)?,
                 updated_at: row.get(27)?,
+                caption: row.get(28).unwrap_or(None),
             })
         })?.collect::<std::result::Result<Vec<_>, _>>()?;
         

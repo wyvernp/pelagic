@@ -11,6 +11,7 @@ mod libdc;
 mod transport;
 mod biodiversity;
 mod inaturalist;
+mod backup;
 
 use db::Database;
 use r2d2::Pool;
@@ -54,6 +55,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -218,6 +221,7 @@ pub fn run() {
             // Photo management commands
             commands::delete_photos,
             commands::update_photo_rating,
+            commands::update_photo_caption,
             commands::update_photos_rating,
             commands::sync_photo_metadata,
             commands::sync_all_photo_metadata,
@@ -335,6 +339,10 @@ pub fn run() {
             commands::get_species_enrichment,
             commands::get_nearby_sightings,
             commands::get_megafauna_sightings,
+            // Backup & Restore commands
+            commands::create_backup,
+            commands::restore_backup,
+            commands::read_backup_manifest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

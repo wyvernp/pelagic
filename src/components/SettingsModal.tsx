@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { logger } from '../utils/logger';
 import { useUIStore } from '../stores/uiStore';
 import type { ImageEditor } from '../types';
@@ -53,6 +53,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [inatClientId, setInatClientId] = useState('');
   const [inatClientSecret, setInatClientSecret] = useState('');
   const [inatError, setInatError] = useState<string | null>(null);
+  const [backupInProgress, setBackupInProgress] = useState(false);
+  const [backupResult, setBackupResult] = useState<string | null>(null);
+  const [restoreInProgress, setRestoreInProgress] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<string | null>(null);
   
   const resetTour = useUIStore((state) => state.resetTour);
 
@@ -271,6 +275,70 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }
   };
 
+  const handleCreateBackup = async () => {
+    try {
+      const timestamp = new Date().toISOString().slice(0, 10);
+      const destPath = await save({
+        title: 'Save Backup',
+        defaultPath: `pelagic-backup-${timestamp}.zip`,
+        filters: [{ name: 'Zip Archive', extensions: ['zip'] }],
+      });
+      if (!destPath) return;
+
+      setBackupInProgress(true);
+      setBackupResult(null);
+
+      const result = await invoke<{ path: string; size_bytes: number; thumbnail_count: number }>('create_backup', { destPath });
+      const sizeMb = (result.size_bytes / (1024 * 1024)).toFixed(1);
+      setBackupResult(`✓ Backup saved (${sizeMb} MB, ${result.thumbnail_count} thumbnails)`);
+    } catch (error) {
+      logger.error('Backup failed:', error);
+      setBackupResult(`✗ Backup failed: ${error}`);
+    } finally {
+      setBackupInProgress(false);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    try {
+      const zipPath = await open({
+        title: 'Select Backup to Restore',
+        multiple: false,
+        filters: [{ name: 'Pelagic Backup', extensions: ['zip'] }],
+      });
+      if (!zipPath) return;
+
+      // Read manifest to show confirmation
+      const manifest = await invoke<{ app_version: string; created_at: string; db_size_bytes: number; thumbnail_count: number }>(
+        'read_backup_manifest', { zipPath }
+      );
+
+      const date = new Date(manifest.created_at).toLocaleDateString();
+      const sizeMb = (manifest.db_size_bytes / (1024 * 1024)).toFixed(1);
+      const confirmed = window.confirm(
+        `Restore from backup?\n\n` +
+        `Created: ${date}\n` +
+        `App version: ${manifest.app_version}\n` +
+        `Database size: ${sizeMb} MB\n` +
+        `Thumbnails: ${manifest.thumbnail_count}\n\n` +
+        `⚠ This will replace your current database. A safety copy (.bak) will be kept.\n` +
+        `The app will need to restart after restoring.`
+      );
+      if (!confirmed) return;
+
+      setRestoreInProgress(true);
+      setRestoreResult(null);
+
+      const result = await invoke<{ thumbnails_restored: number }>('restore_backup', { zipPath });
+      setRestoreResult(`✓ Restored successfully (${result.thumbnails_restored} thumbnails). Please restart the app.`);
+    } catch (error) {
+      logger.error('Restore failed:', error);
+      setRestoreResult(`✗ Restore failed: ${error}`);
+    } finally {
+      setRestoreInProgress(false);
+    }
+  };
+
   const handleChange = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
@@ -409,6 +477,48 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             )}
 
 
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Backup & Restore</h3>
+            
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">Create Backup</span>
+                <span className="setting-desc">Export your database and thumbnails to a zip file. Photo originals are not included.</span>
+              </label>
+              <button 
+                className="btn btn-secondary"
+                onClick={handleCreateBackup}
+                disabled={backupInProgress || restoreInProgress}
+              >
+                {backupInProgress ? 'Backing up...' : 'Backup'}
+              </button>
+            </div>
+            {backupResult && (
+              <div className={`rescan-result ${backupResult.startsWith('✓') ? 'success' : 'error'}`}>
+                {backupResult}
+              </div>
+            )}
+
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">Restore from Backup</span>
+                <span className="setting-desc">Replace your current database with a previous backup. The app will restart.</span>
+              </label>
+              <button 
+                className="btn btn-secondary"
+                onClick={handleRestoreBackup}
+                disabled={backupInProgress || restoreInProgress}
+              >
+                {restoreInProgress ? 'Restoring...' : 'Restore'}
+              </button>
+            </div>
+            {restoreResult && (
+              <div className={`rescan-result ${restoreResult.startsWith('✓') ? 'success' : 'error'}`}>
+                {restoreResult}
+              </div>
+            )}
           </div>
 
           <div className="settings-section">

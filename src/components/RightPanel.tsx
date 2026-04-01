@@ -39,6 +39,8 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   const [speciesTags, setSpeciesTags] = useState<SpeciesTag[]>([]);
   const [generalTags, setGeneralTags] = useState<GeneralTag[]>([]);
   const [rating, setRating] = useState(0);
+  const [caption, setCaption] = useState('');
+  const [captionSaving, setCaptionSaving] = useState(false);
   const [identifying, setIdentifying] = useState(false);
   const [identifyError, setIdentifyError] = useState<string | null>(null);
   const [showContextInput, setShowContextInput] = useState(false);
@@ -86,6 +88,11 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
   useEffect(() => {
     setRating(photo?.rating || 0);
   }, [photo?.id, photo?.rating]);
+
+  // Sync caption state when photo changes
+  useEffect(() => {
+    setCaption(photo?.caption || '');
+  }, [photo?.id, photo?.caption]);
 
   // Load external submissions and enrichment data
   useEffect(() => {
@@ -347,6 +354,25 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
     } catch (error) {
       logger.error('Failed to update rating:', error);
       setRating(photo.rating || 0);
+    }
+  };
+
+  const handleCaptionSave = async () => {
+    if (!photo) return;
+    const trimmed = caption.trim();
+    if (trimmed === (photo.caption || '')) return;
+    setCaptionSaving(true);
+    try {
+      await invoke('update_photo_caption', {
+        photoId: photo.id,
+        caption: trimmed || null,
+      });
+      onPhotoUpdated?.();
+    } catch (error) {
+      logger.error('Failed to update caption:', error);
+      setCaption(photo.caption || '');
+    } finally {
+      setCaptionSaving(false);
     }
   };
 
@@ -748,6 +774,25 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="panel-section">
+              <h4 className="panel-section-title">Caption</h4>
+              <textarea
+                className="caption-textarea"
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                onBlur={handleCaptionSave}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    (e.target as HTMLTextAreaElement).blur();
+                  }
+                }}
+                placeholder="Add a caption or note..."
+                rows={3}
+                disabled={captionSaving}
+              />
             </div>
 
             <div className="panel-section">

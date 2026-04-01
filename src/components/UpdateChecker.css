@@ -1,0 +1,48 @@
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--color-accent, #0066cc);
+  color: white;
+  font-size: 13px;
+  z-index: 1000;
+}
+
+.update-banner .update-text {
+  flex: 1;
+}
+
+.update-banner .update-error {
+  color: #ffcccc;
+}
+
+.update-banner .btn-small {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.update-banner .btn-primary {
+  background: white;
+  color: var(--color-accent, #0066cc);
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.update-banner .btn-primary:hover {
+  background: #f0f0f0;
+}
+
+.update-banner .btn-secondary {
+  background: transparent;
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+}
+
+.update-banner .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}

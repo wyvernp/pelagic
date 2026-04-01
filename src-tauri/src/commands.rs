@@ -1596,6 +1596,21 @@ pub fn update_photo_rating(state: State<AppState>, photo_id: i64, rating: i32) -
 }
 
 #[tauri::command]
+pub fn update_photo_caption(state: State<AppState>, photo_id: i64, caption: Option<String>) -> Result<(), String> {
+    let mut v = Validator::new();
+    v.validate_id("photo_id", photo_id);
+    v.validate_notes("caption", caption.as_deref());
+    if v.has_errors() {
+        return Err(v.to_error_string());
+    }
+
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
+    db.update_photo_caption(photo_id, caption.as_deref()).map_err(|e| e.to_string())?;
+    metadata::write_xmp_sidecar_for_photo(&db, photo_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn update_photos_rating(state: State<AppState>, photo_ids: Vec<i64>, rating: i32) -> Result<(), String> {
     // Validate inputs
     let mut v = Validator::new();
@@ -3257,4 +3272,30 @@ pub async fn get_megafauna_sightings(
     }
 
     Ok(all_sightings)
+}
+
+// ====================== Backup & Restore Commands ======================
+
+use crate::backup;
+
+/// Create a full backup (database + thumbnails) as a zip file.
+#[tauri::command]
+pub fn create_backup(dest_path: String) -> Result<backup::BackupResult, String> {
+    let path = std::path::Path::new(&dest_path);
+    backup::create_backup(path)
+}
+
+/// Read manifest from a backup zip (for preview before restore).
+#[tauri::command]
+pub fn read_backup_manifest(zip_path: String) -> Result<backup::BackupManifest, String> {
+    let path = std::path::Path::new(&zip_path);
+    backup::read_backup_manifest(path)
+}
+
+/// Restore from a backup zip. Replaces the current database and thumbnails.
+/// The app should be restarted after this operation.
+#[tauri::command]
+pub fn restore_backup(zip_path: String) -> Result<backup::RestoreResult, String> {
+    let path = std::path::Path::new(&zip_path);
+    backup::restore_backup(path)
 }

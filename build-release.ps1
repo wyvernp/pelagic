@@ -79,6 +79,15 @@ if (Test-Path "C:\msys64\mingw64\bin") {
     Write-Host "Added MinGW to PATH" -ForegroundColor Gray
 }
 
+# Load Tauri updater signing key (passed inline to build process, not persisted in session)
+$SigningKeyPath = Join-Path $HOME ".tauri\pelagic.key"
+$SigningKeyContent = $null
+$SigningKeyPassword = "pelagic"
+if (Test-Path $SigningKeyPath) {
+    $SigningKeyContent = (Get-Content $SigningKeyPath -Raw).Trim()
+    Write-Host "Found updater signing key at $SigningKeyPath" -ForegroundColor Gray
+}
+
 # File paths
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriConfigPath = Join-Path $ScriptDir "src-tauri\tauri.conf.json"
@@ -235,10 +244,20 @@ switch ($Platform) {
     }
 }
 
-# Run the build
+# Run the build (pass signing key to child process only, not persisted in session)
+Write-Host ""
+# Run the build — set signing vars, run build, then clean up (vars don't leak to outer session)
 Write-Host ""
 Write-Host "Running: npm run $($BuildArgs -join ' ')" -ForegroundColor Cyan
-& npm run @BuildArgs
+try {
+    $env:TAURI_SIGNING_PRIVATE_KEY = $SigningKeyContent
+    $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $SigningKeyPassword
+    & npm run @BuildArgs
+}
+finally {
+    Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
@@ -410,6 +429,53 @@ if ($Push -or $Upload) {
     else {
         Write-Host "Failed to upload to GitHub release" -ForegroundColor Red
         exit 1
+    }
+
+    # Upload MSI signature file for Tauri updater
+    $SigFile = Get-ChildItem -Path $MsiPath -Filter "*.msi.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($SigFile) {
+        Write-Host ""
+        Write-Host "Uploading updater signature: $($SigFile.Name)" -ForegroundColor Yellow
+        gh release upload $TagName $SigFile.FullName --clobber
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Signature uploaded" -ForegroundColor Green
+        }
+    }
+
+    # Generate and upload latest.json for Tauri auto-updater
+    if ($SigFile) {
+        Write-Host ""
+        Write-Host "Generating latest.json for Tauri updater..." -ForegroundColor Yellow
+        $SigContent = (Get-Content $SigFile.FullName -Raw).Trim()
+        $MsiUrl = "https://github.com/wyvernp/pelagic/releases/download/$TagName/$($MsiFile.Name)"
+        $PubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        $LatestJson = @{
+            version = $BuildVersion
+            notes = "Pelagic $TagName"
+            pub_date = $PubDate
+            platforms = @{
+                "windows-x86_64" = @{
+                    signature = $SigContent
+                    url = $MsiUrl
+                }
+            }
+        } | ConvertTo-Json -Depth 5
+
+        $LatestJsonPath = Join-Path $BundlePath "latest.json"
+        Set-Content -Path $LatestJsonPath -Value $LatestJson
+        Write-Host "  Uploading latest.json..." -ForegroundColor Yellow
+        gh release upload $TagName $LatestJsonPath --clobber
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Updater manifest uploaded!" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  Warning: Failed to upload latest.json" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host ""
+        Write-Host "  No .msi.sig found - skipping updater manifest." -ForegroundColor Yellow
+        Write-Host "  Set TAURI_SIGNING_PRIVATE_KEY env var before building to enable update signing." -ForegroundColor Yellow
     }
 }
 

@@ -194,6 +194,7 @@ fn build_xmp_document(
     species_tags: &[SpeciesTag],
     general_tags: &[GeneralTag],
     dive_context: Option<&PhotoDiveContext>,
+    caption: Option<&str>,
 ) -> String {
     let mut xmp = String::new();
 
@@ -219,6 +220,17 @@ fn build_xmp_document(
     // Rating (XMP standard: xmp:Rating, 0-5)
     if let Some(r) = rating {
         xmp.push_str(&format!("   <xmp:Rating>{}</xmp:Rating>\n", r));
+    }
+
+    // Caption / description (dc:description)
+    if let Some(cap) = caption {
+        if !cap.is_empty() {
+            xmp.push_str("   <dc:description>\n");
+            xmp.push_str("    <rdf:Alt>\n");
+            xmp.push_str(&format!("     <rdf:li xml:lang=\"x-default\">{}</rdf:li>\n", xml_escape(cap)));
+            xmp.push_str("    </rdf:Alt>\n");
+            xmp.push_str("   </dc:description>\n");
+        }
     }
 
     // Collect all keywords: general tags + species names
@@ -338,8 +350,9 @@ fn build_xmp_packet(
     species_tags: &[SpeciesTag],
     general_tags: &[GeneralTag],
     dive_context: Option<&PhotoDiveContext>,
+    caption: Option<&str>,
 ) -> Vec<u8> {
-    let xmp_body = build_xmp_document(rating, species_tags, general_tags, dive_context);
+    let xmp_body = build_xmp_document(rating, species_tags, general_tags, dive_context, caption);
 
     let mut packet = String::new();
     // XMP packet header (required for embedded XMP)
@@ -821,7 +834,8 @@ pub fn write_xmp_sidecar_for_photo(db: &Db, photo_id: i64) {
         let has_metadata = photo.rating.unwrap_or(0) > 0
             || !species_tags.is_empty()
             || !general_tags.is_empty()
-            || dive_context.is_some();
+            || dive_context.is_some()
+            || photo.caption.as_ref().map_or(false, |c| !c.is_empty());
 
         let can_embed = supports_embedded_xmp(&photo.file_path);
 
@@ -829,7 +843,7 @@ pub fn write_xmp_sidecar_for_photo(db: &Db, photo_id: i64) {
         if can_embed {
             let file_path = Path::new(&photo.file_path);
             if has_metadata && file_path.exists() {
-                let xmp_packet = build_xmp_packet(photo.rating, &species_tags, &general_tags, dive_context.as_ref());
+                let xmp_packet = build_xmp_packet(photo.rating, &species_tags, &general_tags, dive_context.as_ref(), photo.caption.as_deref());
                 match embed_xmp_in_file(file_path, &xmp_packet) {
                     Ok(true) => log::info!("Embedded XMP metadata into: {}", photo.file_path),
                     Ok(false) => {}
@@ -854,7 +868,7 @@ pub fn write_xmp_sidecar_for_photo(db: &Db, photo_id: i64) {
                 log::info!("Removed empty XMP sidecar: {}", sidecar_path.display());
             }
         } else {
-            let xmp_content = build_xmp_document(photo.rating, &species_tags, &general_tags, dive_context.as_ref());
+            let xmp_content = build_xmp_document(photo.rating, &species_tags, &general_tags, dive_context.as_ref(), photo.caption.as_deref());
             std::fs::write(&sidecar_path, xmp_content.as_bytes())
                 .map_err(|e| format!("Failed to write XMP sidecar {}: {}", sidecar_path.display(), e))?;
             log::info!("Wrote XMP sidecar: {}", sidecar_path.display());
@@ -893,7 +907,7 @@ mod tests {
 
     #[test]
     fn test_build_xmp_empty() {
-        let doc = build_xmp_document(None, &[], &[], None);
+        let doc = build_xmp_document(None, &[], &[], None, None);
         assert!(doc.contains("x:xmpmeta"));
         assert!(!doc.contains("xmp:Rating"));
         assert!(!doc.contains("dc:subject"));
@@ -901,7 +915,7 @@ mod tests {
 
     #[test]
     fn test_build_xmp_with_rating() {
-        let doc = build_xmp_document(Some(4), &[], &[], None);
+        let doc = build_xmp_document(Some(4), &[], &[], None, None);
         assert!(doc.contains("<xmp:Rating>4</xmp:Rating>"));
     }
 
@@ -918,7 +932,7 @@ mod tests {
             name: "Wide Angle".to_string(),
         }];
 
-        let doc = build_xmp_document(Some(5), &species, &general, None);
+        let doc = build_xmp_document(Some(5), &species, &general, None, None);
 
         // Check standard keywords
         assert!(doc.contains("<rdf:li>Wide Angle</rdf:li>"));
