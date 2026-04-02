@@ -356,6 +356,10 @@ pub fn run() {
             commands::community_submit_observation,
             commands::community_submit_observations_batch,
             commands::community_get_stats,
+            commands::community_get_dive_sites_paginated,
+            commands::community_get_site_observations_paginated,
+            commands::community_get_site_contributor_info,
+            commands::community_get_distinct_species,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

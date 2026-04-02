@@ -78,6 +78,31 @@ pub struct CommunityStats {
     pub total_species: i64,
 }
 
+/// Paginated response wrapper
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PaginatedDiveSites {
+    pub sites: Vec<CommunityDiveSite>,
+    pub total: i64,
+    pub offset: i64,
+    pub limit: i64,
+}
+
+/// Paginated observations response
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PaginatedObservations {
+    pub observations: Vec<CommunityObservation>,
+    pub total: i64,
+    pub offset: i64,
+    pub limit: i64,
+}
+
+/// Contributor info for a site
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SiteContributorInfo {
+    pub contributor_count: i64,
+    pub observation_count: i64,
+}
+
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 /// Sign up with email + password
@@ -269,16 +294,28 @@ pub async fn submit_dive_site(token: &str, site: &CommunityDiveSite) -> Result<C
     let client = Client::new();
     let url = format!("{}/rest/v1/dive_sites", SUPABASE_URL);
 
-    let body = serde_json::json!({
+    // Don't send submitted_by — let Supabase set it from auth.uid() via a default or trigger
+    let mut body = serde_json::json!({
         "name": site.name,
         "lat": site.lat,
         "lon": site.lon,
-        "country": site.country,
-        "region": site.region,
-        "max_depth": site.max_depth,
-        "description": site.description,
-        "submitted_by": site.submitted_by,
     });
+
+    // Only include optional fields if they're not null
+    if let Some(ref country) = site.country {
+        body["country"] = serde_json::json!(country);
+    }
+    if let Some(ref region) = site.region {
+        body["region"] = serde_json::json!(region);
+    }
+    if let Some(max_depth) = site.max_depth {
+        body["max_depth"] = serde_json::json!(max_depth);
+    }
+    if let Some(ref description) = site.description {
+        body["description"] = serde_json::json!(description);
+    }
+
+    log::info!("Community: submitting dive site '{}' ({}, {})", site.name, site.lat, site.lon);
 
     let response = client
         .post(&url)
@@ -295,7 +332,33 @@ pub async fn submit_dive_site(token: &str, site: &CommunityDiveSite) -> Result<C
     let text = response.text().await
         .map_err(|e| format!("Failed to read submit response: {}", e))?;
 
+    // If duplicate (409 Conflict), fetch the existing site by name+coords
+    if status.as_u16() == 409 {
+        log::info!("Community: site '{}' already exists, fetching existing", site.name);
+        let fetch_url = format!(
+            "{}/rest/v1/dive_sites?name=eq.{}&lat=eq.{}&lon=eq.{}&select=id,name,lat,lon,country,region,max_depth,description,created_at&limit=1",
+            SUPABASE_URL,
+            urlencoding::encode(&site.name),
+            site.lat,
+            site.lon
+        );
+        let fetch_resp = client
+            .get(&fetch_url)
+            .header("apikey", SUPABASE_ANON_KEY)
+            .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch existing site: {}", e))?;
+        let fetch_text = fetch_resp.text().await
+            .map_err(|e| format!("Failed to read fetch response: {}", e))?;
+        let existing: Vec<CommunityDiveSite> = serde_json::from_str(&fetch_text)
+            .map_err(|e| format!("Failed to parse existing site: {}", e))?;
+        return existing.into_iter().next()
+            .ok_or_else(|| "Site exists but could not be fetched".to_string());
+    }
+
     if !status.is_success() {
+        log::error!("Community: submit failed ({}): {}", status, text);
         return Err(format!("Failed to submit dive site ({}): {}", status, text));
     }
 
@@ -380,15 +443,14 @@ pub async fn submit_observation(token: &str, obs: &CommunityObservation) -> Resu
     let client = Client::new();
     let url = format!("{}/rest/v1/observations", SUPABASE_URL);
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "dive_site_id": obs.dive_site_id,
         "species_name": obs.species_name,
-        "scientific_name": obs.scientific_name,
-        "category": obs.category,
-        "depth": obs.depth,
-        "observed_date": obs.observed_date,
-        "submitted_by": obs.submitted_by,
     });
+    if let Some(ref v) = obs.scientific_name { body["scientific_name"] = serde_json::json!(v); }
+    if let Some(ref v) = obs.category { body["category"] = serde_json::json!(v); }
+    if let Some(v) = obs.depth { body["depth"] = serde_json::json!(v); }
+    body["observed_date"] = serde_json::json!(obs.observed_date);
 
     let response = client
         .post(&url)
@@ -404,6 +466,11 @@ pub async fn submit_observation(token: &str, obs: &CommunityObservation) -> Resu
     let status = response.status();
     let text = response.text().await
         .map_err(|e| format!("Failed to read submit response: {}", e))?;
+
+    // 409 = duplicate, that's fine — observation already exists
+    if status.as_u16() == 409 {
+        return Err("duplicate".to_string());
+    }
 
     if !status.is_success() {
         return Err(format!("Failed to submit observation ({}): {}", status, text));
@@ -425,15 +492,15 @@ pub async fn submit_observations_batch(
     let url = format!("{}/rest/v1/observations", SUPABASE_URL);
 
     let body: Vec<serde_json::Value> = observations.iter().map(|obs| {
-        serde_json::json!({
+        let mut row = serde_json::json!({
             "dive_site_id": obs.dive_site_id,
             "species_name": obs.species_name,
-            "scientific_name": obs.scientific_name,
-            "category": obs.category,
-            "depth": obs.depth,
-            "observed_date": obs.observed_date,
-            "submitted_by": obs.submitted_by,
-        })
+        });
+        if let Some(ref v) = obs.scientific_name { row["scientific_name"] = serde_json::json!(v); }
+        if let Some(ref v) = obs.category { row["category"] = serde_json::json!(v); }
+        if let Some(v) = obs.depth { row["depth"] = serde_json::json!(v); }
+        row["observed_date"] = serde_json::json!(&obs.observed_date);
+        row
     }).collect();
 
     let response = client
@@ -532,4 +599,180 @@ pub async fn get_community_stats() -> Result<CommunityStats, String> {
         total_observations,
         total_species: unique_species.len() as i64,
     })
+}
+
+// ── Paginated / Search endpoints ────────────────────────────────────────────
+
+/// Helper: parse total count from Supabase content-range header (e.g. "0-49/123")
+fn parse_content_range_total(headers: &reqwest::header::HeaderMap) -> i64 {
+    headers
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split('/').last())
+        .and_then(|n| n.parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// Fetch community dive sites with pagination and optional search
+pub async fn get_dive_sites_paginated(
+    offset: i64,
+    limit: i64,
+    search: Option<&str>,
+) -> Result<PaginatedDiveSites, String> {
+    let client = Client::new();
+    let limit = limit.min(100).max(1); // clamp 1..100
+    let offset = offset.max(0);
+
+    let mut url = format!(
+        "{}/rest/v1/dive_sites?select=id,name,lat,lon,country,region,max_depth,description,created_at&order=name.asc",
+        SUPABASE_URL
+    );
+
+    // Server-side search: filter by name, country, or region using Supabase ilike
+    if let Some(q) = search {
+        let q = q.trim();
+        if !q.is_empty() {
+            let encoded = urlencoding::encode(q);
+            url.push_str(&format!(
+                "&or=(name.ilike.*{}*,country.ilike.*{}*,region.ilike.*{}*)",
+                encoded, encoded, encoded
+            ));
+        }
+    }
+
+    let response = client
+        .get(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .header("Range", format!("{}-{}", offset, offset + limit - 1))
+        .header("Prefer", "count=exact")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch dive sites: {}", e))?;
+
+    let total = parse_content_range_total(response.headers());
+    let status = response.status();
+    let text = response.text().await
+        .map_err(|e| format!("Failed to read dive sites response: {}", e))?;
+
+    // 206 Partial Content or 200 OK are both valid
+    if !status.is_success() && status.as_u16() != 206 {
+        return Err(format!("Failed to fetch dive sites ({}): {}", status, text));
+    }
+
+    let sites: Vec<CommunityDiveSite> = serde_json::from_str(&text)
+        .map_err(|e| format!("Failed to parse dive sites: {}", e))?;
+
+    Ok(PaginatedDiveSites {
+        sites,
+        total,
+        offset,
+        limit,
+    })
+}
+
+/// Fetch observations for a dive site with pagination
+pub async fn get_site_observations_paginated(
+    dive_site_id: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<PaginatedObservations, String> {
+    let client = Client::new();
+    let limit = limit.min(200).max(1);
+    let offset = offset.max(0);
+
+    let url = format!(
+        "{}/rest/v1/observations?dive_site_id=eq.{}&select=id,dive_site_id,species_name,scientific_name,category,depth,observed_date,created_at&order=observed_date.desc",
+        SUPABASE_URL, dive_site_id
+    );
+
+    let response = client
+        .get(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .header("Range", format!("{}-{}", offset, offset + limit - 1))
+        .header("Prefer", "count=exact")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch observations: {}", e))?;
+
+    let total = parse_content_range_total(response.headers());
+    let status = response.status();
+    let text = response.text().await
+        .map_err(|e| format!("Failed to read observations response: {}", e))?;
+
+    if !status.is_success() && status.as_u16() != 206 {
+        return Err(format!("Failed to fetch observations ({}): {}", status, text));
+    }
+
+    let observations: Vec<CommunityObservation> = serde_json::from_str(&text)
+        .map_err(|e| format!("Failed to parse observations: {}", e))?;
+
+    Ok(PaginatedObservations {
+        observations,
+        total,
+        offset,
+        limit,
+    })
+}
+
+/// Get contributor info for a site: distinct submitters + total observation count
+pub async fn get_site_contributor_info(dive_site_id: &str) -> Result<SiteContributorInfo, String> {
+    let client = Client::new();
+    let url = format!(
+        "{}/rest/v1/observations?dive_site_id=eq.{}&select=submitted_by",
+        SUPABASE_URL, dive_site_id
+    );
+
+    let response = client
+        .get(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .header("Prefer", "count=exact")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch contributor info: {}", e))?;
+
+    let total = parse_content_range_total(response.headers());
+    let text = response.text().await.unwrap_or_default();
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+
+    let unique_contributors: std::collections::HashSet<String> = rows
+        .iter()
+        .filter_map(|v| v.get("submitted_by").and_then(|s| s.as_str()).map(|s| s.to_string()))
+        .collect();
+
+    Ok(SiteContributorInfo {
+        contributor_count: unique_contributors.len() as i64,
+        observation_count: total,
+    })
+}
+
+/// Get distinct species names for autocomplete
+pub async fn get_distinct_species() -> Result<Vec<String>, String> {
+    let client = Client::new();
+    let url = format!(
+        "{}/rest/v1/observations?select=species_name&order=species_name.asc",
+        SUPABASE_URL
+    );
+
+    let response = client
+        .get(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch species: {}", e))?;
+
+    let text = response.text().await.unwrap_or_default();
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+
+    let mut species: Vec<String> = rows
+        .iter()
+        .filter_map(|v| v.get("species_name").and_then(|s| s.as_str()).map(|s| s.to_string()))
+        .collect::<std::collections::HashSet<String>>()
+        .into_iter()
+        .collect();
+    species.sort();
+    Ok(species)
 }

@@ -40,26 +40,33 @@ export function useCommunitySync() {
 
   // Check if sharing is enabled and user is signed in
   const checkEnabled = useCallback(async (): Promise<boolean> => {
-    if (!settings.communitySharing) return false;
+    if (!settings.communitySharing) {
+      console.log('[CommunitySync] communitySharing is OFF');
+      return false;
+    }
     try {
       const token = await invoke<string | null>('get_secure_setting', { key: 'community_access_token' });
+      console.log('[CommunitySync] token check:', token ? 'found' : 'NOT FOUND');
       return !!token;
-    } catch {
+    } catch (err) {
+      console.log('[CommunitySync] token check error:', err);
       return false;
     }
   }, [settings.communitySharing]);
 
-  // Sync all user-created dive sites to community (idempotent — duplicates rejected by Supabase)
+  // Sync all user-created dive sites to community (upsert — duplicates merged by Supabase)
   const syncAllDiveSites = useCallback(async () => {
     try {
       const sites = await invoke<DiveSite[]>('get_dive_sites');
-      const userSites = sites.filter(s => s.is_user_created);
+      const userSites = sites.filter(s => s.is_user_created && s.name && s.name.trim().length > 0);
       if (userSites.length === 0) return;
 
       let synced = 0;
+      // Map local site IDs to community site IDs for observation syncing
+      const siteIdMap = new Map<number, string>();
       for (const site of userSites) {
         try {
-          await invoke('community_submit_dive_site', {
+          const result = await invoke<{ id: string }>('community_submit_dive_site', {
             site: {
               id: null,
               name: site.name,
@@ -72,16 +79,21 @@ export function useCommunitySync() {
               submitted_by: null,
             }
           });
+          if (result?.id) {
+            siteIdMap.set(site.id, result.id);
+          }
           synced++;
-        } catch {
-          // Likely duplicate or network issue — skip silently
+        } catch (err) {
+          console.error(`[CommunitySync] failed to submit site "${site.name}":`, err);
         }
       }
       if (synced > 0) {
         logger.info(`Community sync: shared ${synced} dive sites`);
       }
+      return siteIdMap;
     } catch (err) {
       logger.error('Community sync failed:', err);
+      return new Map<number, string>();
     }
   }, []);
 
@@ -193,6 +205,58 @@ export function useCommunitySync() {
     }
   }, []);
 
+  // Sync all observations for all dives that have species tags and a community site
+  const syncAllObservations = useCallback(async (siteIdMap: Map<number, string>) => {
+    if (siteIdMap.size === 0) return;
+    try {
+      const trips = await invoke<Array<{ id: number }>>('get_trips');
+      let totalSynced = 0;
+
+      for (const trip of trips) {
+        const dives = await invoke<Array<{ id: number; dive_site_id?: number; date: string; max_depth_m: number }>>('get_dives_for_trip', { tripId: trip.id });
+        for (const dive of dives) {
+          if (!dive.dive_site_id) continue;
+          const communitySiteId = siteIdMap.get(dive.dive_site_id);
+          if (!communitySiteId) continue;
+
+          const photos = await invoke<Array<{ id: number }>>('get_photos_for_dive', { diveId: dive.id });
+          for (const photo of photos) {
+            try {
+              const tags = await invoke<SpeciesTag[]>('get_species_tags_for_photo', { photoId: photo.id });
+              for (const tag of tags) {
+                try {
+                  await invoke('community_submit_observation', {
+                    observation: {
+                      id: null,
+                      dive_site_id: communitySiteId,
+                      species_name: tag.name,
+                      scientific_name: tag.scientific_name || null,
+                      category: tag.category || null,
+                      depth: dive.max_depth_m || null,
+                      observed_date: dive.date,
+                      submitted_by: null,
+                      created_at: null,
+                    }
+                  });
+                  totalSynced++;
+                } catch {
+                  // Duplicate or network — skip
+                }
+              }
+            } catch {
+              // Failed to get tags for photo — skip
+            }
+          }
+        }
+      }
+      if (totalSynced > 0) {
+        logger.info(`Community sync: shared ${totalSynced} observations`);
+      }
+    } catch (err) {
+      logger.error('Community sync: failed to sync observations:', err);
+    }
+  }, []);
+
   // Run on app startup: sync all sites if enabled
   useEffect(() => {
     if (hasSyncedRef.current) return;
@@ -200,16 +264,23 @@ export function useCommunitySync() {
     const doStartupSync = async () => {
       const enabled = await checkEnabled();
       isEnabledRef.current = enabled;
-      if (!enabled) return;
+      if (!enabled) {
+        console.log('[CommunitySync] startup sync skipped — not enabled');
+        return;
+      }
 
       hasSyncedRef.current = true;
-      logger.info('Community sync: startup sync starting...');
-      await syncAllDiveSites();
-      logger.info('Community sync: startup sync complete');
+      console.log('[CommunitySync] startup sync starting...');
+      const siteIdMap = await syncAllDiveSites();
+      if (siteIdMap && siteIdMap.size > 0) {
+        console.log('[CommunitySync] syncing observations...');
+        await syncAllObservations(siteIdMap);
+      }
+      console.log('[CommunitySync] startup sync complete');
     };
 
     doStartupSync();
-  }, [checkEnabled, syncAllDiveSites]);
+  }, [checkEnabled, syncAllDiveSites, syncAllObservations]);
 
   // Keep enabled ref in sync with settings changes
   useEffect(() => {

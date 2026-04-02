@@ -3327,16 +3327,84 @@ pub async fn community_get_nearby_dive_sites(lat: f64, lon: f64, radius_km: f64)
     community::get_nearby_dive_sites(lat, lon, radius_km).await
 }
 
+/// Get a valid community auth token, auto-refreshing if expired.
+/// Returns the access token string or an error if not signed in.
+async fn get_community_token(app: &tauri::AppHandle) -> Result<String, String> {
+    let store = app.store("secure-settings.json")
+        .map_err(|e| format!("Failed to open secure store: {}", e))?;
+    
+    let token = store.get("community_access_token")
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+
+    // Decode JWT to check expiry (tokens are base64-encoded JSON with an "exp" field)
+    let needs_refresh = if let Some(payload) = token.split('.').nth(1) {
+        // Add padding if needed for base64
+        use base64::Engine;
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        if let Ok(bytes) = engine.decode(payload) {
+            if let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Some(exp) = claims.get("exp").and_then(|e| e.as_i64()) {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+                    // Refresh if token expires within 5 minutes
+                    exp - now < 300
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if needs_refresh {
+        let refresh = store.get("community_refresh_token")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .filter(|s| !s.is_empty());
+
+        if let Some(refresh_token) = refresh {
+            log::info!("Community: access token expired/expiring, refreshing...");
+            match community::refresh_token(&refresh_token).await {
+                Ok(refreshed) => {
+                    store.set("community_access_token", serde_json::json!(refreshed.access_token));
+                    store.set("community_refresh_token", serde_json::json!(refreshed.refresh_token));
+                    let _ = store.save();
+                    log::info!("Community: token refreshed successfully");
+                    return Ok(refreshed.access_token);
+                }
+                Err(e) => {
+                    log::error!("Community: token refresh failed: {}", e);
+                    // Clear tokens — user needs to sign in again
+                    store.set("community_access_token", serde_json::json!(""));
+                    store.set("community_refresh_token", serde_json::json!(""));
+                    let _ = store.save();
+                    return Err("Session expired. Please sign in again.".to_string());
+                }
+            }
+        } else {
+            store.set("community_access_token", serde_json::json!(""));
+            let _ = store.save();
+            return Err("Session expired. Please sign in again.".to_string());
+        }
+    }
+
+    Ok(token)
+}
+
 #[tauri::command]
 pub async fn community_submit_dive_site(
     app: tauri::AppHandle,
     site: community::CommunityDiveSite,
 ) -> Result<community::CommunityDiveSite, String> {
-    let store = app.store("secure-settings.json")
-        .map_err(|e| format!("Failed to open secure store: {}", e))?;
-    let token = store.get("community_access_token")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+    let token = get_community_token(&app).await?;
     community::submit_dive_site(&token, &site).await
 }
 
@@ -3355,11 +3423,7 @@ pub async fn community_submit_observation(
     app: tauri::AppHandle,
     observation: community::CommunityObservation,
 ) -> Result<community::CommunityObservation, String> {
-    let store = app.store("secure-settings.json")
-        .map_err(|e| format!("Failed to open secure store: {}", e))?;
-    let token = store.get("community_access_token")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+    let token = get_community_token(&app).await?;
     community::submit_observation(&token, &observation).await
 }
 
@@ -3368,15 +3432,49 @@ pub async fn community_submit_observations_batch(
     app: tauri::AppHandle,
     observations: Vec<community::CommunityObservation>,
 ) -> Result<Vec<community::CommunityObservation>, String> {
-    let store = app.store("secure-settings.json")
-        .map_err(|e| format!("Failed to open secure store: {}", e))?;
-    let token = store.get("community_access_token")
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .ok_or_else(|| "Not signed in to community. Please sign in first.".to_string())?;
+    let token = get_community_token(&app).await?;
     community::submit_observations_batch(&token, &observations).await
 }
 
 #[tauri::command]
 pub async fn community_get_stats() -> Result<community::CommunityStats, String> {
     community::get_community_stats().await
+}
+
+#[tauri::command]
+pub async fn community_get_dive_sites_paginated(
+    offset: Option<i64>,
+    limit: Option<i64>,
+    search: Option<String>,
+) -> Result<community::PaginatedDiveSites, String> {
+    community::get_dive_sites_paginated(
+        offset.unwrap_or(0),
+        limit.unwrap_or(50),
+        search.as_deref(),
+    ).await
+}
+
+#[tauri::command]
+pub async fn community_get_site_observations_paginated(
+    dive_site_id: String,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<community::PaginatedObservations, String> {
+    community::get_site_observations_paginated(
+        &dive_site_id,
+        offset.unwrap_or(0),
+        limit.unwrap_or(50),
+    ).await
+}
+
+#[tauri::command]
+pub async fn community_get_site_contributor_info(
+    dive_site_id: String,
+) -> Result<community::SiteContributorInfo, String> {
+    community::get_site_contributor_info(&dive_site_id).await
+}
+
+#[tauri::command]
+pub async fn community_get_distinct_species() -> Result<Vec<String>, String> {
+    community::get_distinct_species().await
 }
