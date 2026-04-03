@@ -27,6 +27,12 @@
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
 
+.stats-bar-icon img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
 .stats-bar-value {
   font-size: 20px;
   font-weight: 600;

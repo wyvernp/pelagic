@@ -3,6 +3,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import type { Trip, Dive, Statistics } from '../types';
 import './StatsBar.css';
+import tripsIcon from '../assets/trips.png';
+import divesIcon from '../assets/dives.png';
+import bottomTimeIcon from '../assets/bottom_time.png';
+import photosIcon from '../assets/photos.png';
+import speciesIcon from '../assets/species.png';
+import depthIcon from '../assets/depth.png';
 
 interface StatsBarProps {
   trip?: Trip | null;
@@ -103,28 +109,28 @@ export function StatsBar({ trip, dives = [] }: StatsBarProps) {
     return (
       <div className="stats-bar">
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">🤿</span>
+          <span className="stats-bar-icon"><img src={divesIcon} alt="Dives" /></span>
           <span className="stats-bar-value">{tripStats.dive_count}</span>
           <span className="stats-bar-label">Dives</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">⏱️</span>
+          <span className="stats-bar-icon"><img src={bottomTimeIcon} alt="Bottom Time" /></span>
           <span className="stats-bar-value">{formatDuration(tripStats.total_bottom_time)}</span>
           <span className="stats-bar-label">Bottom Time</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">⬇️</span>
+          <span className="stats-bar-icon"><img src={depthIcon} alt="Deepest" /></span>
           <span className="stats-bar-value">{tripStats.deepest_dive.toFixed(1)}m</span>
           <span className="stats-bar-label">Deepest</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">📷</span>
+          <span className="stats-bar-icon"><img src={photosIcon} alt="Photos" /></span>
           <span className="stats-bar-value">{tripStats.photo_count.toLocaleString()}</span>
           <span className="stats-bar-label">Photos</span>
         </div>
         {tripStats.species_count > 0 && (
           <div className="stats-bar-item">
-            <span className="stats-bar-icon">🐠</span>
+            <span className="stats-bar-icon"><img src={speciesIcon} alt="Species" /></span>
             <span className="stats-bar-value">{tripStats.species_count}</span>
             <span className="stats-bar-label">Species</span>
           </div>
@@ -138,33 +144,33 @@ export function StatsBar({ trip, dives = [] }: StatsBarProps) {
     return (
       <div className="stats-bar stats-bar-global">
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">🌴</span>
+          <span className="stats-bar-icon"><img src={tripsIcon} alt="Trips" /></span>
           <span className="stats-bar-value">{globalStats.total_trips}</span>
           <span className="stats-bar-label">Trips</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">🤿</span>
+          <span className="stats-bar-icon"><img src={divesIcon} alt="Dives" /></span>
           <span className="stats-bar-value">{globalStats.total_dives}</span>
           <span className="stats-bar-label">Dives</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">⏱️</span>
+          <span className="stats-bar-icon"><img src={bottomTimeIcon} alt="Bottom Time" /></span>
           <span className="stats-bar-value">{formatDuration(globalStats.total_bottom_time_seconds)}</span>
           <span className="stats-bar-label">Bottom Time</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">📷</span>
+          <span className="stats-bar-icon"><img src={photosIcon} alt="Photos" /></span>
           <span className="stats-bar-value">{globalStats.total_photos.toLocaleString()}</span>
           <span className="stats-bar-label">Photos</span>
         </div>
         <div className="stats-bar-item">
-          <span className="stats-bar-icon">🐠</span>
+          <span className="stats-bar-icon"><img src={speciesIcon} alt="Species" /></span>
           <span className="stats-bar-value">{globalStats.total_species}</span>
           <span className="stats-bar-label">Species</span>
         </div>
         {globalStats.deepest_dive_m && (
           <div className="stats-bar-item">
-            <span className="stats-bar-icon">⬇️</span>
+            <span className="stats-bar-icon"><img src={depthIcon} alt="Deepest" /></span>
             <span className="stats-bar-value">{globalStats.deepest_dive_m.toFixed(1)}m</span>
             <span className="stats-bar-label">Deepest</span>
           </div>

@@ -12,6 +12,7 @@ import { logger } from '../utils/logger';
 import { confirmDialog } from '../utils/dialogs';
 import { formatDiveName } from '../utils/diveNames';
 import './ContentArea.css';
+import pelagicIcon from '../assets/pelagic.png';
 
 interface ContentAreaProps {
   viewMode: ViewMode;
@@ -578,7 +579,7 @@ export function ContentArea({
       <div className="content">
         <StatsBar />
         <div className="empty-state">
-          <div className="empty-state-icon">🐠</div>
+          <div className="empty-state-icon"><img src={pelagicIcon} alt="Pelagic" style={{ width: 80, height: 80, borderRadius: 18 }} /></div>
           <h3>Welcome to Pelagic</h3>
           <p>Select a trip from the sidebar or import your dive log to get started</p>
         </div>
