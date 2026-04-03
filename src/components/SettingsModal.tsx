@@ -65,6 +65,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [communityLoading, setCommunityLoading] = useState(false);
   const [communityError, setCommunityError] = useState<string | null>(null);
   const [communityStats, setCommunityStats] = useState<{ total_sites: number; total_observations: number; total_species: number } | null>(null);
+  const [showPrivacyConsent, setShowPrivacyConsent] = useState(false);
   
   const resetTour = useUIStore((state) => state.resetTour);
 
@@ -753,11 +754,55 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <input
                   type="checkbox"
                   checked={settings.communitySharing}
-                  onChange={(e) => handleChange('communitySharing', e.target.checked)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setShowPrivacyConsent(true);
+                    } else {
+                      handleChange('communitySharing', false);
+                      setShowPrivacyConsent(false);
+                    }
+                  }}
                 />
                 <span className="toggle-slider"></span>
               </label>
             </div>
+
+            {showPrivacyConsent && !settings.communitySharing && (
+              <div className="community-privacy-consent">
+                <h4 className="privacy-consent-title">Data &amp; Privacy</h4>
+                <p className="privacy-consent-text">
+                  By enabling Community Sharing you agree to the following:
+                </p>
+                <ul className="privacy-consent-list">
+                  <li><strong>What we collect</strong> — Your email address (for authentication only) and any dive site or species observation data you choose to share.</li>
+                  <li><strong>What we don't collect</strong> — Your dive logs, photos, GPS tracks, device information, or any data beyond what is listed above.</li>
+                  <li><strong>How data is stored</strong> — Community data is stored on Supabase (hosted in the EU). Your authentication tokens are encrypted locally on your device. Your password is never stored.</li>
+                  <li><strong>Public visibility</strong> — Dive site names, locations, and species observations you share are visible to all Pelagic users. Your email address is never shown to other users.</li>
+                  <li><strong>Data minimisation</strong> — We only store what is necessary: site name, coordinates, country, region, depth, and species information. A server-side identifier links contributions to your account for edit/delete purposes only.</li>
+                  <li><strong>Your rights</strong> — You can disable sharing at any time to stop syncing. You can sign out to remove your credentials from this device. To request deletion of your contributed data, contact us at the address below.</li>
+                </ul>
+                <p className="privacy-consent-contact">
+                  Questions? Contact <strong>privacy@pelagiclog.com</strong>
+                </p>
+                <div className="privacy-consent-actions">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowPrivacyConsent(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      handleChange('communitySharing', true);
+                      setShowPrivacyConsent(false);
+                    }}
+                  >
+                    I Agree — Enable Sharing
+                  </button>
+                </div>
+              </div>
+            )}
 
             {settings.communitySharing && (
               <>

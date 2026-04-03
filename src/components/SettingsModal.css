@@ -277,3 +277,71 @@
   padding: 8px 0;
   font-style: italic;
 }
+
+/* ── Community Privacy Consent ────────────────────────────────── */
+
+.community-privacy-consent {
+  margin: 12px 0;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 8px;
+}
+
+.privacy-consent-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+
+.privacy-consent-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+}
+
+.privacy-consent-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.privacy-consent-list li {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  padding-left: 18px;
+  position: relative;
+}
+
+.privacy-consent-list li::before {
+  content: '•';
+  position: absolute;
+  left: 4px;
+  color: var(--accent-primary);
+  font-weight: bold;
+}
+
+.privacy-consent-list li strong {
+  color: var(--text-primary);
+}
+
+.privacy-consent-contact {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 12px;
+}
+
+.privacy-consent-contact strong {
+  color: var(--text-secondary);
+}
+
+.privacy-consent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
