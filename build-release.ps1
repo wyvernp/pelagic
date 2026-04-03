@@ -93,6 +93,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $TauriConfigPath = Join-Path $ScriptDir "src-tauri\tauri.conf.json"
 $PackageJsonPath = Join-Path $ScriptDir "package.json"
 $CargoTomlPath = Join-Path $ScriptDir "src-tauri\Cargo.toml"
+$SettingsModalPath = Join-Path $ScriptDir "src\components\SettingsModal.tsx"
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  Pelagic Release Builder" -ForegroundColor Cyan
@@ -191,9 +192,16 @@ if (-not $SkipBump) {
     Write-Host "Updating Cargo.toml..." -ForegroundColor Yellow
     $CargoContent = Get-Content $CargoTomlPath -Raw
     # Match version line that appears after [package] and before the next section
-    $CargoContent = $CargoContent -replace '(^\[package\][\s\S]*?^version\s*=\s*")[^"]*(")', "`$1$NewVersionString`$2"
+    $CargoContent = $CargoContent -replace '(?m)(^\[package\][\s\S]*?^version\s*=\s*")[^"]*(")', ('${1}' + $NewVersionString + '${2}')
     Set-Content -Path $CargoTomlPath -Value $CargoContent -NoNewline
     Write-Host "  Updated Cargo.toml" -ForegroundColor Green
+    
+    # Update SettingsModal.tsx
+    Write-Host "Updating SettingsModal.tsx..." -ForegroundColor Yellow
+    $SettingsContent = Get-Content $SettingsModalPath -Raw
+    $SettingsContent = $SettingsContent -replace '(<p className="version">Version )[^<]+(</p>)', ('${1}' + $NewVersionString + '${2}')
+    Set-Content -Path $SettingsModalPath -Value $SettingsContent -NoNewline
+    Write-Host "  Updated SettingsModal.tsx" -ForegroundColor Green
     
     $BuildVersion = $NewVersionString
 }

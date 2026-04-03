@@ -248,6 +248,7 @@ pub struct SearchResults {
 
 // Photo filter for advanced filtering
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct PhotoFilter {
     pub date_from: Option<String>,
     pub date_to: Option<String>,
@@ -277,6 +278,7 @@ pub struct PhotoFilter {
 }
 
 /// Database wrapper that works with an owned Connection
+#[allow(dead_code)]
 pub struct Database {
     conn: Connection,
 }
@@ -1268,6 +1270,7 @@ impl<'a> Db<'a> {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[allow(dead_code)]
     pub fn import_dive_sites_from_csv(&self, csv_content: &str) -> Result<usize> {
         let mut count = 0;
         for line in csv_content.lines().skip(1) {
@@ -2129,6 +2132,7 @@ impl<'a> Db<'a> {
     }
 }
 
+#[allow(dead_code)]
 impl Database {
     pub fn new() -> Result<Self> {
         let db_path = Self::get_db_path();

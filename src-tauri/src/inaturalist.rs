@@ -67,6 +67,7 @@ pub struct INatTaxaResult {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct INatObservation {
     pub id: i64,
     pub uri: Option<String>,
@@ -75,12 +76,14 @@ pub struct INatObservation {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct INatObservationResult {
     pub total_results: Option<i64>,
     pub results: Vec<INatObservation>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct INatCreateResult {
     pub id: Option<i64>,
     pub uri: Option<String>,

@@ -559,6 +559,7 @@ struct SuuntoDeviceLog {
 #[serde(rename_all = "PascalCase")]
 struct SuuntoDeviceHeader {
     #[serde(default)]
+    #[allow(dead_code)]
     activity: Option<String>,
     #[serde(default)]
     date_time: Option<String>,
@@ -641,9 +642,10 @@ struct SuuntoDeviceSample {
     time: Option<f64>,
     #[serde(default)]
     tank_pressure: Option<Vec<f64>>,  // Array of tank pressures in Pa
-    #[serde(default, alias = "TankPressure")]
+    #[serde(default)]
     tank_pressure_single: Option<f64>,
     #[serde(default)]
+    #[allow(dead_code)]
     events: Option<Vec<JsonValue>>,  // Events are complex, just capture as JSON
 }
 

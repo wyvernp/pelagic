@@ -3,6 +3,8 @@
 //! This module provides validation functions for all user inputs before database operations,
 //! preventing data corruption, crashes, and malformed data.
 
+#![allow(dead_code)]
+
 use chrono::NaiveDate;
 use serde::Serialize;
 use std::fmt;

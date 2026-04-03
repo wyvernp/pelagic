@@ -76,6 +76,7 @@ struct GeminiResponsePart {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GeminiError {
     message: String,
     code: Option<i32>,
@@ -252,6 +253,7 @@ IMPORTANT RULES:
 }
 
 /// Identify species from a thumbnail (for faster processing)
+#[allow(dead_code)]
 pub async fn identify_species_from_thumbnail(
     api_key: &str,
     thumbnail_path: &str,

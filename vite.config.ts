@@ -14,5 +14,15 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'dist',
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'map-vendor': ['leaflet'],
+          'chart-vendor': ['@visx/visx'],
+        },
+      },
+    },
   },
 });

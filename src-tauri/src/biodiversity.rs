@@ -47,7 +47,7 @@ pub struct GbifOccurrence {
     pub iucnRedListCategory: Option<String>,
 }
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case, dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GbifSpeciesDetail {
     pub key: Option<i64>,

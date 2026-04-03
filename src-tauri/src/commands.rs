@@ -1306,8 +1306,6 @@ pub async fn get_image_data(file_path: String) -> Result<String, String> {
 /// 2. rawler (supports CR3 and other formats)
 /// 3. Embedded JPEG extraction (last resort)
 fn decode_raw_with_fallbacks(path: &std::path::Path, skip_rawloader: bool) -> Result<Vec<u8>, String> {
-    let mut last_error = String::new();
-    
     // Step 1: Try rawloader + imagepipe (unless skipping for CR3)
     if !skip_rawloader {
         match photos::decode_raw_to_jpeg(path) {
@@ -1317,12 +1315,12 @@ fn decode_raw_with_fallbacks(path: &std::path::Path, skip_rawloader: bool) -> Re
             }
             Err(e) => {
                 log::warn!("rawloader failed for {}: {}", path.display(), e);
-                last_error = e;
             }
         }
     }
     
     // Step 2: Try rawler (supports CR3, newer cameras)
+    let last_error;
     match photos::decode_raw_with_rawler(path) {
         Ok(data) => {
             log::info!("RAW decoded with rawler: {}", path.display());
