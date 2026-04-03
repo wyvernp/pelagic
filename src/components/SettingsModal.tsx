@@ -894,7 +894,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <h3 className="settings-section-title">About</h3>
             <div className="about-info">
               <p><strong>Pelagic</strong> - Dive Photo Manager</p>
-              <p className="version">Version 0.3.26</p>
+              <p className="version">Version 0.3.27</p>
               <p className="credits">Built with Tauri + React</p>
             </div>
           </div>

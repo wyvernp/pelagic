@@ -812,6 +812,8 @@ struct SampleCollector {
     current_rbt: Option<i32>,
     // Track whether we've seen a depth sample at the current time
     pending_depth: bool,
+    // Last CNS% value seen in the sample stream (cumulative, take final value)
+    last_cns: Option<f64>,
 }
 
 impl SampleCollector {
@@ -825,6 +827,7 @@ impl SampleCollector {
             current_ndl: None,
             current_rbt: None,
             pending_depth: false,
+            last_cns: None,
         }
     }
 
@@ -886,8 +889,10 @@ unsafe extern "C" fn sample_callback(
                 collector.current_ndl = Some(deco.time as i32);
             }
         }
-        // Events, PPO2, CNS, gasmix changes, etc. — we store them in the
-        // future but skip for now.
+        dc_sample_type_t::DC_SAMPLE_CNS => {
+            collector.last_cns = Some(v.cns * 100.0);
+        }
+        // Events, PPO2, gasmix changes, etc. — skip for now.
         _ => {}
     }
 }
@@ -959,6 +964,40 @@ pub fn parse_dive_data(
             dc_field_type_t::DC_FIELD_TEMPERATURE_MINIMUM,
             0,
             &mut temp_min as *mut _ as *mut c_void,
+        )
+        .is_success();
+
+        // Surface (air) temperature
+        let mut temp_surface: f64 = 0.0;
+        let temp_surface_ok = dc_parser_get_field(
+            parser,
+            dc_field_type_t::DC_FIELD_TEMPERATURE_SURFACE,
+            0,
+            &mut temp_surface as *mut _ as *mut c_void,
+        )
+        .is_success();
+
+        // Atmospheric / surface pressure
+        let mut atmospheric: f64 = 0.0;
+        let atmospheric_ok = dc_parser_get_field(
+            parser,
+            dc_field_type_t::DC_FIELD_ATMOSPHERIC,
+            0,
+            &mut atmospheric as *mut _ as *mut c_void,
+        )
+        .is_success();
+
+        // GPS location (few dive computers support this)
+        let mut location = dc_location_t {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 0.0,
+        };
+        let location_ok = dc_parser_get_field(
+            parser,
+            dc_field_type_t::DC_FIELD_LOCATION,
+            0,
+            &mut location as *mut _ as *mut c_void,
         )
         .is_success();
 
@@ -1074,7 +1113,12 @@ pub fn parse_dive_data(
             max_depth_m: maxdepth,
             mean_depth_m: mean_depth,
             water_temp_c: if temp_ok { Some(temp_min) } else { None },
+            air_temp_c: if temp_surface_ok { Some(temp_surface) } else { None },
+            surface_pressure_bar: if atmospheric_ok { Some(atmospheric) } else { None },
+            cns_percent: collector.last_cns,
             dive_computer_model: Some(model_name),
+            latitude: if location_ok && (location.latitude != 0.0 || location.longitude != 0.0) { Some(location.latitude) } else { None },
+            longitude: if location_ok && (location.latitude != 0.0 || location.longitude != 0.0) { Some(location.longitude) } else { None },
             samples: collector.samples,
             tank_pressures: collector.tank_pressures,
             tanks,

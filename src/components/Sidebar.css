@@ -1,3 +1,98 @@
+/* Sidebar header layout */
+.sidebar-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Group mode selector */
+.sidebar-group-select {
+  background: var(--bg-dark);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+}
+
+.sidebar-group-select:hover {
+  border-color: var(--border-color-hover);
+}
+
+.sidebar-group-select:focus {
+  border-color: var(--accent-primary);
+}
+
+/* Collapse button */
+.sidebar-collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.sidebar-collapse-btn:hover {
+  background: var(--bg-medium);
+  color: var(--text-primary);
+}
+
+/* Collapsed sidebar */
+.sidebar-collapsed {
+  width: 48px !important;
+  min-width: 48px;
+}
+
+.sidebar-collapsed-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+}
+
+.sidebar-collapsed-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  color: var(--accent-primary);
+  transition: all var(--transition-fast);
+}
+
+.sidebar-collapsed-item:hover {
+  background: var(--bg-medium);
+}
+
+.sidebar-collapsed-item.selected {
+  background: var(--bg-medium);
+}
+
+/* Group count badge */
+.group-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--bg-dark);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
 .sidebar-add-btn {
   display: flex;
   align-items: center;
@@ -221,4 +316,40 @@
 
 .add-dive-link:hover {
   text-decoration: underline;
+}
+
+/* Drag and drop */
+.trip-item.drop-target {
+  background: rgba(var(--accent-rgb), 0.1);
+  border-radius: 4px;
+}
+
+.trip-item.drop-target > .trip-button {
+  border-left: 3px solid var(--accent-primary);
+  padding-left: 9px;
+}
+
+.dive-drag-overlay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-medium);
+  border: 1px solid var(--accent-primary);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  cursor: grabbing;
+}
+
+.dive-drag-overlay .dive-icon {
+  color: var(--depth-primary);
+  flex-shrink: 0;
+}
+
+.dive-drag-overlay .dive-depth {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: auto;
 }

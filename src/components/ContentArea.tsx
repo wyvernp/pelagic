@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirection, SearchResults, IdentificationResult, DiveSite } from '../types';
+import type { Trip, Dive, Photo, ViewMode, DiveSample, PhotoSortField, SortDirection, SearchResults, IdentificationResult, DiveSite, ContentLayout } from '../types';
 import { DiveProfile } from './DiveProfile';
 import { ContentGrid } from './ContentGrid';
 import { StatsBar } from './StatsBar';
@@ -11,6 +11,8 @@ import { useUIStore } from '../stores/uiStore';
 import { logger } from '../utils/logger';
 import { confirmDialog } from '../utils/dialogs';
 import { formatDiveName } from '../utils/diveNames';
+import { Allotment } from 'allotment';
+import 'allotment/dist/style.css';
 import './ContentArea.css';
 import pelagicIcon from '../assets/pelagic.png';
 
@@ -48,6 +50,129 @@ interface ContentAreaProps {
   // Context menu callbacks
   onDiveContextMenu?: (diveId: number, tripId: number, x: number, y: number) => void;
   onPhotoContextMenu?: (photo: Photo, x: number, y: number) => void;
+}
+
+const LAYOUT_OPTIONS: { value: ContentLayout; label: string; title: string; icon: React.ReactNode }[] = [
+  {
+    value: 'default',
+    label: 'Default',
+    title: 'Default layout (profile top, photos bottom)',
+    icon: <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><rect x="1" y="1" width="14" height="6" rx="1" opacity="0.9"/><rect x="1" y="9" width="14" height="6" rx="1" opacity="0.5"/></svg>,
+  },
+  {
+    value: 'side-by-side',
+    label: 'Side by Side',
+    title: 'Side-by-side layout (profile left, photos right)',
+    icon: <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><rect x="1" y="1" width="6" height="14" rx="1" opacity="0.9"/><rect x="9" y="1" width="6" height="14" rx="1" opacity="0.5"/></svg>,
+  },
+  {
+    value: 'chart-focus',
+    label: 'Chart Focus',
+    title: 'Expanded dive profile',
+    icon: <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><rect x="1" y="1" width="14" height="10" rx="1" opacity="0.9"/><rect x="1" y="13" width="14" height="2" rx="1" opacity="0.5"/></svg>,
+  },
+  {
+    value: 'photo-focus',
+    label: 'Photo Focus',
+    title: 'Expanded photo grid',
+    icon: <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><rect x="1" y="1" width="14" height="2" rx="1" opacity="0.5"/><rect x="1" y="5" width="14" height="10" rx="1" opacity="0.9"/></svg>,
+  },
+];
+
+function LayoutSelector() {
+  const contentLayout = useUIStore(s => s.contentLayout);
+  const setContentLayout = useUIStore(s => s.setContentLayout);
+
+  return (
+    <div className="layout-selector">
+      {LAYOUT_OPTIONS.map(opt => (
+        <button
+          key={opt.value}
+          className={`layout-btn${contentLayout === opt.value ? ' active' : ''}`}
+          onClick={() => setContentLayout(opt.value)}
+          title={opt.title}
+        >
+          {opt.icon}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+interface DiveViewLayoutProps {
+  dive: Dive;
+  samples: DiveSample[];
+  viewMode: ViewMode;
+  tripId?: number;
+  dives: Dive[];
+  photos: Photo[];
+  selectedPhotoIds: Set<number>;
+  onSelectDive: (diveId: number | null) => void;
+  onSelectPhoto: (photoId: number, multiSelect: boolean) => void;
+  onOpenPhoto: (photoId: number) => void;
+  bulkEditMode?: boolean;
+  selectedDiveIds?: Set<number>;
+  onToggleDiveSelection?: (diveId: number) => void;
+  onAllTripPhotosLoaded?: (photos: Photo[]) => void;
+  onDiveContextMenu?: (diveId: number, tripId: number, x: number, y: number) => void;
+  onPhotoContextMenu?: (photo: Photo, x: number, y: number) => void;
+}
+
+function DiveViewLayout({
+  dive, samples, viewMode, tripId, dives, photos,
+  selectedPhotoIds, onSelectDive, onSelectPhoto, onOpenPhoto,
+  bulkEditMode, selectedDiveIds, onToggleDiveSelection,
+  onAllTripPhotosLoaded, onDiveContextMenu, onPhotoContextMenu,
+}: DiveViewLayoutProps) {
+  const contentLayout = useUIStore(s => s.contentLayout);
+
+  const profilePane = <DiveProfile dive={dive} samples={samples} />;
+  const gridPane = (
+    <ContentGrid
+      viewMode={viewMode}
+      tripId={tripId}
+      dives={dives}
+      photos={photos}
+      selectedPhotoIds={selectedPhotoIds}
+      onSelectDive={onSelectDive}
+      onSelectPhoto={onSelectPhoto}
+      onOpenPhoto={onOpenPhoto}
+      bulkEditMode={bulkEditMode}
+      selectedDiveIds={selectedDiveIds}
+      onToggleDiveSelection={onToggleDiveSelection}
+      onAllTripPhotosLoaded={onAllTripPhotosLoaded}
+      onDiveContextMenu={onDiveContextMenu}
+      onPhotoContextMenu={onPhotoContextMenu}
+    />
+  );
+
+  const isHorizontal = contentLayout === 'side-by-side';
+
+  const defaultSizes = (() => {
+    switch (contentLayout) {
+      case 'chart-focus': return [70, 30];
+      case 'photo-focus': return [25, 75];
+      case 'side-by-side': return [50, 50];
+      default: return [40, 60];
+    }
+  })();
+
+  return (
+    <div className="dive-view-layout" style={{ flex: 1, minHeight: 0 }}>
+      <Allotment vertical={!isHorizontal} defaultSizes={defaultSizes} key={contentLayout}>
+        <Allotment.Pane minSize={80}>
+          <div className="allotment-pane-content">
+            {profilePane}
+          </div>
+        </Allotment.Pane>
+        <Allotment.Pane minSize={80}>
+          <div className="allotment-pane-content allotment-pane-grid">
+            {gridPane}
+          </div>
+        </Allotment.Pane>
+      </Allotment>
+    </div>
+  );
 }
 
 export function ContentArea({
@@ -617,6 +742,11 @@ export function ContentArea({
               Edit
             </button>
           )}
+
+          {/* Layout selector for dive view */}
+          {viewMode === 'dive' && dive && (
+            <LayoutSelector />
+          )}
           
           {/* Direct bulk edit button for trip view */}
           {viewMode === 'trip' && dives.length > 0 && onEnterBulkEditMode && !bulkEditMode && (
@@ -765,15 +895,13 @@ export function ContentArea({
         </div>
       )}
       
-      {viewMode === 'dive' && dive && (
-        <DiveProfile dive={dive} samples={samples} />
-      )}
-      
-      <div className="content-body">
-        <ContentGrid
+      {viewMode === 'dive' && dive ? (
+        <DiveViewLayout
+          dive={dive}
+          samples={samples}
           viewMode={viewMode}
           tripId={trip?.id}
-          dives={viewMode === 'trip' ? dives : []}
+          dives={[]}
           photos={sortedPhotos}
           selectedPhotoIds={selectedPhotoIds}
           onSelectDive={onSelectDive}
@@ -786,7 +914,26 @@ export function ContentArea({
           onDiveContextMenu={onDiveContextMenu}
           onPhotoContextMenu={onPhotoContextMenu}
         />
-      </div>
+      ) : (
+        <div className="content-body">
+          <ContentGrid
+            viewMode={viewMode}
+            tripId={trip?.id}
+            dives={viewMode === 'trip' ? dives : []}
+            photos={sortedPhotos}
+            selectedPhotoIds={selectedPhotoIds}
+            onSelectDive={onSelectDive}
+            onSelectPhoto={onSelectPhoto}
+            onOpenPhoto={onOpenPhoto}
+            bulkEditMode={bulkEditMode}
+            selectedDiveIds={selectedDiveIds}
+            onToggleDiveSelection={onToggleDiveSelection}
+            onAllTripPhotosLoaded={onAllTripPhotosLoaded}
+            onDiveContextMenu={onDiveContextMenu}
+            onPhotoContextMenu={onPhotoContextMenu}
+          />
+        </div>
+      )}
     </div>
   );
 }

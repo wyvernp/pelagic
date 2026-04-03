@@ -882,7 +882,12 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
     max_depth_m: number;
     mean_depth_m: number;
     water_temp_c?: number;
+    air_temp_c?: number;
+    surface_pressure_bar?: number;
+    cns_percent?: number;
     dive_computer_model?: string;
+    latitude?: number;
+    longitude?: number;
     samples: ParsedDiveSample[];
     tank_pressures: ParsedTankPressure[];
     tanks: ParsedTank[];
@@ -923,6 +928,8 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
       maxDepth: { mm: parsed.max_depth_m * 1000, m: parsed.max_depth_m, ft: parsed.max_depth_m * 3.28084 },
       meanDepth: { mm: parsed.mean_depth_m * 1000, m: parsed.mean_depth_m, ft: parsed.mean_depth_m * 3.28084 },
       waterTemperature: parsed.water_temp_c != null ? { mkelvin: (parsed.water_temp_c + 273.15) * 1000, celsius: parsed.water_temp_c, fahrenheit: parsed.water_temp_c * 9/5 + 32 } : undefined,
+      surfaceTemperature: parsed.air_temp_c != null ? { mkelvin: (parsed.air_temp_c + 273.15) * 1000, celsius: parsed.air_temp_c, fahrenheit: parsed.air_temp_c * 9/5 + 32 } : undefined,
+      diveSite: (parsed.latitude != null && parsed.longitude != null) ? { location: { lat: parsed.latitude, lon: parsed.longitude } } : undefined,
       cylinders: parsed.tanks?.map(t => ({
         gasmix: {
           oxygen: t.o2_percent != null ? { permille: t.o2_percent * 10 } : undefined,
@@ -934,6 +941,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
       diveComputers: [{
         model: parsed.dive_computer_model,
         serial: undefined,
+        surfacePressure: parsed.surface_pressure_bar != null ? { mbar: parsed.surface_pressure_bar * 1000 } : undefined,
         samples: parsed.samples.map(s => ({
           time: { seconds: s.time_seconds, minutes: s.time_seconds / 60, hours: s.time_seconds / 3600, milliseconds: s.time_seconds * 1000 },
           depth: { mm: s.depth_m * 1000, m: s.depth_m, ft: s.depth_m * 3.28084 },
@@ -941,7 +949,14 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           pressure: s.pressure_bar != null ? [{ sensor: 0, pressure: { mbar: s.pressure_bar * 1000, bar: s.pressure_bar, psi: s.pressure_bar * 14.5038 } }] : undefined,
           ndl: s.ndl_seconds != null ? { seconds: s.ndl_seconds, minutes: s.ndl_seconds / 60, hours: s.ndl_seconds / 3600, milliseconds: s.ndl_seconds * 1000 } : undefined,
           rbt: s.rbt_seconds != null ? { seconds: s.rbt_seconds, minutes: s.rbt_seconds / 60, hours: s.rbt_seconds / 3600, milliseconds: s.rbt_seconds * 1000 } : undefined,
-        })),
+          cns: undefined as number | undefined,
+        })).map((s, i, arr) => {
+          // Inject CNS% into the last sample so convertDive()'s reduceRight picks it up
+          if (i === arr.length - 1 && parsed.cns_percent != null) {
+            return { ...s, cns: parsed.cns_percent };
+          }
+          return s;
+        }),
       }],
       // Include additional fields for DownloadedDive
       selected: true,

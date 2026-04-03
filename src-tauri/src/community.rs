@@ -572,49 +572,39 @@ pub async fn submit_observations_batch(
 pub async fn get_community_stats() -> Result<CommunityStats, String> {
     let client = Client::new();
 
-    // Get site count
+    // Get site count — use GET with Range 0-0 so content-range is reliably returned
     let sites_url = format!(
-        "{}/rest/v1/dive_sites?select=id&head=true",
+        "{}/rest/v1/dive_sites?select=id",
         SUPABASE_URL
     );
     let sites_resp = client
-        .head(&sites_url)
+        .get(&sites_url)
         .header("apikey", SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .header("Range", "0-0")
         .header("Prefer", "count=exact")
         .send()
         .await
         .map_err(|e| format!("Failed to count sites: {}", e))?;
 
-    let total_sites = sites_resp
-        .headers()
-        .get("content-range")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split('/').last())
-        .and_then(|n| n.parse::<i64>().ok())
-        .unwrap_or(0);
+    let total_sites = parse_content_range_total(sites_resp.headers());
 
     // Get observation count
     let obs_url = format!(
-        "{}/rest/v1/observations?select=id&head=true",
+        "{}/rest/v1/observations?select=id",
         SUPABASE_URL
     );
     let obs_resp = client
-        .head(&obs_url)
+        .get(&obs_url)
         .header("apikey", SUPABASE_ANON_KEY)
         .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .header("Range", "0-0")
         .header("Prefer", "count=exact")
         .send()
         .await
         .map_err(|e| format!("Failed to count observations: {}", e))?;
 
-    let total_observations = obs_resp
-        .headers()
-        .get("content-range")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split('/').last())
-        .and_then(|n| n.parse::<i64>().ok())
-        .unwrap_or(0);
+    let total_observations = parse_content_range_total(obs_resp.headers());
 
     // Get unique species count from observations
     let species_url = format!(

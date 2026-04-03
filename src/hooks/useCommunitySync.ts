@@ -3,6 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import { useSettings } from '../components/SettingsModal';
 
+/** How often to re-sync community data in the background (ms). */
+const BACKGROUND_SYNC_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+
 interface DiveSite {
   id: number;
   name: string;
@@ -37,6 +40,7 @@ export function useCommunitySync() {
   const settings = useSettings();
   const hasSyncedRef = useRef(false);
   const isEnabledRef = useRef(false);
+  const isSyncingRef = useRef(false);
 
   // Check if sharing is enabled and user is signed in
   const checkEnabled = useCallback(async (): Promise<boolean> => {
@@ -257,30 +261,42 @@ export function useCommunitySync() {
     }
   }, []);
 
-  // Run on app startup: sync all sites if enabled
-  useEffect(() => {
-    if (hasSyncedRef.current) return;
+  // Full sync: sites + observations. Guarded against concurrent runs.
+  const runFullSync = useCallback(async () => {
+    if (isSyncingRef.current) return;
+    const enabled = await checkEnabled();
+    isEnabledRef.current = enabled;
+    if (!enabled) return;
 
-    const doStartupSync = async () => {
-      const enabled = await checkEnabled();
-      isEnabledRef.current = enabled;
-      if (!enabled) {
-        console.log('[CommunitySync] startup sync skipped — not enabled');
-        return;
-      }
-
-      hasSyncedRef.current = true;
-      console.log('[CommunitySync] startup sync starting...');
+    isSyncingRef.current = true;
+    try {
+      console.log('[CommunitySync] sync starting...');
       const siteIdMap = await syncAllDiveSites();
       if (siteIdMap && siteIdMap.size > 0) {
         console.log('[CommunitySync] syncing observations...');
         await syncAllObservations(siteIdMap);
       }
-      console.log('[CommunitySync] startup sync complete');
-    };
-
-    doStartupSync();
+      console.log('[CommunitySync] sync complete');
+    } finally {
+      isSyncingRef.current = false;
+    }
   }, [checkEnabled, syncAllDiveSites, syncAllObservations]);
+
+  // Run on app startup then periodically in the background
+  useEffect(() => {
+    if (hasSyncedRef.current) return;
+    hasSyncedRef.current = true;
+
+    // Initial sync
+    runFullSync();
+
+    // Periodic background sync
+    const intervalId = setInterval(() => {
+      runFullSync();
+    }, BACKGROUND_SYNC_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [runFullSync]);
 
   // Keep enabled ref in sync with settings changes
   useEffect(() => {
@@ -293,6 +309,7 @@ export function useCommunitySync() {
     syncDiveSite,
     syncSpeciesObservation,
     syncDiveObservations,
+    runFullSync,
     isEnabled: settings.communitySharing,
   };
 }

@@ -71,6 +71,7 @@ interface SiteContributorInfo {
 interface CommunityModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSync?: () => void;
 }
 
 type TabName = 'discover' | 'browse' | 'contribute';
@@ -78,7 +79,7 @@ type SpeciesSort = 'count' | 'recent' | 'alpha';
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function CommunityModal({ isOpen, onClose }: CommunityModalProps) {
+export function CommunityModal({ isOpen, onClose, onSync }: CommunityModalProps) {
   const auth = useCommunityAuth();
 
   // Tab state
@@ -168,6 +169,7 @@ export function CommunityModal({ isOpen, onClose }: CommunityModalProps) {
     setRecentObservations([]);
     loadSites();
     auth.checkAuth();
+    onSync?.();
   }, [isOpen]);
 
   // Deep link: read communitySiteId from modal context (used by effect below)

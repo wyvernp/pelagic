@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
-import type { Trip, Dive, Photo } from '../types';
+import type { Trip, Dive, Photo, DiveSite } from '../types';
 
 interface DataState {
   trips: Trip[];
@@ -9,6 +9,9 @@ interface DataState {
   photos: Photo[];
   isLoading: boolean;
   thumbnailProgress: { current: number; total: number } | null;
+  // All dives (for non-trip grouping modes)
+  allDives: Dive[] | null;
+  allDiveSites: DiveSite[] | null;
   // Caches to prevent re-fetching when navigating between trips
   divesCache: Map<number, Dive[]>;
   photosCache: Map<number, Photo[]>; // Key format: tripId or `dive_${diveId}`
@@ -23,6 +26,8 @@ interface DataActions {
   loadDivesForTrip: (tripId: number) => Promise<void>;
   loadPhotosForDive: (diveId: number) => Promise<void>;
   loadPhotosForTrip: (tripId: number) => Promise<void>;
+  loadAllDives: () => Promise<void>;
+  loadAllDiveSites: () => Promise<void>;
   setTrips: (trips: Trip[]) => void;
   setDives: (dives: Dive[]) => void;
   setPhotos: (photos: Photo[]) => void;
@@ -44,6 +49,8 @@ export const useDataStore = create<DataStore>((set, get) => ({
   photos: [],
   isLoading: true,
   thumbnailProgress: null,
+  allDives: null,
+  allDiveSites: null,
   divesCache: new Map(),
   photosCache: new Map(),
   tripCacheVersions: new Map(),
@@ -149,6 +156,28 @@ export const useDataStore = create<DataStore>((set, get) => ({
     }
   },
 
+  loadAllDives: async () => {
+    // If already loaded, skip
+    if (get().allDives !== null) return;
+    try {
+      const result = await invoke<Dive[]>('get_all_dives');
+      set({ allDives: result });
+    } catch (error) {
+      logger.error('Failed to load all dives:', error);
+    }
+  },
+
+  loadAllDiveSites: async () => {
+    // If already loaded, skip
+    if (get().allDiveSites !== null) return;
+    try {
+      const result = await invoke<DiveSite[]>('get_dive_sites');
+      set({ allDiveSites: result });
+    } catch (error) {
+      logger.error('Failed to load dive sites:', error);
+    }
+  },
+
   setTrips: (trips) => set({ trips }),
   setDives: (dives) => set({ dives }),
   setPhotos: (photos) => set({ photos }),
@@ -204,6 +233,8 @@ export const useDataStore = create<DataStore>((set, get) => ({
       divesCache: new Map(), 
       photosCache: new Map(),
       tripCacheVersions: new Map(),
+      allDives: null,
+      allDiveSites: null,
       currentTripId: null,
       currentDiveId: null 
     });

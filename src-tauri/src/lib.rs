@@ -181,6 +181,7 @@ pub fn run() {
             commands::update_trip,
             commands::delete_trip,
             commands::get_dives_for_trip,
+            commands::get_all_dives,
             commands::get_dive,
             commands::update_dive,
             commands::delete_dive,

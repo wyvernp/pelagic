@@ -351,6 +351,20 @@ impl<'a> Db<'a> {
     
     // ====================== Dive Operations ======================
     
+    pub fn get_all_dives(&self) -> Result<Vec<Dive>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, trip_id, dive_number, date, time, duration_seconds, max_depth_m, mean_depth_m,
+                    water_temp_c, air_temp_c, surface_pressure_bar, otu, cns_percent,
+                    dive_computer_model, dive_computer_serial, location, ocean, visibility_m,
+                    gear_profile_id, buddy, divemaster, guide, instructor, comments, latitude, longitude, dive_site_id,
+                    is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive,
+                    created_at, updated_at
+             FROM dives ORDER BY date DESC, time DESC"
+        )?;
+        let dives = stmt.query_map([], Self::map_dive_row)?.collect::<Result<Vec<_>>>()?;
+        Ok(dives)
+    }
+    
     pub fn get_dives_for_trip(&self, trip_id: i64) -> Result<Vec<Dive>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, trip_id, dive_number, date, time, duration_seconds, max_depth_m, mean_depth_m,

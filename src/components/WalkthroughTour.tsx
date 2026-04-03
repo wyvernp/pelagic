@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import Joyride, { CallBackProps, STATUS, EVENTS, Step, Styles } from 'react-joyride';
+import Joyride, { CallBackProps, STATUS, EVENTS, ACTIONS, Step, Styles } from 'react-joyride';
 import './WalkthroughTour.css';
 
 interface WalkthroughTourProps {
@@ -380,11 +380,11 @@ export function WalkthroughTour({ run, onComplete, onSkip }: WalkthroughTourProp
   }, [run]);
 
   const handleCallback = (data: CallBackProps) => {
-    const { status, type, index } = data;
+    const { status, type, action, index } = data;
 
     // Update step index for controlled mode
     if (type === EVENTS.STEP_AFTER) {
-      setStepIndex(index + 1);
+      setStepIndex(action === ACTIONS.PREV ? index - 1 : index + 1);
     }
 
     // Handle tour completion

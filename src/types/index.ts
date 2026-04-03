@@ -252,6 +252,10 @@ export interface PhotoGeneralTag {
 
 export type ViewMode = 'trips' | 'trip' | 'dive' | 'search';
 
+export type SidebarGroupMode = 'trips' | 'timeline' | 'location' | 'type';
+
+export type ContentLayout = 'default' | 'side-by-side' | 'photo-focus' | 'chart-focus';
+
 export interface AppState {
   viewMode: ViewMode;
   selectedTripId: number | null;

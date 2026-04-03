@@ -22,6 +22,7 @@ interface RightPanelProps {
   dive: Dive | null;
   trip?: Trip | null;
   onPhotoUpdated?: () => void;
+  onSpeciesIdentified?: () => void;
 }
 
 // Format file size in human-readable format
@@ -45,7 +46,7 @@ interface TankSummary {
   consumption?: number;
 }
 
-export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProps) {
+export function RightPanel({ photo, dive, trip, onPhotoUpdated, onSpeciesIdentified }: RightPanelProps) {
   const [speciesTags, setSpeciesTags] = useState<SpeciesTag[]>([]);
   const [generalTags, setGeneralTags] = useState<GeneralTag[]>([]);
   const [rating, setRating] = useState(0);
@@ -590,6 +591,9 @@ export function RightPanel({ photo, dive, trip, onPhotoUpdated }: RightPanelProp
         // Reload tags
         loadSpeciesTags(photo.id);
         loadGeneralTags(photo.id);
+        
+        // Notify parent to sync community
+        onSpeciesIdentified?.();
         
         // Show confidence info
         const confidence = result.identification.confidence || 'unknown';

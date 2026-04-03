@@ -1,6 +1,6 @@
 {
   "name": "pelagic",
-  "version": "0.3.26",
+  "version": "0.3.27",
   "description": "Dive photo manager for organizing underwater photography by trips and dives",
   "type": "module",
   "scripts": {
@@ -17,6 +17,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/utilities": "^3.2.2",
     "@fontsource/inter": "^5.2.8",
     "@tauri-apps/api": "~2.9.0",
     "@tauri-apps/plugin-dialog": "^2.4.2",
@@ -25,6 +27,7 @@
     "@tauri-apps/plugin-updater": "~2.9.0",
     "@types/leaflet": "^1.9.21",
     "@visx/visx": "^3.12.0",
+    "allotment": "^1.20.5",
     "date-fns": "^4.1.0",
     "html-to-image": "^1.11.13",
     "leaflet": "^1.9.4",

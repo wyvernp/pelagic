@@ -104,6 +104,8 @@ function App() {
     modalContext,
     sidebarWidth,
     isResizing,
+    isSidebarCollapsed,
+    isRightPanelCollapsed,
     isTourRunning,
     hasCompletedTour,
     contextMenu,
@@ -113,6 +115,8 @@ function App() {
     setSidebarWidth,
     setIsResizing,
     saveSidebarWidth,
+    toggleSidebarCollapsed,
+    toggleRightPanelCollapsed,
     startTour,
     endTour,
     showContextMenu,
@@ -120,7 +124,7 @@ function App() {
   } = useUIStore();
 
   // Community auto-sync hook (declared early — used by dive/photo handlers)
-  const { syncDiveSite, syncDiveObservations } = useCommunitySync();
+  const { syncDiveSite, syncDiveObservations, runFullSync: communitySyncNow } = useCommunitySync();
 
   // Migration state - tracks if database migration is in progress
   const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
@@ -236,6 +240,22 @@ function App() {
       document.body.style.userSelect = '';
     };
   }, [isResizing, setSidebarWidth, setIsResizing, saveSidebarWidth]);
+
+  // Keyboard shortcuts for panel toggles
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b' && !e.shiftKey) {
+        e.preventDefault();
+        toggleSidebarCollapsed();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'B') {
+        e.preventDefault();
+        toggleRightPanelCollapsed();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleSidebarCollapsed, toggleRightPanelCollapsed]);
 
   // Computed values
   const selectedTrip = useMemo(
@@ -676,11 +696,16 @@ function App() {
       invalidateTripCache(addDiveTripId);
       await loadDivesForTrip(addDiveTripId);
       handleSelectDive(diveId);
+
+      // Auto-sync dive site to community if location + coords present
+      if (data.location && data.latitude != null && data.longitude != null) {
+        syncDiveSite(data.location, data.latitude, data.longitude);
+      }
     } catch (error) {
       logger.error('Failed to create dive:', error);
       alert('Failed to create dive: ' + error);
     }
-  }, [modalContext.addDiveTripId, closeModal, updateModalContext, loadDivesForTrip, handleSelectDive, invalidateTripCache]);
+  }, [modalContext.addDiveTripId, closeModal, updateModalContext, loadDivesForTrip, handleSelectDive, invalidateTripCache, syncDiveSite]);
 
   const handleDiveSubmit = useCallback(async (diveId: number, data: DiveFormData) => {
     try {
@@ -1362,12 +1387,16 @@ function App() {
           onToggleDiveSelection={handleToggleDiveSelection}
           onDiveContextMenu={handleDiveContextMenu}
           onTripContextMenu={handleTripContextMenu}
-          style={{ width: sidebarWidth }}
+          style={{ width: isSidebarCollapsed ? 48 : sidebarWidth }}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapsed}
         />
-        <div
-          className={`sidebar-resizer ${isResizing ? 'resizing' : ''}`}
-          onMouseDown={handleResizeStart}
-        />
+        {!isSidebarCollapsed && (
+          <div
+            className={`sidebar-resizer ${isResizing ? 'resizing' : ''}`}
+            onMouseDown={handleResizeStart}
+          />
+        )}
         <ContentArea
           viewMode={viewMode}
           trip={selectedTrip}
@@ -1400,12 +1429,41 @@ function App() {
           onDiveContextMenu={handleDiveContextMenu}
           onPhotoContextMenu={handlePhotoContextMenu}
         />
-        <RightPanel
-          photo={selectedPhoto}
-          dive={selectedDive}
-          trip={selectedTrip}
-          onPhotoUpdated={handlePhotosUpdated}
-        />
+        {!isRightPanelCollapsed ? (
+          <RightPanel
+            photo={selectedPhoto}
+            dive={selectedDive}
+            trip={selectedTrip}
+            onPhotoUpdated={handlePhotosUpdated}
+            onSpeciesIdentified={() => {
+              if (selectedDive && selectedDive.dive_site_id) {
+                // Sync the dive site first (in case it hasn't been uploaded yet)
+                if (selectedDive.location && selectedDive.latitude != null && selectedDive.longitude != null) {
+                  syncDiveSite(selectedDive.location, selectedDive.latitude, selectedDive.longitude);
+                }
+                // Then sync observations
+                if (selectedPhoto) {
+                  syncDiveObservations(
+                    { dive_site_id: selectedDive.dive_site_id, date: selectedDive.date, max_depth_m: selectedDive.max_depth_m },
+                    [selectedPhoto.id]
+                  );
+                }
+              }
+            }}
+          />
+        ) : (
+          <div className="panel-collapsed">
+            <button
+              className="panel-expand-btn"
+              onClick={toggleRightPanelCollapsed}
+              title="Expand panel (Ctrl+Shift+B)"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+              </svg>
+            </button>
+          </div>
+        )}
       </main>
       <TripModal
         isOpen={activeModal === 'trip'}
@@ -1547,6 +1605,7 @@ function App() {
       <CommunityModal
         isOpen={activeModal === 'community'}
         onClose={closeModal}
+        onSync={communitySyncNow}
       />
       <WalkthroughTour
         run={isTourRunning}

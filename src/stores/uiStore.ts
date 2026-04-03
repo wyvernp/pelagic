@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Trip, Dive, Photo } from '../types';
+import type { Trip, Dive, Photo, SidebarGroupMode, ContentLayout } from '../types';
 
 // Context menu state
 export interface ContextMenuState {
@@ -52,6 +52,13 @@ interface UIState {
   modalContext: ModalContext;
   sidebarWidth: number;
   isResizing: boolean;
+  // Sidebar grouping mode
+  sidebarGroupMode: SidebarGroupMode;
+  // Collapse states
+  isSidebarCollapsed: boolean;
+  isRightPanelCollapsed: boolean;
+  // Content layout
+  contentLayout: ContentLayout;
   // Walkthrough tour state
   isTourRunning: boolean;
   hasCompletedTour: boolean;
@@ -66,6 +73,15 @@ interface UIActions {
   setSidebarWidth: (width: number) => void;
   setIsResizing: (isResizing: boolean) => void;
   saveSidebarWidth: () => void;
+  // Sidebar grouping
+  setSidebarGroupMode: (mode: SidebarGroupMode) => void;
+  // Collapse actions
+  toggleSidebarCollapsed: () => void;
+  toggleRightPanelCollapsed: () => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setRightPanelCollapsed: (collapsed: boolean) => void;
+  // Content layout
+  setContentLayout: (layout: ContentLayout) => void;
   // Tour actions
   startTour: () => void;
   endTour: (completed: boolean) => void;
@@ -81,6 +97,29 @@ const getInitialSidebarWidth = (): number => {
   if (typeof window === 'undefined') return 280;
   const saved = localStorage.getItem('pelagic-sidebar-width');
   return saved ? parseInt(saved, 10) : 280;
+};
+
+const getInitialSidebarGroupMode = (): SidebarGroupMode => {
+  if (typeof window === 'undefined') return 'trips';
+  const saved = localStorage.getItem('pelagic-sidebar-group-mode');
+  if (saved && ['trips', 'timeline', 'location', 'type'].includes(saved)) {
+    return saved as SidebarGroupMode;
+  }
+  return 'trips';
+};
+
+const getInitialCollapsed = (key: string): boolean => {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(key) === 'true';
+};
+
+const getInitialContentLayout = (): ContentLayout => {
+  if (typeof window === 'undefined') return 'default';
+  const saved = localStorage.getItem('pelagic-content-layout');
+  if (saved && ['default', 'side-by-side', 'photo-focus', 'chart-focus'].includes(saved)) {
+    return saved as ContentLayout;
+  }
+  return 'default';
 };
 
 const getHasCompletedTour = (): boolean => {
@@ -101,6 +140,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
   activeModal: null,
   modalContext: {},
   sidebarWidth: getInitialSidebarWidth(),
+  sidebarGroupMode: getInitialSidebarGroupMode(),
+  isSidebarCollapsed: getInitialCollapsed('pelagic-sidebar-collapsed'),
+  isRightPanelCollapsed: getInitialCollapsed('pelagic-right-panel-collapsed'),
+  contentLayout: getInitialContentLayout(),
   contextMenu: {
     isOpen: false,
     x: 0,
@@ -138,6 +181,38 @@ export const useUIStore = create<UIStore>((set, get) => ({
   saveSidebarWidth: () => {
     const { sidebarWidth } = get();
     localStorage.setItem('pelagic-sidebar-width', sidebarWidth.toString());
+  },
+
+  setSidebarGroupMode: (mode) => {
+    localStorage.setItem('pelagic-sidebar-group-mode', mode);
+    set({ sidebarGroupMode: mode });
+  },
+
+  toggleSidebarCollapsed: () => {
+    const collapsed = !get().isSidebarCollapsed;
+    localStorage.setItem('pelagic-sidebar-collapsed', String(collapsed));
+    set({ isSidebarCollapsed: collapsed });
+  },
+
+  toggleRightPanelCollapsed: () => {
+    const collapsed = !get().isRightPanelCollapsed;
+    localStorage.setItem('pelagic-right-panel-collapsed', String(collapsed));
+    set({ isRightPanelCollapsed: collapsed });
+  },
+
+  setSidebarCollapsed: (collapsed) => {
+    localStorage.setItem('pelagic-sidebar-collapsed', String(collapsed));
+    set({ isSidebarCollapsed: collapsed });
+  },
+
+  setRightPanelCollapsed: (collapsed) => {
+    localStorage.setItem('pelagic-right-panel-collapsed', String(collapsed));
+    set({ isRightPanelCollapsed: collapsed });
+  },
+
+  setContentLayout: (layout) => {
+    localStorage.setItem('pelagic-content-layout', layout);
+    set({ contentLayout: layout });
   },
 
   startTour: () =>

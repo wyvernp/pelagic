@@ -231,6 +231,13 @@ pub fn get_dives_for_trip(state: State<AppState>, trip_id: i64) -> Result<Vec<Di
 }
 
 #[tauri::command]
+pub fn get_all_dives(state: State<AppState>) -> Result<Vec<Dive>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.get_all_dives().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_dive(state: State<AppState>, id: i64) -> Result<Option<Dive>, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     db.get_dive(id).map_err(|e| e.to_string())
@@ -331,7 +338,12 @@ pub struct ParsedDivePreview {
     pub max_depth_m: f64,
     pub mean_depth_m: f64,
     pub water_temp_c: Option<f64>,
+    pub air_temp_c: Option<f64>,
+    pub surface_pressure_bar: Option<f64>,
+    pub cns_percent: Option<f64>,
     pub dive_computer_model: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
     pub samples: Vec<ParsedDiveSample>,
     pub tank_pressures: Vec<ParsedTankPressure>,
     pub tanks: Vec<ParsedTank>,
@@ -623,7 +635,12 @@ pub fn parse_dive_file_data(file_name: String, file_data: Vec<u8>) -> Result<Par
             max_depth_m: imported.dive.max_depth_m,
             mean_depth_m: imported.dive.mean_depth_m,
             water_temp_c: imported.dive.water_temp_c,
+            air_temp_c: imported.dive.air_temp_c,
+            surface_pressure_bar: imported.dive.surface_pressure_bar,
+            cns_percent: imported.dive.cns_percent,
             dive_computer_model: imported.dive.dive_computer_model,
+            latitude: imported.dive.latitude,
+            longitude: imported.dive.longitude,
             samples: imported.samples.into_iter().map(|s| ParsedDiveSample {
                 time_seconds: s.time_seconds,
                 depth_m: s.depth_m,
