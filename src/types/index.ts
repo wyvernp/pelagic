@@ -416,6 +416,39 @@ export interface DiveSite {
   is_user_created: boolean;
 }
 
+// Community search types
+export interface CommunitySearchResults {
+  sites: CommunityDiveSiteSearchResult[];
+  species_sites: SpeciesSiteMatch[];
+}
+
+export interface CommunityDiveSiteSearchResult {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  country?: string;
+  region?: string;
+  max_depth?: number;
+  observation_count: number;
+  species_count: number;
+}
+
+export interface SpeciesSiteMatch {
+  species_name: string;
+  scientific_name?: string;
+  category?: string;
+  sighting_count: number;
+  sites: CommunityDiveSiteBrief[];
+}
+
+export interface CommunityDiveSiteBrief {
+  id: string;
+  name: string;
+  country?: string;
+  region?: string;
+}
+
 // Map types
 export interface DiveMapPoint {
   dive_id: number;

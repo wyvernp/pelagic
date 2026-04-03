@@ -44,6 +44,7 @@ export interface ModalContext {
   viewerPhotoId?: number | null;
   shareType?: 'dive' | 'trip' | 'photo';
   sharePhotoId?: number | null;
+  communitySiteId?: string | null;
 }
 
 interface UIState {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import { useCommunityAuth } from '../hooks/useCommunityAuth';
+import { useUIStore } from '../stores/uiStore';
 import { CommunityMap } from './CommunityMap';
 import './CommunityModal.css';
 
@@ -169,6 +170,9 @@ export function CommunityModal({ isOpen, onClose }: CommunityModalProps) {
     auth.checkAuth();
   }, [isOpen]);
 
+  // Deep link: read communitySiteId from modal context (used by effect below)
+  const modalContext = useUIStore((s) => s.modalContext);
+
   // Debounced search
   useEffect(() => {
     if (!isOpen) return;
@@ -217,6 +221,23 @@ export function CommunityModal({ isOpen, onClose }: CommunityModalProps) {
       setDetailLoading(false);
     }
   }, []);
+
+  // Deep link: auto-select a site when opened from search results
+  useEffect(() => {
+    if (!isOpen || !modalContext.communitySiteId) return;
+    const siteId = modalContext.communitySiteId;
+    // Clear the deep-link so it doesn't re-trigger
+    useUIStore.getState().updateModalContext({ communitySiteId: null });
+    setActiveTab('browse');
+    // Check if site is already loaded in the list
+    const existing = allSites.find((s) => s.id === siteId);
+    if (existing) {
+      handleSelectSite(existing);
+    } else {
+      // Construct a minimal site so handleSelectSite can fetch its details
+      handleSelectSite({ id: siteId, name: '...', lat: 0, lon: 0 } as CommunityDiveSite);
+    }
+  }, [isOpen, modalContext.communitySiteId, allSites, handleSelectSite]);
 
   // ── Sorted species ────────────────────────────────────────────────────────
 

@@ -6,6 +6,8 @@ import { ContentGrid } from './ContentGrid';
 import { StatsBar } from './StatsBar';
 import { DiveSiteModal } from './DiveSiteModal';
 import { useSettings, useGeminiApiKey } from './SettingsModal';
+import { useSearchStore } from '../stores/searchStore';
+import { useUIStore } from '../stores/uiStore';
 import { logger } from '../utils/logger';
 import { confirmDialog } from '../utils/dialogs';
 import { formatDiveName } from '../utils/diveNames';
@@ -283,6 +285,8 @@ export function ContentArea({
 
   // Search results view
   if (viewMode === 'search' && searchResults) {
+    const { communityResults, communityLoading } = useSearchStore.getState();
+    const communityCount = (communityResults?.sites?.length ?? 0) + (communityResults?.species_sites?.length ?? 0);
     const totalResults = searchResults.trips.length + searchResults.dives.length + 
                          searchResults.photos.length + searchResults.species.length + 
                          searchResults.tags.length + searchResults.dive_sites.length;
@@ -292,7 +296,7 @@ export function ContentArea({
         <div className="content-header search-header">
           <h2>
             Search Results for "{searchQuery}"
-            <span className="result-count">({totalResults} results)</span>
+            <span className="result-count">({totalResults} results{communityCount > 0 ? ` + ${communityCount} community` : ''})</span>
           </h2>
           <button className="clear-search-btn" onClick={onClearSearch}>
             <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
@@ -439,6 +443,115 @@ export function ContentArea({
               </div>
             </div>
           )}
+
+          {/* Community Results Section */}
+          {communityLoading && (
+            <div className="search-results-section community-results-section">
+              <h3 className="section-title">
+                <span className="section-icon">🌊</span>
+                Community
+              </h3>
+              <div className="community-loading">
+                <div className="community-loading-skeleton" />
+                <div className="community-loading-skeleton" />
+                <div className="community-loading-skeleton" />
+              </div>
+            </div>
+          )}
+
+          {!communityLoading && communityResults && (communityResults.sites.length > 0 || communityResults.species_sites.length > 0) && (
+            <div className="search-results-section community-results-section">
+              <h3 className="section-title">
+                <span className="section-icon">🌊</span>
+                Community ({communityCount})
+              </h3>
+              <p className="section-hint">Dive sites and species sightings shared by the Pelagic community.</p>
+
+              {/* Community Dive Sites */}
+              {communityResults.sites.length > 0 && (
+                <div className="community-subsection">
+                  <h4 className="community-subsection-title">Dive Sites ({communityResults.sites.length})</h4>
+                  <div className="results-grid community-sites-grid">
+                    {communityResults.sites.map((site) => (
+                      <button
+                        key={site.id}
+                        className="result-card community-site-card"
+                        onClick={() => {
+                          useUIStore.getState().openModal('community', { communitySiteId: site.id });
+                        }}
+                        title="Open in Community"
+                      >
+                        <div className="card-title">{site.name}</div>
+                        <div className="card-meta">
+                          {[site.country, site.region].filter(Boolean).join(', ') || `${site.lat.toFixed(4)}°, ${site.lon.toFixed(4)}°`}
+                        </div>
+                        <div className="community-card-stats">
+                          {site.observation_count > 0 && (
+                            <span className="community-stat">
+                              <span className="community-stat-icon">👁️</span>
+                              {site.observation_count} observation{site.observation_count !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {site.species_count > 0 && (
+                            <span className="community-stat">
+                              <span className="community-stat-icon">🐠</span>
+                              {site.species_count} species
+                            </span>
+                          )}
+                          {site.max_depth != null && (
+                            <span className="community-stat">
+                              <span className="community-stat-icon">📏</span>
+                              {site.max_depth.toFixed(0)}m
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Species at Community Sites */}
+              {communityResults.species_sites.length > 0 && (
+                <div className="community-subsection">
+                  <h4 className="community-subsection-title">Species Sightings ({communityResults.species_sites.length})</h4>
+                  <div className="community-species-list">
+                    {communityResults.species_sites.map((match) => (
+                      <div key={match.species_name} className="community-species-row">
+                        <div className="community-species-info">
+                          <span className="community-species-name">{match.species_name}</span>
+                          {match.scientific_name && (
+                            <span className="community-species-sci"><em>{match.scientific_name}</em></span>
+                          )}
+                          {match.category && (
+                            <span className="community-species-category">{match.category}</span>
+                          )}
+                          <span className="community-species-count">{match.sighting_count} sighting{match.sighting_count !== 1 ? 's' : ''}</span>
+                        </div>
+                        {match.sites.length > 0 && (
+                          <div className="community-species-sites">
+                            {match.sites.map((site) => (
+                              <button
+                                key={site.id}
+                                className="community-species-site-btn"
+                                onClick={() => {
+                                  useUIStore.getState().openModal('community', { communitySiteId: site.id });
+                                }}
+                                title="Open in Community"
+                              >
+                                📍 {site.name}
+                                {site.country && <span className="community-species-site-loc"> · {site.country}</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           
           <DiveSiteModal
             isOpen={editingDiveSite !== null}
@@ -448,7 +561,7 @@ export function ContentArea({
             onDelete={onClearSearch}
           />
           
-          {totalResults === 0 && (
+          {totalResults === 0 && !communityLoading && communityCount === 0 && (
             <div className="empty-state">
               <div className="empty-state-icon">🔍</div>
               <h3>No results found</h3>

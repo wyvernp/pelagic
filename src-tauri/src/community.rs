@@ -103,6 +103,48 @@ pub struct SiteContributorInfo {
     pub observation_count: i64,
 }
 
+// ── Community Search Types ──────────────────────────────────────────────────
+
+/// Combined community search results returned to the frontend
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CommunitySearchResults {
+    pub sites: Vec<CommunityDiveSiteSearchResult>,
+    pub species_sites: Vec<SpeciesSiteMatch>,
+}
+
+/// A community dive site enriched with observation/species counts
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CommunityDiveSiteSearchResult {
+    pub id: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub country: Option<String>,
+    pub region: Option<String>,
+    pub max_depth: Option<f32>,
+    pub observation_count: i64,
+    pub species_count: i64,
+}
+
+/// A species matched by search, with the community dive sites where it's been observed
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SpeciesSiteMatch {
+    pub species_name: String,
+    pub scientific_name: Option<String>,
+    pub category: Option<String>,
+    pub sighting_count: i64,
+    pub sites: Vec<CommunityDiveSiteBrief>,
+}
+
+/// Minimal dive site info for species-to-site mapping
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CommunityDiveSiteBrief {
+    pub id: String,
+    pub name: String,
+    pub country: Option<String>,
+    pub region: Option<String>,
+}
+
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 /// Sign up with email + password
@@ -775,4 +817,262 @@ pub async fn get_distinct_species() -> Result<Vec<String>, String> {
         .collect();
     species.sort();
     Ok(species)
+}
+
+// ── Community Search ────────────────────────────────────────────────────────
+
+/// Search community dive sites and species observations in parallel.
+/// Returns matching sites (with counts) and species-to-site mappings.
+pub async fn community_search(query: &str) -> Result<CommunitySearchResults, String> {
+    let query = query.trim();
+    if query.is_empty() || query.len() < 2 {
+        return Ok(CommunitySearchResults {
+            sites: vec![],
+            species_sites: vec![],
+        });
+    }
+
+    let encoded = urlencoding::encode(query);
+    let client = Client::new();
+
+    // Run site search and species/observation search in parallel
+    let (sites_result, species_result) = tokio::join!(
+        search_community_sites(&client, &encoded),
+        search_community_species(&client, &encoded),
+    );
+
+    Ok(CommunitySearchResults {
+        sites: sites_result.unwrap_or_default(),
+        species_sites: species_result.unwrap_or_default(),
+    })
+}
+
+/// Search community dive sites by name/country/region, enriched with observation + species counts
+async fn search_community_sites(
+    client: &Client,
+    encoded_query: &str,
+) -> Result<Vec<CommunityDiveSiteSearchResult>, String> {
+    let url = format!(
+        "{}/rest/v1/dive_sites?select=id,name,lat,lon,country,region,max_depth&or=(name.ilike.*{}*,country.ilike.*{}*,region.ilike.*{}*)&order=name.asc&limit=20",
+        SUPABASE_URL, encoded_query, encoded_query, encoded_query
+    );
+
+    let response = client
+        .get(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .send()
+        .await
+        .map_err(|e| format!("Community site search failed: {}", e))?;
+
+    let text = response.text().await.unwrap_or_default();
+    let sites: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+
+    if sites.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Collect site IDs for batch observation query
+    let site_ids: Vec<String> = sites
+        .iter()
+        .filter_map(|s| s.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .collect();
+
+    // Fetch observation counts per site in one query
+    let ids_param = site_ids.join(",");
+    let obs_url = format!(
+        "{}/rest/v1/observations?dive_site_id=in.({})\
+        &select=dive_site_id,species_name",
+        SUPABASE_URL, ids_param
+    );
+
+    let obs_response = client
+        .get(&obs_url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .send()
+        .await
+        .ok();
+
+    // Build per-site observation + species counts
+    let mut obs_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut species_counts: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+
+    if let Some(resp) = obs_response {
+        if let Ok(obs_text) = resp.text().await {
+            let obs: Vec<serde_json::Value> = serde_json::from_str(&obs_text).unwrap_or_default();
+            for o in &obs {
+                if let Some(sid) = o.get("dive_site_id").and_then(|v| v.as_str()) {
+                    *obs_counts.entry(sid.to_string()).or_insert(0) += 1;
+                    if let Some(sp) = o.get("species_name").and_then(|v| v.as_str()) {
+                        species_counts
+                            .entry(sid.to_string())
+                            .or_default()
+                            .insert(sp.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Build enriched results
+    let results = sites
+        .iter()
+        .filter_map(|s| {
+            let id = s.get("id").and_then(|v| v.as_str())?.to_string();
+            Some(CommunityDiveSiteSearchResult {
+                id: id.clone(),
+                name: s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                lat: s.get("lat").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                lon: s.get("lon").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                country: s.get("country").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                region: s.get("region").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                max_depth: s.get("max_depth").and_then(|v| v.as_f64()).map(|d| d as f32),
+                observation_count: obs_counts.get(&id).copied().unwrap_or(0),
+                species_count: species_counts.get(&id).map(|s| s.len() as i64).unwrap_or(0),
+            })
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Search observations by species name, group by species, and resolve the dive sites where each was observed
+async fn search_community_species(
+    client: &Client,
+    encoded_query: &str,
+) -> Result<Vec<SpeciesSiteMatch>, String> {
+    // Search observations matching species name or scientific name
+    let url = format!(
+        "{}/rest/v1/observations?select=species_name,scientific_name,category,dive_site_id\
+        &or=(species_name.ilike.*{}*,scientific_name.ilike.*{}*)\
+        &limit=200",
+        SUPABASE_URL, encoded_query, encoded_query
+    );
+
+    let response = client
+        .get(&url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .send()
+        .await
+        .map_err(|e| format!("Community species search failed: {}", e))?;
+
+    let text = response.text().await.unwrap_or_default();
+    let obs: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+
+    if obs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Group by species_name → { scientific_name, category, sighting_count, dive_site_ids }
+    struct SpeciesAgg {
+        scientific_name: Option<String>,
+        category: Option<String>,
+        count: i64,
+        site_ids: std::collections::HashSet<String>,
+    }
+
+    let mut species_map: std::collections::HashMap<String, SpeciesAgg> =
+        std::collections::HashMap::new();
+
+    for o in &obs {
+        let name = match o.get("species_name").and_then(|v| v.as_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let entry = species_map.entry(name).or_insert_with_key(|_| SpeciesAgg {
+            scientific_name: o.get("scientific_name").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            category: o.get("category").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            count: 0,
+            site_ids: std::collections::HashSet::new(),
+        });
+        entry.count += 1;
+        if let Some(sid) = o.get("dive_site_id").and_then(|v| v.as_str()) {
+            entry.site_ids.insert(sid.to_string());
+        }
+    }
+
+    // Collect all unique site IDs across all matched species
+    let all_site_ids: std::collections::HashSet<String> = species_map
+        .values()
+        .flat_map(|a| a.site_ids.iter().cloned())
+        .collect();
+
+    if all_site_ids.is_empty() {
+        // Species matched but no site links — return species without sites
+        let results = species_map
+            .into_iter()
+            .map(|(name, agg)| SpeciesSiteMatch {
+                species_name: name,
+                scientific_name: agg.scientific_name,
+                category: agg.category,
+                sighting_count: agg.count,
+                sites: vec![],
+            })
+            .collect();
+        return Ok(results);
+    }
+
+    // Fetch the dive sites by ID
+    let ids_param: String = all_site_ids.into_iter().collect::<Vec<_>>().join(",");
+    let sites_url = format!(
+        "{}/rest/v1/dive_sites?id=in.({})\
+        &select=id,name,country,region",
+        SUPABASE_URL, ids_param
+    );
+
+    let sites_response = client
+        .get(&sites_url)
+        .header("apikey", SUPABASE_ANON_KEY)
+        .header("Authorization", format!("Bearer {}", SUPABASE_ANON_KEY))
+        .send()
+        .await
+        .ok();
+
+    let mut sites_lookup: std::collections::HashMap<String, CommunityDiveSiteBrief> =
+        std::collections::HashMap::new();
+
+    if let Some(resp) = sites_response {
+        if let Ok(sites_text) = resp.text().await {
+            let sites: Vec<serde_json::Value> =
+                serde_json::from_str(&sites_text).unwrap_or_default();
+            for s in &sites {
+                if let Some(id) = s.get("id").and_then(|v| v.as_str()) {
+                    sites_lookup.insert(
+                        id.to_string(),
+                        CommunityDiveSiteBrief {
+                            id: id.to_string(),
+                            name: s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                            country: s.get("country").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                            region: s.get("region").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    // Build final results: species with their resolved sites, sorted by sighting count
+    let mut results: Vec<SpeciesSiteMatch> = species_map
+        .into_iter()
+        .map(|(name, agg)| {
+            let sites: Vec<CommunityDiveSiteBrief> = agg
+                .site_ids
+                .iter()
+                .filter_map(|sid| sites_lookup.get(sid).cloned())
+                .collect();
+            SpeciesSiteMatch {
+                species_name: name,
+                scientific_name: agg.scientific_name,
+                category: agg.category,
+                sighting_count: agg.count,
+                sites,
+            }
+        })
+        .collect();
+
+    results.sort_by(|a, b| b.sighting_count.cmp(&a.sighting_count));
+    Ok(results)
 }

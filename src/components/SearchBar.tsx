@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
 import { useSearchStore, useNavigationStore } from '../stores';
-import type { SearchResults } from '../types';
+import type { SearchResults, CommunitySearchResults } from '../types';
 import './SearchBar.css';
 
 interface SearchBarProps {
@@ -22,7 +22,7 @@ export function SearchBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { setSearchResults, searchResults } = useSearchStore();
+  const { setSearchResults, searchResults, setCommunityResults, setCommunityLoading } = useSearchStore();
   const { setViewMode, selectDive, selectPhoto } = useNavigationStore();
 
   // Focus input when opened
@@ -40,6 +40,7 @@ export function SearchBar({
     }
     
     setLoading(true);
+    setCommunityLoading(true);
     try {
       const results = await invoke<SearchResults>('search', { query: searchQuery });
       setSearchResults(results, searchQuery);
@@ -54,7 +55,12 @@ export function SearchBar({
     } finally {
       setLoading(false);
     }
-  }, [setSearchResults, setViewMode, selectDive, selectPhoto]);
+
+    // Fire community search in parallel — non-blocking, graceful degradation
+    invoke<CommunitySearchResults>('community_search', { query: searchQuery })
+      .then((communityResults) => setCommunityResults(communityResults))
+      .catch(() => setCommunityResults(null));
+  }, [setSearchResults, setViewMode, selectDive, selectPhoto, setCommunityResults, setCommunityLoading]);
 
   // Handle input change with debounce
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

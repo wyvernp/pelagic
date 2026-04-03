@@ -180,6 +180,40 @@ function CitizenScienceStepContent() {
   );
 }
 
+function CommunityStepContent() {
+  return (
+    <div className="tour-content tour-content-community">
+      <h3>🌊 Community</h3>
+      <p>
+        Join the Pelagic community to <strong>discover</strong> and <strong>contribute</strong> dive site data worldwide.
+      </p>
+
+      <div className="tour-actions-grid">
+        <div className="tour-action-item">
+          <span className="tour-action-icon">🗺️</span>
+          <span>Discover dive sites on an interactive map</span>
+        </div>
+        <div className="tour-action-item">
+          <span className="tour-action-icon">🐠</span>
+          <span>Browse species observed at every site</span>
+        </div>
+        <div className="tour-action-item">
+          <span className="tour-action-icon">📍</span>
+          <span>Share your dive sites &amp; observations</span>
+        </div>
+        <div className="tour-action-item">
+          <span className="tour-action-icon">📊</span>
+          <span>See depth ranges, sighting counts &amp; more</span>
+        </div>
+      </div>
+
+      <p className="tour-hint">
+        Sign up for free to start contributing. Your data syncs automatically when sharing is enabled.
+      </p>
+    </div>
+  );
+}
+
 function SearchStepContent() {
   return (
     <div className="tour-content">
@@ -252,6 +286,13 @@ const tourSteps: Step[] = [
     placement: 'left',
     disableBeacon: true,
     spotlightPadding: 0,
+  },
+  {
+    target: '#community-btn',
+    content: <CommunityStepContent />,
+    placement: 'bottom',
+    disableBeacon: true,
+    spotlightPadding: 8,
   },
   {
     target: '#search-btn',

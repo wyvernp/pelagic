@@ -3478,3 +3478,10 @@ pub async fn community_get_site_contributor_info(
 pub async fn community_get_distinct_species() -> Result<Vec<String>, String> {
     community::get_distinct_species().await
 }
+
+#[tauri::command]
+pub async fn community_search(
+    query: String,
+) -> Result<community::CommunitySearchResults, String> {
+    community::community_search(&query).await
+}

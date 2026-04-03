@@ -360,6 +360,7 @@ pub fn run() {
             commands::community_get_site_observations_paginated,
             commands::community_get_site_contributor_info,
             commands::community_get_distinct_species,
+            commands::community_search,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
