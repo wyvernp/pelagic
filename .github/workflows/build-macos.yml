@@ -32,10 +32,20 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Build DMG
+      - name: Build app bundle
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app
+
+      - name: Create DMG from app bundle
         run: |
-          chmod +x build-release-macos.sh
-          ./build-release-macos.sh
+          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app"
+          DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          DMG_PATH="$DMG_DIR/Pelagic_$(cat src-tauri/tauri.conf.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])")_universal.dmg"
+          mkdir -p "$DMG_DIR"
+          hdiutil create \
+            -volname "Pelagic" \
+            -srcfolder "$APP_PATH" \
+            -ov -format UDZO \
+            "$DMG_PATH"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
