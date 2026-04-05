@@ -33,7 +33,7 @@ jobs:
         run: npm ci
 
       - name: Build app bundle
-        run: npm run tauri build -- --target universal-apple-darwin --bundles app
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Create DMG from app bundle
         run: |
