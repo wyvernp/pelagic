@@ -6,6 +6,33 @@ fn main() {
     tauri_build::build();
 }
 
+/// Generate `libdivecomputer/version.h` from `version.h.in` into OUT_DIR.
+/// This replaces the autoconf substitution step so CI builds work without
+/// running `./configure`.
+fn generate_libdc_version_header(libdc: &str) -> std::path::PathBuf {
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let out_include = std::path::Path::new(&out_dir)
+        .join("include")
+        .join("libdivecomputer");
+    std::fs::create_dir_all(&out_include).expect("failed to create generated include dir");
+
+    let version_h_out = out_include.join("version.h");
+    if !version_h_out.exists() {
+        let template =
+            std::fs::read_to_string(format!("{libdc}/include/libdivecomputer/version.h.in"))
+                .expect("failed to read version.h.in");
+        let generated = template
+            .replace("@DC_VERSION@", "0.10.0-devel")
+            .replace("@DC_VERSION_MAJOR@", "0")
+            .replace("@DC_VERSION_MINOR@", "10")
+            .replace("@DC_VERSION_MICRO@", "0");
+        std::fs::write(&version_h_out, generated).expect("failed to write generated version.h");
+    }
+
+    // Return the OUT_DIR/include path so the caller can add it to cc
+    std::path::Path::new(&out_dir).join("include")
+}
+
 /// Compile libdivecomputer C sources into a static library that Rust links.
 ///
 /// Strategy:
@@ -18,6 +45,9 @@ fn main() {
 ///     and can also bridge transport from Rust via dc_custom_open().
 fn build_libdivecomputer() {
     let libdc = "third-party/libdivecomputer";
+
+    // Generate version.h from version.h.in (replaces autoconf ./configure step)
+    let generated_include = generate_libdc_version_header(libdc);
 
     // All .c files under src/, minus the platform-opposite serial file.
     let mut sources: Vec<String> = vec![
@@ -157,6 +187,8 @@ fn build_libdivecomputer() {
         .include(format!("{libdc}/include"))
         // Private headers (src/ has *-private.h, platform.h, array.h, etc.)
         .include(format!("{libdc}/src"))
+        // Generated headers (version.h from version.h.in)
+        .include(&generated_include)
         // Warnings are noisy in third-party C — suppress
         .warnings(false)
         // Optimise even in debug builds; libdc is a stable dependency
