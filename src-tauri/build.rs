@@ -210,6 +210,10 @@ fn build_libdivecomputer() {
         build.define("HAVE_MACH_MACH_TIME_H", None);
     }
 
+    if cfg!(unix) {
+        build.define("HAVE_PTHREAD_H", None);
+    }
+
     // We do NOT define HAVE_HIDAPI, HAVE_LIBUSB, HAVE_BLUEZ, HAVE_WS2BTH_H,
     // HAVE_AF_IRDA_H, or HAVE_LINUX_IRDA_H.  Those transport files will
     // compile fine — their implementations are guarded behind these defines
