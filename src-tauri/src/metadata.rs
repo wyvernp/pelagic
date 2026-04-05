@@ -170,7 +170,7 @@ where
 }
 
 /// File extensions that support embedded XMP writing.
-const EMBEDDABLE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff"];
+const EMBEDDABLE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "tif", "tiff", "dng"];
 
 /// Get the XMP sidecar path for a given photo file path.
 /// e.g., `/photos/IMG_1234.CR3` → `/photos/IMG_1234.xmp`
@@ -387,7 +387,7 @@ fn embed_xmp_in_file(file_path: &Path, xmp_packet: &[u8]) -> Result<bool, String
             embed_xmp_in_png(file_path, xmp_packet)?;
             Ok(true)
         }
-        "tif" | "tiff" => {
+        "tif" | "tiff" | "dng" => {
             embed_xmp_in_tiff(file_path, xmp_packet)?;
             Ok(true)
         }
@@ -796,6 +796,363 @@ fn supports_embedded_xmp(file_path: &str) -> bool {
     EMBEDDABLE_EXTENSIONS.contains(&ext.as_str())
 }
 
+// ====================== EXIF ImageDescription Writing ======================
+
+const IMAGE_DESCRIPTION_TAG: u16 = 0x010E;
+const JPEG_EXIF_NAMESPACE: &[u8] = b"Exif\0\0";
+
+/// Build comma-separated key:value string for EXIF ImageDescription.
+fn build_image_description(
+    caption: Option<&str>,
+    species_tags: &[SpeciesTag],
+    general_tags: &[GeneralTag],
+    dive_context: Option<&PhotoDiveContext>,
+) -> String {
+    let mut pairs: Vec<String> = Vec::new();
+
+    if let Some(cap) = caption {
+        if !cap.is_empty() {
+            pairs.push(format!("caption:{}", cap));
+        }
+    }
+
+    for tag in species_tags {
+        pairs.push(format!("species:{}", tag.name));
+        if let Some(ref sci) = tag.scientific_name {
+            if !sci.is_empty() {
+                pairs.push(format!("scientific_name:{}", sci));
+            }
+        }
+    }
+
+    for tag in general_tags {
+        pairs.push(format!("general_tag:{}", tag.name));
+    }
+
+    if let Some(ctx) = dive_context {
+        if let Some(depth) = ctx.depth_at_capture_m {
+            pairs.push(format!("depth:{:.1}", depth));
+        }
+        if let Some(temp) = ctx.temp_at_capture_c {
+            pairs.push(format!("temp:{:.1}", temp));
+        }
+        if let Some(time_in) = ctx.time_into_dive_seconds {
+            let mins = time_in / 60;
+            let secs = time_in % 60;
+            pairs.push(format!("time_into_dive:{}:{:02}", mins, secs));
+        }
+        pairs.push(format!("dive_date:{}", ctx.dive_date));
+        if let Some(ref loc) = ctx.dive_location {
+            if !loc.is_empty() {
+                pairs.push(format!("dive_location:{}", loc));
+            }
+        }
+        pairs.push(format!("max_depth:{:.1}", ctx.max_depth_m));
+        pairs.push(format!("mean_depth:{:.1}", ctx.mean_depth_m));
+        pairs.push(format!("duration:{}", ctx.dive_duration_seconds));
+        if let Some(temp) = ctx.water_temp_c {
+            pairs.push(format!("water_temp:{:.1}", temp));
+        }
+    }
+
+    pairs.join(",")
+}
+
+/// Set an ASCII tag value in a TIFF IFD0. Returns the modified TIFF data.
+fn set_tiff_ifd0_ascii_tag(data: &[u8], tag_id: u16, value: &str) -> Result<Vec<u8>, String> {
+    if data.len() < 8 {
+        return Err("TIFF data too short".into());
+    }
+
+    let le = match (data[0], data[1]) {
+        (0x49, 0x49) => true,
+        (0x4D, 0x4D) => false,
+        _ => return Err("Invalid TIFF byte order".into()),
+    };
+
+    let read_u16 = |d: &[u8], off: usize| -> u16 {
+        if le { u16::from_le_bytes([d[off], d[off + 1]]) }
+        else { u16::from_be_bytes([d[off], d[off + 1]]) }
+    };
+    let read_u32 = |d: &[u8], off: usize| -> u32 {
+        if le { u32::from_le_bytes([d[off], d[off + 1], d[off + 2], d[off + 3]]) }
+        else { u32::from_be_bytes([d[off], d[off + 1], d[off + 2], d[off + 3]]) }
+    };
+    let write_u16_bytes = |val: u16| -> [u8; 2] {
+        if le { val.to_le_bytes() } else { val.to_be_bytes() }
+    };
+    let write_u32_bytes = |val: u32| -> [u8; 4] {
+        if le { val.to_le_bytes() } else { val.to_be_bytes() }
+    };
+
+    let magic = read_u16(data, 2);
+    if magic != 42 {
+        return Err(format!("Bad TIFF magic: {}", magic));
+    }
+
+    let ifd_offset = read_u32(data, 4) as usize;
+    if ifd_offset + 2 > data.len() {
+        return Err("IFD offset out of bounds".into());
+    }
+
+    let num_entries = read_u16(data, ifd_offset) as usize;
+    let entries_start = ifd_offset + 2;
+    let entries_end = entries_start + num_entries * 12;
+    if entries_end + 4 > data.len() {
+        return Err("IFD entries out of bounds".into());
+    }
+
+    // ASCII value with null terminator
+    let mut ascii_bytes = value.as_bytes().to_vec();
+    ascii_bytes.push(0);
+    let ascii_count = ascii_bytes.len() as u32;
+
+    // Find existing tag
+    let mut tag_entry_offset: Option<usize> = None;
+    for i in 0..num_entries {
+        let entry_off = entries_start + i * 12;
+        if read_u16(data, entry_off) == tag_id {
+            tag_entry_offset = Some(entry_off);
+            break;
+        }
+    }
+
+    let mut output = data.to_vec();
+
+    if let Some(entry_off) = tag_entry_offset {
+        // Update existing entry: append string at end, update entry fields
+        let string_offset = output.len() as u32;
+        output.extend_from_slice(&ascii_bytes);
+
+        output[entry_off + 2..entry_off + 4].copy_from_slice(&write_u16_bytes(2)); // ASCII type
+        output[entry_off + 4..entry_off + 8].copy_from_slice(&write_u32_bytes(ascii_count));
+        if ascii_count <= 4 {
+            let mut val = [0u8; 4];
+            val[..ascii_bytes.len()].copy_from_slice(&ascii_bytes);
+            output[entry_off + 8..entry_off + 12].copy_from_slice(&val);
+            output.truncate(string_offset as usize);
+        } else {
+            output[entry_off + 8..entry_off + 12].copy_from_slice(&write_u32_bytes(string_offset));
+        }
+    } else {
+        // Append string data, then build new IFD with the extra entry
+        let string_offset = output.len() as u32;
+        output.extend_from_slice(&ascii_bytes);
+
+        let next_ifd = read_u32(data, entries_end);
+        let new_ifd_offset = output.len() as u32;
+        let new_count = (num_entries + 1) as u16;
+
+        output.extend_from_slice(&write_u16_bytes(new_count));
+        // Copy existing entries
+        output.extend_from_slice(&data[entries_start..entries_end]);
+        // New entry
+        output.extend_from_slice(&write_u16_bytes(tag_id));
+        output.extend_from_slice(&write_u16_bytes(2)); // ASCII type
+        output.extend_from_slice(&write_u32_bytes(ascii_count));
+        if ascii_count <= 4 {
+            let mut val = [0u8; 4];
+            val[..ascii_bytes.len()].copy_from_slice(&ascii_bytes);
+            output.extend_from_slice(&val);
+        } else {
+            output.extend_from_slice(&write_u32_bytes(string_offset));
+        }
+        // Next IFD offset
+        output.extend_from_slice(&write_u32_bytes(next_ifd));
+        // Update header to point to new IFD
+        output[4..8].copy_from_slice(&write_u32_bytes(new_ifd_offset));
+    }
+
+    Ok(output)
+}
+
+/// Build a minimal little-endian TIFF with just one IFD0 entry for ImageDescription.
+fn build_minimal_exif_tiff(description: &str) -> Vec<u8> {
+    let mut ascii_bytes = description.as_bytes().to_vec();
+    ascii_bytes.push(0);
+    let count = ascii_bytes.len() as u32;
+
+    let mut tiff = Vec::new();
+    tiff.extend_from_slice(b"II");                         // Little-endian
+    tiff.extend_from_slice(&42u16.to_le_bytes());          // TIFF magic
+    tiff.extend_from_slice(&8u32.to_le_bytes());           // IFD0 at offset 8
+
+    // IFD0: 1 entry
+    tiff.extend_from_slice(&1u16.to_le_bytes());
+    tiff.extend_from_slice(&IMAGE_DESCRIPTION_TAG.to_le_bytes());
+    tiff.extend_from_slice(&2u16.to_le_bytes());           // ASCII type
+    tiff.extend_from_slice(&count.to_le_bytes());
+    if count <= 4 {
+        let mut val = [0u8; 4];
+        val[..ascii_bytes.len()].copy_from_slice(&ascii_bytes);
+        tiff.extend_from_slice(&val);
+    } else {
+        // String offset: header(8) + count(2) + entry(12) + next_ifd(4) = 26
+        tiff.extend_from_slice(&26u32.to_le_bytes());
+    }
+    tiff.extend_from_slice(&0u32.to_le_bytes());           // Next IFD: none
+    if count > 4 {
+        tiff.extend_from_slice(&ascii_bytes);
+    }
+
+    tiff
+}
+
+/// Write EXIF ImageDescription into a JPEG file.
+fn write_image_description_jpeg(file_path: &Path, description: &str) -> Result<(), String> {
+    let data = std::fs::read(file_path)
+        .map_err(|e| format!("Failed to read JPEG {}: {}", file_path.display(), e))?;
+
+    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+        return Err(format!("Not a valid JPEG: {}", file_path.display()));
+    }
+
+    // Find existing EXIF APP1 segment
+    let mut exif_seg_start: Option<usize> = None;
+    let mut exif_seg_total: Option<usize> = None;
+    let mut pos = 2;
+
+    while pos + 1 < data.len() {
+        if data[pos] != 0xFF { break; }
+        let marker = data[pos + 1];
+        if marker == 0xDA || marker == 0xD9 { break; }
+        if marker == 0xD8 || (0xD0..=0xD7).contains(&marker) {
+            pos += 2;
+            continue;
+        }
+        if pos + 3 >= data.len() { break; }
+        let seg_len = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+        let total = 2 + seg_len;
+
+        if marker == 0xE1 && seg_len >= JPEG_EXIF_NAMESPACE.len() + 2 {
+            let ns_start = pos + 4;
+            let ns_end = ns_start + JPEG_EXIF_NAMESPACE.len();
+            if ns_end <= data.len() && &data[ns_start..ns_end] == JPEG_EXIF_NAMESPACE {
+                exif_seg_start = Some(pos);
+                exif_seg_total = Some(total);
+            }
+        }
+        pos += total;
+    }
+
+    let new_tiff_data = if let (Some(start), Some(total)) = (exif_seg_start, exif_seg_total) {
+        let tiff_start = start + 4 + JPEG_EXIF_NAMESPACE.len();
+        let tiff_end = start + total;
+        if tiff_start >= tiff_end || tiff_end > data.len() {
+            return Err("Invalid EXIF APP1 structure".into());
+        }
+        set_tiff_ifd0_ascii_tag(&data[tiff_start..tiff_end], IMAGE_DESCRIPTION_TAG, description)?
+    } else {
+        build_minimal_exif_tiff(description)
+    };
+
+    // Build new EXIF APP1 segment
+    let payload_len = JPEG_EXIF_NAMESPACE.len() + new_tiff_data.len();
+    if payload_len + 2 > 0xFFFF {
+        return Err("EXIF data too large for JPEG APP1".into());
+    }
+    let segment_length = (payload_len + 2) as u16;
+
+    let mut new_app1 = Vec::with_capacity(4 + payload_len);
+    new_app1.push(0xFF);
+    new_app1.push(0xE1);
+    new_app1.push((segment_length >> 8) as u8);
+    new_app1.push((segment_length & 0xFF) as u8);
+    new_app1.extend_from_slice(JPEG_EXIF_NAMESPACE);
+    new_app1.extend_from_slice(&new_tiff_data);
+
+    // Rebuild JPEG: SOI + new EXIF APP1 + remaining segments (minus old EXIF APP1)
+    let mut output = Vec::with_capacity(data.len() + new_app1.len());
+    output.extend_from_slice(&[0xFF, 0xD8]);
+    output.extend_from_slice(&new_app1);
+
+    pos = 2;
+    while pos + 1 < data.len() {
+        if data[pos] != 0xFF {
+            output.extend_from_slice(&data[pos..]);
+            break;
+        }
+        let marker = data[pos + 1];
+        if marker == 0xDA {
+            output.extend_from_slice(&data[pos..]);
+            break;
+        }
+        if marker == 0xD8 || (0xD0..=0xD7).contains(&marker) {
+            output.push(data[pos]);
+            output.push(data[pos + 1]);
+            pos += 2;
+            continue;
+        }
+        if pos + 3 >= data.len() {
+            output.extend_from_slice(&data[pos..]);
+            break;
+        }
+        let seg_len = ((data[pos + 2] as usize) << 8) | (data[pos + 3] as usize);
+        let total = 2 + seg_len;
+
+        // Skip old EXIF APP1
+        if Some(pos) == exif_seg_start {
+            pos += total;
+            continue;
+        }
+
+        if pos + total > data.len() {
+            output.extend_from_slice(&data[pos..]);
+            break;
+        }
+        output.extend_from_slice(&data[pos..pos + total]);
+        pos += total;
+    }
+
+    // Atomic write
+    let temp_path = file_path.with_extension("tmp_exifdesc");
+    std::fs::write(&temp_path, &output)
+        .map_err(|e| format!("Failed to write temp JPEG: {}", e))?;
+    std::fs::rename(&temp_path, file_path)
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            format!("Failed to rename temp JPEG: {}", e)
+        })?;
+
+    log::info!("Wrote EXIF ImageDescription to JPEG: {}", file_path.display());
+    Ok(())
+}
+
+/// Write EXIF ImageDescription into a TIFF file.
+fn write_image_description_tiff(file_path: &Path, description: &str) -> Result<(), String> {
+    let data = std::fs::read(file_path)
+        .map_err(|e| format!("Failed to read TIFF {}: {}", file_path.display(), e))?;
+
+    let output = set_tiff_ifd0_ascii_tag(&data, IMAGE_DESCRIPTION_TAG, description)?;
+
+    let temp_path = file_path.with_extension("tmp_exifdesc");
+    std::fs::write(&temp_path, &output)
+        .map_err(|e| format!("Failed to write temp TIFF: {}", e))?;
+    std::fs::rename(&temp_path, file_path)
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&temp_path);
+            format!("Failed to rename temp TIFF: {}", e)
+        })?;
+
+    log::info!("Wrote EXIF ImageDescription to TIFF: {}", file_path.display());
+    Ok(())
+}
+
+/// Write EXIF ImageDescription to a file (dispatches by format).
+fn write_image_description(file_path: &Path, description: &str) -> Result<(), String> {
+    let ext = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "jpg" | "jpeg" => write_image_description_jpeg(file_path, description),
+        "tif" | "tiff" | "dng" => write_image_description_tiff(file_path, description),
+        _ => Ok(()), // PNG and others: no EXIF ImageDescription support
+    }
+}
+
 /// Write metadata for a single photo. For JPEG/PNG/TIFF, embeds XMP directly
 /// into the file. For other formats (RAW, PSD, etc.), writes an XMP sidecar.
 ///
@@ -839,10 +1196,24 @@ pub fn write_xmp_sidecar_for_photo(db: &Db, photo_id: i64) {
 
         let can_embed = supports_embedded_xmp(&photo.file_path);
 
-        // --- Embedded XMP (preferred for JPEG/PNG/TIFF) ---
+        // --- Embedded metadata (preferred for JPEG/PNG/TIFF) ---
         if can_embed {
             let file_path = Path::new(&photo.file_path);
             if has_metadata && file_path.exists() {
+                // Write EXIF ImageDescription (comma-separated key:value pairs)
+                let description = build_image_description(
+                    photo.caption.as_deref(),
+                    &species_tags,
+                    &general_tags,
+                    dive_context.as_ref(),
+                );
+                if !description.is_empty() {
+                    if let Err(e) = write_image_description(file_path, &description) {
+                        log::warn!("Failed to write EXIF ImageDescription to {}: {}", photo.file_path, e);
+                    }
+                }
+
+                // Write XMP (structured metadata for photo apps)
                 let xmp_packet = build_xmp_packet(photo.rating, &species_tags, &general_tags, dive_context.as_ref(), photo.caption.as_deref());
                 match embed_xmp_in_file(file_path, &xmp_packet) {
                     Ok(true) => log::info!("Embedded XMP metadata into: {}", photo.file_path),

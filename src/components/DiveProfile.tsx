@@ -191,6 +191,94 @@ export function DiveProfile({
   const pressureSamples = samples.filter(s => s.pressure_bar != null);
   const tempSamples = samples.filter(s => s.temp_c != null);
 
+  // Detect safety stop at ~5m near the end of the dive
+  const safetyStop = useMemo(() => {
+    if (samples.length < 3) return null;
+    
+    const SAFETY_DEPTH_MIN = 3.0; // meters - lower bound of safety stop zone
+    const SAFETY_DEPTH_MAX = 6.0; // meters - upper bound of safety stop zone
+    const SPIKE_DEPTH_MAX = 8.0;  // meters - allow brief spikes up to this depth
+    const SHALLOW_DIP_MIN = 1.0;  // meters - allow brief shallow dips down to this depth
+    const MAX_OOZ_SECONDS = 60;   // max consecutive seconds out-of-zone before breaking
+    const FULL_STOP_SECONDS = 180; // 3 minutes = full safety stop
+    
+    // Find the last sample actually in the safety zone (3-6m), searching backward from end
+    let endIdx = samples.length - 1;
+    while (endIdx > 0 && (samples[endIdx].depth_m < SAFETY_DEPTH_MIN || samples[endIdx].depth_m > SAFETY_DEPTH_MAX)) {
+      endIdx--;
+    }
+    
+    if (endIdx <= 0) return null;
+    
+    // Safety stop should be near the end of the dive (last 50% by time)
+    const maxTime = samples[samples.length - 1].time_seconds;
+    if (samples[endIdx].time_seconds < maxTime * 0.5) return null;
+    
+    // Walk backwards, allowing brief excursions outside the zone (time-based tolerance)
+    let startIdx = endIdx;
+    let oozStartTime: number | null = null; // time when out-of-zone streak began
+    while (startIdx > 0) {
+      const prevDepth = samples[startIdx - 1].depth_m;
+      const inZone = prevDepth >= SAFETY_DEPTH_MIN && prevDepth <= SAFETY_DEPTH_MAX;
+      const isSmallSpike = prevDepth > SAFETY_DEPTH_MAX && prevDepth <= SPIKE_DEPTH_MAX;
+      const isShallowDip = prevDepth < SAFETY_DEPTH_MIN && prevDepth >= SHALLOW_DIP_MIN;
+      
+      if (inZone) {
+        oozStartTime = null;
+        startIdx--;
+      } else if (isSmallSpike || isShallowDip) {
+        // Track time-based out-of-zone duration
+        if (oozStartTime === null) {
+          oozStartTime = samples[startIdx].time_seconds;
+        }
+        const oozDuration = oozStartTime - samples[startIdx - 1].time_seconds;
+        if (oozDuration > MAX_OOZ_SECONDS) break;
+        startIdx--;
+      } else {
+        break;
+      }
+    }
+    
+    // If we ended on a spike, move startIdx forward to the first in-zone sample
+    while (startIdx < endIdx && (samples[startIdx].depth_m < SAFETY_DEPTH_MIN || samples[startIdx].depth_m > SAFETY_DEPTH_MAX)) {
+      startIdx++;
+    }
+    
+    const startTime = samples[startIdx].time_seconds;
+    const endTime = samples[endIdx].time_seconds;
+    const durationSeconds = endTime - startTime;
+    
+    // Need at least some meaningful time in the zone (>15 seconds) to count
+    if (durationSeconds < 15) return null;
+    
+    // Color: green at >=3min, interpolates through yellow to red as time decreases
+    let color: string;
+    if (durationSeconds >= FULL_STOP_SECONDS) {
+      color = 'rgba(76, 175, 80, 0.18)'; // green
+    } else {
+      // Ratio from 0 (no time) to 1 (full 3 min)
+      const ratio = durationSeconds / FULL_STOP_SECONDS;
+      // Interpolate: red(0) -> yellow(0.5) -> green(1)
+      let r: number, g: number, b: number;
+      if (ratio < 0.5) {
+        // Red to yellow (0 -> 0.5)
+        const t = ratio / 0.5;
+        r = 244;
+        g = Math.round(67 + (180 - 67) * t); // 67 -> 180
+        b = Math.round(54 + (0 - 54) * t);   // 54 -> 0
+      } else {
+        // Yellow to green (0.5 -> 1)
+        const t = (ratio - 0.5) / 0.5;
+        r = Math.round(244 + (76 - 244) * t);  // 244 -> 76
+        g = Math.round(180 + (175 - 180) * t); // 180 -> 175
+        b = Math.round(0 + (80 - 0) * t);      // 0 -> 80
+      }
+      color = `rgba(${r}, ${g}, ${b}, 0.18)`;
+    }
+    
+    return { startTime, endTime: samples[samples.length - 1].time_seconds, durationSeconds, color };
+  }, [samples]);
+
   // Calculate air consumption stats - use primary tank (most readings) if tank pressures available
   const airUsed = useMemo(() => {
     if (hasTankPressures && tanksBySensor.size > 0) {
@@ -289,6 +377,11 @@ export function DiveProfile({
             <span className="legend-line"></span> Temperature
           </span>
         )}
+        {safetyStop && (
+          <span className="legend-item">
+            <span className="legend-line" style={{ backgroundColor: safetyStop.color.replace('0.18', '0.6'), height: 10, borderRadius: 2 }}></span> Safety Stop ({Math.floor(safetyStop.durationSeconds / 60)}:{String(safetyStop.durationSeconds % 60).padStart(2, '0')})
+          </span>
+        )}
       </div>
       
       <div ref={containerRef} className="dive-profile-chart-container">
@@ -309,6 +402,18 @@ export function DiveProfile({
             strokeOpacity={0.4}
             numTicks={5}
           />
+          
+          {/* Safety stop band */}
+          {safetyStop && (
+            <rect
+              x={xScale(safetyStop.startTime)}
+              y={0}
+              width={Math.max(0, xScale(safetyStop.endTime) - xScale(safetyStop.startTime))}
+              height={innerHeight}
+              fill={safetyStop.color}
+              rx={2}
+            />
+          )}
           
           {/* Depth area fill - only render if we have samples */}
           {samples.length > 0 && (
