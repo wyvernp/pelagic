@@ -200,7 +200,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
         multiple: true,
         filters: [{
           name: 'Dive Log Files',
-          extensions: ['ssrf', 'xml', 'json', 'fit']
+          extensions: ['ssrf', 'xml', 'json', 'fit', 'uddf']
         }]
       });
 
@@ -981,7 +981,7 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           types: [{
             description: 'Dive Log Files',
             accept: {
-              'application/octet-stream': ['.fit', '.FIT', '.ssrf', '.SSRF'],
+              'application/octet-stream': ['.fit', '.FIT', '.ssrf', '.SSRF', '.uddf', '.UDDF'],
               'application/xml': ['.xml', '.XML'],
               'application/json': ['.json', '.JSON']
             }
