@@ -31,6 +31,7 @@ pub fn parse_dive_file(path: &Path) -> Result<ImportResult, String> {
         "ssrf" | "xml" => parse_ssrf_file(path),
         "json" => parse_suunto_json_file(path),
         "fit" => parse_fit_file(path),
+        "uddf" => parse_uddf_file(path),
         _ => Err(format!("Unsupported file format: .{}", extension)),
     }
 }
@@ -57,6 +58,11 @@ pub fn parse_dive_file_from_bytes(file_name: &str, data: &[u8]) -> Result<Import
             parse_suunto_json_content(content)
         }
         "fit" => parse_fit_data(data),
+        "uddf" => {
+            let content = std::str::from_utf8(data)
+                .map_err(|e| format!("File is not valid UTF-8: {}", e))?;
+            parse_uddf_content(content)
+        }
         _ => Err(format!("Unsupported file format: .{}", extension)),
     }
 }
@@ -1994,6 +2000,508 @@ fn extract_float(value: &Value) -> Option<f64> {
 fn extract_semicircles_to_degrees(value: &Value) -> Option<f64> {
     // FIT uses semicircles for lat/long: degrees = semicircles * (180 / 2^31)
     extract_float(value).map(|sc| sc * (180.0 / 2147483648.0))
+}
+
+// ============================================================================
+// UDDF Import
+// ============================================================================
+
+/// Parse a UDDF file from disk
+pub fn parse_uddf_file(path: &Path) -> Result<ImportResult, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    parse_uddf_content(&content)
+}
+
+/// Parse UDDF (Universal Dive Data Format) XML content.
+/// Supports UDDF v3.x as exported by Subsurface, MacDive, DAN, and others.
+///
+/// UDDF structure:
+///   <uddf>
+///     <gasdefinitions> — global gas mixes referenced by id
+///     <diver>/<owner>/<equipment>/<divecomputer> — computer model/name
+///     <divesite>/<site> — optional site data with geography
+///     <profiledata>/<repetitiongroup>/<dive> — individual dives
+///       <informationbeforedive> — date, dive number, site ref
+///       <tankdata> — gas mix reference per tank
+///       <samples>/<waypoint> — depth/time/temperature profile
+///       <informationafterdive> — summary stats (max depth, avg depth, duration)
+pub fn parse_uddf_content(content: &str) -> Result<ImportResult, String> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    // --- Collected global definitions ---
+    // Gas mixes: id -> (o2_fraction, he_fraction)
+    let mut gas_mixes: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
+    // Dive computer model from <diver>/<owner>/<equipment>/<divecomputer>/<name|model>
+    let mut dive_computer_model: Option<String> = None;
+    // Dive sites: id -> (name, lat, lon)
+    let mut dive_sites: std::collections::HashMap<String, (Option<String>, Option<f64>, Option<f64>)> = std::collections::HashMap::new();
+
+    // --- State machine ---
+    let mut dives: Vec<ImportedDive> = Vec::new();
+    let mut current_dive: Option<Dive> = None;
+    let mut current_samples: Vec<DiveSample> = Vec::new();
+    let mut current_tanks: Vec<DiveTank> = Vec::new();
+    let mut current_tank_pressures: Vec<TankPressure> = Vec::new();
+
+    // Parsing context flags
+    let mut in_gasdefinitions = false;
+    let mut in_mix = false;
+    let mut current_mix_id = String::new();
+    let mut current_mix_o2: f64 = 0.0;
+    let mut current_mix_he: f64 = 0.0;
+
+    let mut in_divecomputer = false;
+    let mut in_divesite_site = false;
+    let mut current_site_id = String::new();
+    let mut current_site_name: Option<String> = None;
+    let mut current_site_lat: Option<f64> = None;
+    let mut current_site_lon: Option<f64> = None;
+    let mut in_geography = false;
+
+    let mut in_informationbeforedive = false;
+    let mut in_informationafterdive = false;
+    let mut in_samples = false;
+    let mut in_waypoint = false;
+    let mut in_tankdata = false;
+    let mut in_notes = false;
+
+    // Waypoint accumulators
+    let mut wp_depth: f64 = 0.0;
+    let mut wp_time: i32 = 0;
+    let mut wp_temp: Option<f64> = None;
+    let mut wp_pressure: Option<f64> = None;
+
+    // Current element text accumulator
+    let mut current_text = String::new();
+    let mut current_element = String::new();
+
+    // Tank index counter for the current dive
+    let mut tank_index: i32 = 0;
+
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                let local_name = e.name();
+                let name = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                // Strip namespace prefix if present (e.g. "ns:dive" -> "dive")
+                let name = name.rsplit(':').next().unwrap_or(name);
+                current_text.clear();
+                current_element = name.to_string();
+
+                match name {
+                    "gasdefinitions" => in_gasdefinitions = true,
+                    "mix" if in_gasdefinitions => {
+                        in_mix = true;
+                        current_mix_o2 = 0.0;
+                        current_mix_he = 0.0;
+                        current_mix_id = String::new();
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"id" {
+                                current_mix_id = String::from_utf8_lossy(&attr.value).to_string();
+                            }
+                        }
+                    }
+                    "divecomputer" => {
+                        in_divecomputer = true;
+                    }
+                    "site" => {
+                        in_divesite_site = true;
+                        current_site_id.clear();
+                        current_site_name = None;
+                        current_site_lat = None;
+                        current_site_lon = None;
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"id" {
+                                current_site_id = String::from_utf8_lossy(&attr.value).to_string();
+                            }
+                        }
+                    }
+                    "geography" if in_divesite_site => in_geography = true,
+                    "dive" => {
+                        let dive = Dive {
+                            id: 0,
+                            trip_id: 0,
+                            dive_number: 0,
+                            date: String::new(),
+                            time: String::new(),
+                            duration_seconds: 0,
+                            max_depth_m: 0.0,
+                            mean_depth_m: 0.0,
+                            water_temp_c: None,
+                            air_temp_c: None,
+                            surface_pressure_bar: None,
+                            otu: None,
+                            cns_percent: None,
+                            dive_computer_model: dive_computer_model.clone(),
+                            dive_computer_serial: None,
+                            location: None,
+                            ocean: None,
+                            visibility_m: None,
+                            gear_profile_id: None,
+                            buddy: None,
+                            divemaster: None,
+                            guide: None,
+                            instructor: None,
+                            comments: None,
+                            latitude: None,
+                            longitude: None,
+                            dive_site_id: None,
+                            is_fresh_water: false,
+                            is_boat_dive: false,
+                            is_drift_dive: false,
+                            is_night_dive: false,
+                            is_training_dive: false,
+                            created_at: String::new(),
+                            updated_at: String::new(),
+                        };
+                        current_dive = Some(dive);
+                        current_samples.clear();
+                        current_tanks.clear();
+                        current_tank_pressures.clear();
+                        tank_index = 0;
+                    }
+                    "informationbeforedive" => in_informationbeforedive = true,
+                    "informationafterdive" => in_informationafterdive = true,
+                    "tankdata" => in_tankdata = true,
+                    "samples" => in_samples = true,
+                    "waypoint" if in_samples => {
+                        in_waypoint = true;
+                        wp_depth = 0.0;
+                        wp_time = 0;
+                        wp_temp = None;
+                        wp_pressure = None;
+                    }
+                    "notes" if in_informationafterdive => in_notes = true,
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(ref e)) => {
+                let local_name = e.name();
+                let name = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                let name = name.rsplit(':').next().unwrap_or(name);
+
+                match name {
+                    // <link ref="siteId"/> inside informationbeforedive
+                    "link" if in_informationbeforedive => {
+                        if let Some(ref mut dive) = current_dive {
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"ref" {
+                                    let site_ref = String::from_utf8_lossy(&attr.value).to_string();
+                                    if let Some((site_name, lat, lon)) = dive_sites.get(&site_ref) {
+                                        dive.location = site_name.clone();
+                                        dive.latitude = *lat;
+                                        dive.longitude = *lon;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // <link ref="mixId"/> inside tankdata
+                    "link" if in_tankdata => {
+                        if current_dive.is_some() {
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"ref" {
+                                    let mix_ref = String::from_utf8_lossy(&attr.value).to_string();
+                                    if let Some(&(o2, he)) = gas_mixes.get(&mix_ref) {
+                                        current_tanks.push(DiveTank {
+                                            id: 0,
+                                            dive_id: 0,
+                                            sensor_id: tank_index,
+                                            sensor_name: None,
+                                            gas_index: tank_index,
+                                            o2_percent: Some(o2 * 100.0),
+                                            he_percent: if he > 0.0 { Some(he * 100.0) } else { None },
+                                            start_pressure_bar: None,
+                                            end_pressure_bar: None,
+                                            volume_used_liters: None,
+                                        });
+                                        tank_index += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // <switchmix ref="mixId"/> inside waypoint — already tracked via tankdata
+                    "switchmix" => {}
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                current_text = e.unescape().unwrap_or_default().to_string();
+            }
+            Ok(Event::End(ref e)) => {
+                let local_name = e.name();
+                let name = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                let name = name.rsplit(':').next().unwrap_or(name);
+
+                match name {
+                    // --- Gas definitions ---
+                    "o2" if in_mix => {
+                        current_mix_o2 = current_text.trim().parse().unwrap_or(0.0);
+                    }
+                    "he" if in_mix => {
+                        current_mix_he = current_text.trim().parse().unwrap_or(0.0);
+                    }
+                    "mix" if in_gasdefinitions => {
+                        gas_mixes.insert(current_mix_id.clone(), (current_mix_o2, current_mix_he));
+                        in_mix = false;
+                    }
+                    "gasdefinitions" => in_gasdefinitions = false,
+
+                    // --- Dive computer ---
+                    "name" | "model" if in_divecomputer => {
+                        let val = current_text.trim().to_string();
+                        if !val.is_empty() && dive_computer_model.is_none() {
+                            dive_computer_model = Some(val);
+                        }
+                    }
+                    "divecomputer" => in_divecomputer = false,
+
+                    // --- Dive site ---
+                    "name" if in_divesite_site && !in_geography => {
+                        let val = current_text.trim().to_string();
+                        if !val.is_empty() {
+                            current_site_name = Some(val);
+                        }
+                    }
+                    "latitude" if in_geography => {
+                        current_site_lat = current_text.trim().parse().ok();
+                    }
+                    "longitude" if in_geography => {
+                        current_site_lon = current_text.trim().parse().ok();
+                    }
+                    "geography" => in_geography = false,
+                    "site" => {
+                        if !current_site_id.is_empty() {
+                            dive_sites.insert(
+                                current_site_id.clone(),
+                                (current_site_name.take(), current_site_lat.take(), current_site_lon.take()),
+                            );
+                        }
+                        in_divesite_site = false;
+                    }
+
+                    // --- Information before dive ---
+                    "divenumber" if in_informationbeforedive => {
+                        if let Some(ref mut dive) = current_dive {
+                            dive.dive_number = current_text.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    "datetime" if in_informationbeforedive => {
+                        if let Some(ref mut dive) = current_dive {
+                            // UDDF datetime: 2025-09-11T08:33:20
+                            let dt = current_text.trim();
+                            if let Some(t_pos) = dt.find('T') {
+                                dive.date = dt[..t_pos].to_string();
+                                dive.time = dt[t_pos + 1..].to_string();
+                                // Strip trailing Z if present
+                                if dive.time.ends_with('Z') {
+                                    dive.time.pop();
+                                }
+                            }
+                        }
+                    }
+                    "informationbeforedive" => in_informationbeforedive = false,
+
+                    // --- Information after dive ---
+                    "greatestdepth" if in_informationafterdive => {
+                        if let Some(ref mut dive) = current_dive {
+                            dive.max_depth_m = current_text.trim().parse().unwrap_or(0.0);
+                        }
+                    }
+                    "averagedepth" if in_informationafterdive => {
+                        if let Some(ref mut dive) = current_dive {
+                            dive.mean_depth_m = current_text.trim().parse().unwrap_or(0.0);
+                        }
+                    }
+                    "diveduration" if in_informationafterdive => {
+                        if let Some(ref mut dive) = current_dive {
+                            dive.duration_seconds = current_text.trim().parse::<f64>().unwrap_or(0.0) as i32;
+                        }
+                    }
+                    "lowesttemperature" if in_informationafterdive => {
+                        if let Some(ref mut dive) = current_dive {
+                            // UDDF temperatures are in Kelvin
+                            if let Ok(kelvin) = current_text.trim().parse::<f64>() {
+                                if kelvin > 200.0 {
+                                    dive.water_temp_c = Some(kelvin - 273.15);
+                                } else {
+                                    dive.water_temp_c = Some(kelvin);
+                                }
+                            }
+                        }
+                    }
+                    "airtemperature" if in_informationafterdive => {
+                        if let Some(ref mut dive) = current_dive {
+                            if let Ok(kelvin) = current_text.trim().parse::<f64>() {
+                                if kelvin > 200.0 {
+                                    dive.air_temp_c = Some(kelvin - 273.15);
+                                } else {
+                                    dive.air_temp_c = Some(kelvin);
+                                }
+                            }
+                        }
+                    }
+                    "surfacepressure" if in_informationafterdive => {
+                        if let Some(ref mut dive) = current_dive {
+                            if let Ok(pressure) = current_text.trim().parse::<f64>() {
+                                // UDDF surface pressure is in Pa; convert to bar
+                                if pressure > 10000.0 {
+                                    dive.surface_pressure_bar = Some(pressure / 100000.0);
+                                } else {
+                                    dive.surface_pressure_bar = Some(pressure);
+                                }
+                            }
+                        }
+                    }
+                    "para" if in_notes => {
+                        if let Some(ref mut dive) = current_dive {
+                            let note = current_text.trim().to_string();
+                            if !note.is_empty() {
+                                dive.comments = Some(match dive.comments.take() {
+                                    Some(existing) => format!("{}\n{}", existing, note),
+                                    None => note,
+                                });
+                            }
+                        }
+                    }
+                    "notes" => in_notes = false,
+                    "informationafterdive" => in_informationafterdive = false,
+
+                    // --- Tankdata ---
+                    "tankdata" => in_tankdata = false,
+
+                    // --- Waypoint samples ---
+                    "depth" if in_waypoint => {
+                        wp_depth = current_text.trim().parse().unwrap_or(0.0);
+                    }
+                    "divetime" if in_waypoint => {
+                        wp_time = current_text.trim().parse::<f64>().unwrap_or(0.0) as i32;
+                    }
+                    "temperature" if in_waypoint => {
+                        if let Ok(val) = current_text.trim().parse::<f64>() {
+                            // UDDF temperatures are in Kelvin
+                            if val > 200.0 {
+                                wp_temp = Some(val - 273.15);
+                            } else {
+                                wp_temp = Some(val);
+                            }
+                        }
+                    }
+                    "tankpressure" if in_waypoint => {
+                        if let Ok(val) = current_text.trim().parse::<f64>() {
+                            // UDDF tank pressure is in Pa; convert to bar
+                            if val > 10000.0 {
+                                wp_pressure = Some(val / 100000.0);
+                            } else {
+                                wp_pressure = Some(val);
+                            }
+                        }
+                    }
+                    "waypoint" if in_samples => {
+                        current_samples.push(DiveSample {
+                            id: 0,
+                            dive_id: 0,
+                            time_seconds: wp_time,
+                            depth_m: wp_depth,
+                            temp_c: wp_temp,
+                            pressure_bar: wp_pressure,
+                            ndl_seconds: None,
+                            rbt_seconds: None,
+                        });
+
+                        // Also record tank pressure in the tank_pressures table if present
+                        if let Some(pressure) = wp_pressure {
+                            current_tank_pressures.push(TankPressure {
+                                id: 0,
+                                dive_id: 0,
+                                sensor_id: 0,
+                                sensor_name: None,
+                                time_seconds: wp_time,
+                                pressure_bar: pressure,
+                            });
+                        }
+
+                        in_waypoint = false;
+                    }
+                    "samples" => in_samples = false,
+
+                    // --- Dive end ---
+                    "dive" => {
+                        if let Some(mut dive) = current_dive.take() {
+                            // Derive water_temp_c from samples if not set from informationafterdive
+                            if dive.water_temp_c.is_none() {
+                                let temps: Vec<f64> = current_samples.iter()
+                                    .filter_map(|s| s.temp_c)
+                                    .collect();
+                                if !temps.is_empty() {
+                                    // Use minimum temperature (coldest point in dive)
+                                    dive.water_temp_c = temps.iter().copied().reduce(f64::min);
+                                }
+                            }
+
+                            // If max_depth not set from informationafterdive, derive from samples
+                            if dive.max_depth_m == 0.0 && !current_samples.is_empty() {
+                                dive.max_depth_m = current_samples.iter()
+                                    .map(|s| s.depth_m)
+                                    .fold(0.0_f64, f64::max);
+                            }
+
+                            // If duration not set, derive from last sample
+                            if dive.duration_seconds == 0 {
+                                if let Some(last) = current_samples.last() {
+                                    dive.duration_seconds = last.time_seconds;
+                                }
+                            }
+
+                            // If mean_depth not set, calculate from samples
+                            if dive.mean_depth_m == 0.0 && !current_samples.is_empty() {
+                                let sum: f64 = current_samples.iter().map(|s| s.depth_m).sum();
+                                dive.mean_depth_m = sum / current_samples.len() as f64;
+                            }
+
+                            dives.push(ImportedDive {
+                                dive,
+                                samples: std::mem::take(&mut current_samples),
+                                events: Vec::new(),
+                                tank_pressures: std::mem::take(&mut current_tank_pressures),
+                                tanks: std::mem::take(&mut current_tanks),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                current_text.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(format!("UDDF XML parse error: {}", e)),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // Determine trip date range from dives
+    let (date_start, date_end) = if !dives.is_empty() {
+        let dates: Vec<&str> = dives.iter().map(|d| d.dive.date.as_str()).collect();
+        let start = dates.iter().min().unwrap_or(&"").to_string();
+        let end = dates.iter().max().unwrap_or(&"").to_string();
+        (start, end)
+    } else {
+        (String::new(), String::new())
+    };
+
+    let trip_name = format!("UDDF Import {}", &date_start);
+
+    Ok(ImportResult {
+        dives,
+        trip_name,
+        date_start,
+        date_end,
+    })
 }
 
 #[cfg(test)]
