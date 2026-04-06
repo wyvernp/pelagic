@@ -2212,7 +2212,7 @@ pub fn parse_uddf_content(content: &str) -> Result<ImportResult, String> {
                                             dive_id: 0,
                                             sensor_id: tank_index,
                                             sensor_name: None,
-                                            gas_index: tank_index,
+                                            gas_index: tank_index as i32,
                                             o2_percent: Some(o2 * 100.0),
                                             he_percent: if he > 0.0 { Some(he * 100.0) } else { None },
                                             start_pressure_bar: None,
