@@ -41,6 +41,7 @@ import { SetupWizardModal } from './components/SetupWizardModal';
 import { ShareCardModal } from './components/ShareCardModal';
 import { CommunityModal } from './components/CommunityModal';
 import { useCommunitySync } from './hooks/useCommunitySync';
+import { modKey } from './utils/platform';
 import type { Photo } from './types';
 
 // Check if we're in dev mode
@@ -1456,7 +1457,7 @@ function App() {
             <button
               className="panel-expand-btn"
               onClick={toggleRightPanelCollapsed}
-              title="Expand panel (Ctrl+Shift+B)"
+              title={`Expand panel (${modKey}+Shift+B)`}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                 <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>

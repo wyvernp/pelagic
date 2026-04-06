@@ -2078,7 +2078,7 @@ pub fn parse_uddf_content(content: &str) -> Result<ImportResult, String> {
     let mut current_element = String::new();
 
     // Tank index counter for the current dive
-    let mut tank_index: i32 = 0;
+    let mut tank_index: i64 = 0;
 
     let mut buf = Vec::new();
 

@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import { format, getYear, getMonth } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
+import { modKey } from '../utils/platform';
 import {
   DndContext,
   DragOverlay,
@@ -449,7 +450,7 @@ export function Sidebar({
             <button
               className="sidebar-collapse-btn"
               onClick={onToggleCollapse}
-              title="Collapse sidebar (Ctrl+B)"
+              title={`Collapse sidebar (${modKey}+B)`}
             >
               <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
                 <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
