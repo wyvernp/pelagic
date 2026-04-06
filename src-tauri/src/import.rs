@@ -2075,7 +2075,6 @@ pub fn parse_uddf_content(content: &str) -> Result<ImportResult, String> {
 
     // Current element text accumulator
     let mut current_text = String::new();
-    let mut current_element = String::new();
 
     // Tank index counter for the current dive
     let mut tank_index: i64 = 0;
@@ -2090,7 +2089,6 @@ pub fn parse_uddf_content(content: &str) -> Result<ImportResult, String> {
                 // Strip namespace prefix if present (e.g. "ns:dive" -> "dive")
                 let name = name.rsplit(':').next().unwrap_or(name);
                 current_text.clear();
-                current_element = name.to_string();
 
                 match name {
                     "gasdefinitions" => in_gasdefinitions = true,

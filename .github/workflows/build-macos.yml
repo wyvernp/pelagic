@@ -9,13 +9,44 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
+      - name: Free disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+          # Remove iOS/tvOS/watchOS/visionOS simulators and platforms
+          sudo rm -rf /Library/Developer/CoreSimulator
+          sudo rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/iPhoneOS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/AppleTVOS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/WatchOS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/XROS.platform
+          # Remove Android SDK
+          sudo rm -rf /Users/runner/Library/Android
+          sudo rm -rf /usr/local/lib/android
+          # Remove .NET, Go, Haskell, CodeQL
+          sudo rm -rf /usr/local/share/dotnet
+          sudo rm -rf /usr/local/go
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          # Remove Homebrew cache
+          sudo rm -rf ~/Library/Caches/Homebrew
+          # Remove large unused tools
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          echo "=== After cleanup ==="
+          df -h
+
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -28,10 +59,52 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Build DMG
+      - name: Build app bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app
+
+      - name: Clean intermediate build artifacts
         run: |
-          chmod +x build-release-macos.sh
-          ./build-release-macos.sh
+          # Remove per-arch build dirs to reclaim space before DMG/updater creation
+          rm -rf src-tauri/target/aarch64-apple-darwin/release/build
+          rm -rf src-tauri/target/aarch64-apple-darwin/release/deps
+          rm -rf src-tauri/target/aarch64-apple-darwin/release/incremental
+          rm -rf src-tauri/target/x86_64-apple-darwin/release/build
+          rm -rf src-tauri/target/x86_64-apple-darwin/release/deps
+          rm -rf src-tauri/target/x86_64-apple-darwin/release/incremental
+          df -h
+
+      - name: Create updater artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app"
+          UPDATER_DIR="src-tauri/target/universal-apple-darwin/release/bundle/macos"
+          
+          # Create .tar.gz of the .app bundle
+          cd "$UPDATER_DIR"
+          tar czf Pelagic.app.tar.gz Pelagic.app
+          cd -
+          
+          # Sign the tarball with the Tauri updater key
+          npm run tauri signer sign -- "$UPDATER_DIR/Pelagic.app.tar.gz"
+          
+          ls -lh "$UPDATER_DIR/Pelagic.app.tar.gz" "$UPDATER_DIR/Pelagic.app.tar.gz.sig"
+
+      - name: Create DMG from app bundle
+        run: |
+          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app"
+          DMG_DIR="src-tauri/target/universal-apple-darwin/release/bundle/dmg"
+          DMG_PATH="$DMG_DIR/Pelagic_$(cat src-tauri/tauri.conf.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])")_universal.dmg"
+          mkdir -p "$DMG_DIR"
+          hdiutil create \
+            -volname "Pelagic" \
+            -srcfolder "$APP_PATH" \
+            -ov -format UDZO \
+            "$DMG_PATH"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -45,11 +118,71 @@ jobs:
           name: pelagic-macos-app
           path: src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
 
+      - name: Upload updater artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pelagic-macos-updater
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app.tar.gz.sig
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(cat src-tauri/tauri.conf.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])")
+          SIG=$(cat src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app.tar.gz.sig)
+          TARBALL_URL="https://github.com/wyvernp/pelagic/releases/download/${GITHUB_REF_NAME}/Pelagic.app.tar.gz"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          # Try to download existing latest.json from the release (Windows build uploads it first)
+          EXISTING_JSON=""
+          if gh release download "${GITHUB_REF_NAME}" --pattern "latest.json" --dir /tmp --clobber 2>/dev/null; then
+            EXISTING_JSON=$(cat /tmp/latest.json)
+            echo "Found existing latest.json, will merge macOS platforms into it"
+          fi
+
+          if [ -n "$EXISTING_JSON" ]; then
+            # Merge macOS platforms into existing latest.json (preserves Windows entries)
+            echo "$EXISTING_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          data['platforms']['darwin-aarch64'] = {'signature': '${SIG}', 'url': '${TARBALL_URL}'}
+          data['platforms']['darwin-x86_64'] = {'signature': '${SIG}', 'url': '${TARBALL_URL}'}
+          print(json.dumps(data, indent=2))
+          " > latest.json
+          else
+            # No existing latest.json — create one with macOS only
+            cat > latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "Pelagic v${VERSION}",
+            "pub_date": "${PUB_DATE}",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": "${SIG}",
+                "url": "${TARBALL_URL}"
+              },
+              "darwin-x86_64": {
+                "signature": "${SIG}",
+                "url": "${TARBALL_URL}"
+              }
+            }
+          }
+          EOF
+          fi
+
+          cat latest.json
+
+      - name: Upload Release Assets
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app.tar.gz \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/Pelagic.app.tar.gz.sig \
+            latest.json \
+            --clobber

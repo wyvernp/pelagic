@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Joyride, { CallBackProps, STATUS, EVENTS, ACTIONS, Step, Styles } from 'react-joyride';
+import { modKey } from '../utils/platform';
 import './WalkthroughTour.css';
 
 interface WalkthroughTourProps {
@@ -222,7 +223,7 @@ function SearchStepContent() {
         Find anything instantly! Search across trips, dives, species, locations, and tags.
       </p>
       <div className="tour-keyboard-hint">
-        <kbd>Ctrl</kbd> + <kbd>K</kbd>
+        <kbd>{modKey}</kbd> + <kbd>K</kbd>
       </div>
     </div>
   );
