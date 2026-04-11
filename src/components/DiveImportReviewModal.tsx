@@ -29,7 +29,8 @@ export interface DiveGroup {
   dateStart: Date;
   dateEnd: Date;
   defaultTripName: string;
-  selectedTripId: number | null; // null = create new trip
+  tripMode: 'none' | 'new' | 'existing'; // 'none' = no trip, 'new' = create new, 'existing' = use existing
+  selectedTripId: number | null; // Only used when tripMode is 'existing'
   newTripName: string;
   status: 'pending' | 'importing' | 'complete' | 'error';
   errorMessage?: string;
@@ -99,6 +100,7 @@ function groupDivesByTimeGap(dives: ImportableDive[], gapHours: number): DiveGro
         dateStart,
         dateEnd,
         defaultTripName: formatDateRange(dateStart, dateEnd),
+        tripMode: 'none',
         selectedTripId: null,
         newTripName: formatDateRange(dateStart, dateEnd),
         status: 'pending',
@@ -120,6 +122,7 @@ function groupDivesByTimeGap(dives: ImportableDive[], gapHours: number): DiveGro
       dateStart,
       dateEnd,
       defaultTripName: formatDateRange(dateStart, dateEnd),
+      tripMode: 'none',
       selectedTripId: null,
       newTripName: formatDateRange(dateStart, dateEnd),
       status: 'pending',
@@ -156,9 +159,9 @@ export function DiveImportReviewModal({
     }
   };
   
-  const handleTripChange = (groupId: string, tripId: number | null) => {
+  const handleTripChange = (groupId: string, mode: 'none' | 'new' | 'existing', tripId?: number) => {
     setGroups(prev => prev.map(g => 
-      g.id === groupId ? { ...g, selectedTripId: tripId } : g
+      g.id === groupId ? { ...g, tripMode: mode, selectedTripId: mode === 'existing' ? (tripId ?? null) : null } : g
     ));
   };
   
@@ -259,6 +262,7 @@ export function DiveImportReviewModal({
         dateStart: diveToSplit.date,
         dateEnd: diveToSplit.date,
         defaultTripName: formatDateRange(diveToSplit.date, diveToSplit.date),
+        tripMode: 'none',
         selectedTripId: null,
         newTripName: formatDateRange(diveToSplit.date, diveToSplit.date),
         status: 'pending',
@@ -313,6 +317,7 @@ export function DiveImportReviewModal({
         dateStart: secondDateStart,
         dateEnd: secondDateEnd,
         defaultTripName: formatDateRange(secondDateStart, secondDateEnd),
+        tripMode: 'none',
         selectedTripId: null,
         newTripName: formatDateRange(secondDateStart, secondDateEnd),
         status: 'pending',
@@ -378,7 +383,7 @@ export function DiveImportReviewModal({
               onChange={(e) => setGapHours(Math.max(1, parseInt(e.target.value) || 36))}
               disabled={isImporting}
             />
-            <span>hours into separate trips</span>
+            <span>hours into separate groups</span>
           </div>
           
           {/* Dive groups */}
@@ -421,13 +426,20 @@ export function DiveImportReviewModal({
                 <div className="group-trip-selector">
                   <label>Import to:</label>
                   <select
-                    value={group.selectedTripId ?? 'new'}
+                    value={group.tripMode === 'none' ? 'none' : group.tripMode === 'new' ? 'new' : String(group.selectedTripId)}
                     onChange={(e) => {
                       const value = e.target.value;
-                      handleTripChange(group.id, value === 'new' ? null : parseInt(value));
+                      if (value === 'none') {
+                        handleTripChange(group.id, 'none');
+                      } else if (value === 'new') {
+                        handleTripChange(group.id, 'new');
+                      } else {
+                        handleTripChange(group.id, 'existing', parseInt(value));
+                      }
                     }}
                     disabled={isImporting || group.status !== 'pending'}
                   >
+                    <option value="none">No trip (individual dives)</option>
                     <option value="new">Create new trip...</option>
                     {existingTrips.map(trip => (
                       <option key={trip.id} value={trip.id}>
@@ -436,7 +448,7 @@ export function DiveImportReviewModal({
                     ))}
                   </select>
                   
-                  {group.selectedTripId === null && (
+                  {group.tripMode === 'new' && (
                     <input
                       type="text"
                       className="new-trip-name"

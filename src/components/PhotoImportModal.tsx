@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useSettings } from './SettingsModal';
 import { formatDiveName } from '../utils/diveNames';
 import type { Dive, PhotoImportPreview, PhotoGroup, PhotoAssignment, ScannedPhoto } from '../types';
@@ -31,6 +32,7 @@ export function PhotoImportModal({
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{current: number, total: number, phase: string} | null>(null);
 
   // Scan photos when modal opens
   useEffect(() => {
@@ -76,6 +78,17 @@ export function PhotoImportModal({
     
     setIsImporting(true);
     setError(null);
+    setImportProgress(null);
+    
+    // Set up progress listener
+    let unlisten: UnlistenFn | null = null;
+    try {
+      unlisten = await listen<{current: number, total: number, phase: string}>('photo-import-progress', (event) => {
+        setImportProgress(event.payload);
+      });
+    } catch {
+      // Progress listener is optional — import still works without it
+    }
     
     try {
       // Build assignment list
@@ -129,6 +142,8 @@ export function PhotoImportModal({
       }
     } finally {
       setIsImporting(false);
+      setImportProgress(null);
+      unlisten?.();
     }
   };
 
@@ -292,17 +307,40 @@ export function PhotoImportModal({
         </div>
 
         <div className="modal-footer">
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleImport}
-            disabled={isScanning || isImporting || !preview || totalPhotos === 0}
-          >
-            {isImporting ? 'Importing...' : `Import ${totalPhotos} Photos`}
-          </button>
+          {isImporting && importProgress ? (
+            <div className="import-progress">
+              <div className="import-progress-label">
+                <span className="import-phase-text">
+                  {importProgress.phase === 'scanning' && 'Reading photo metadata...'}
+                  {importProgress.phase === 'importing' && 'Saving to database...'}
+                  {importProgress.phase === 'thumbnails' && 'Generating thumbnails...'}
+                </span>
+                <span className="import-progress-count">
+                  {importProgress.current} / {importProgress.total}
+                </span>
+              </div>
+              <div className="progress-bar">
+                <div
+                  className="progress-fill"
+                  style={{ width: `${importProgress.total > 0 ? (importProgress.current / importProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              <button type="button" className="btn btn-secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleImport}
+                disabled={isScanning || isImporting || !preview || totalPhotos === 0}
+              >
+                {isImporting ? 'Importing...' : `Import ${totalPhotos} Photos`}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -18,7 +18,7 @@ pub struct Trip {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Dive {
     pub id: i64,
-    pub trip_id: i64,
+    pub trip_id: Option<i64>,
     pub dive_number: i32,
     pub date: String,
     pub time: String,
@@ -296,6 +296,23 @@ impl<'a> Db<'a> {
         Self { conn }
     }
     
+    // ====================== Transaction Helpers ======================
+    
+    pub fn begin_transaction(&self) -> Result<()> {
+        self.conn.execute_batch("BEGIN")?;
+        Ok(())
+    }
+    
+    pub fn commit_transaction(&self) -> Result<()> {
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+    
+    pub fn rollback_transaction(&self) -> Result<()> {
+        self.conn.execute_batch("ROLLBACK")?;
+        Ok(())
+    }
+    
     // ====================== Trip Operations ======================
     
     pub fn get_all_trips(&self) -> Result<Vec<Trip>> {
@@ -423,8 +440,8 @@ impl<'a> Db<'a> {
         Ok(())
     }
     
-    /// Move a dive to a different trip
-    pub fn move_dive_to_trip(&self, dive_id: i64, new_trip_id: i64) -> Result<()> {
+    /// Move a dive to a different trip (or remove from trip if new_trip_id is None)
+    pub fn move_dive_to_trip(&self, dive_id: i64, new_trip_id: Option<i64>) -> Result<()> {
         // Update the dive's trip_id
         self.conn.execute(
             "UPDATE dives SET trip_id = ?, updated_at = datetime('now') WHERE id = ?",
@@ -436,6 +453,31 @@ impl<'a> Db<'a> {
             params![new_trip_id, dive_id],
         )?;
         Ok(())
+    }
+
+    /// Get all dives that don't belong to any trip
+    pub fn get_tripless_dives(&self) -> Result<Vec<Dive>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, trip_id, dive_number, date, time, duration_seconds, max_depth_m, mean_depth_m,
+                    water_temp_c, air_temp_c, surface_pressure_bar, otu, cns_percent,
+                    dive_computer_model, dive_computer_serial, location, ocean, visibility_m,
+                    gear_profile_id, buddy, divemaster, guide, instructor, comments, latitude, longitude, dive_site_id,
+                    is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive,
+                    created_at, updated_at
+             FROM dives WHERE trip_id IS NULL ORDER BY date DESC, time DESC"
+        )?;
+        let dives = stmt.query_map([], Self::map_dive_row)?.collect::<Result<Vec<_>>>()?;
+        Ok(dives)
+    }
+
+    /// Get the next available global dive number (for tripless dives)
+    pub fn get_next_global_dive_number(&self) -> Result<i64> {
+        let max: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(dive_number), 0) FROM dives",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(max as i64 + 1)
     }
     
     pub fn update_dive(&self, id: i64, location: Option<&str>, ocean: Option<&str>, visibility_m: Option<f64>,
@@ -547,7 +589,7 @@ impl<'a> Db<'a> {
         Ok(tanks)
     }
     
-    pub fn create_dive_from_computer(&self, trip_id: i64, dive_number: i64, date: &str, time: &str,
+    pub fn create_dive_from_computer(&self, trip_id: Option<i64>, dive_number: i64, date: &str, time: &str,
         duration_seconds: i64, max_depth_m: f64, mean_depth_m: f64, water_temp_c: Option<f64>,
         air_temp_c: Option<f64>, surface_pressure_bar: Option<f64>, cns_percent: Option<f64>,
         dive_computer_model: Option<&str>, dive_computer_serial: Option<&str>,
@@ -564,7 +606,7 @@ impl<'a> Db<'a> {
         Ok(self.conn.last_insert_rowid())
     }
     
-    pub fn create_manual_dive(&self, trip_id: i64, dive_number: i64, date: &str, time: &str,
+    pub fn create_manual_dive(&self, trip_id: Option<i64>, dive_number: i64, date: &str, time: &str,
         duration_seconds: i64, max_depth_m: f64, mean_depth_m: f64, water_temp_c: Option<f64>,
         air_temp_c: Option<f64>, surface_pressure_bar: Option<f64>, cns_percent: Option<f64>,
         location: Option<&str>, ocean: Option<&str>, visibility_m: Option<f64>,
@@ -1581,7 +1623,7 @@ impl<'a> Db<'a> {
     pub fn move_photos_to_dive(&self, photo_ids: &[i64], dive_id: Option<i64>) -> Result<usize> {
         if photo_ids.is_empty() { return Ok(0); }
         let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let query = format!("UPDATE photos SET dive_id = ?, updated_at = datetime('now') WHERE id IN ({})", placeholders);
+        let query = format!("UPDATE photos SET dive_id = ?, metadata_dirty = 1, updated_at = datetime('now') WHERE id IN ({})", placeholders);
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(dive_id)];
         for &id in photo_ids { params.push(Box::new(id)); }
         self.conn.execute(&query, rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())))?;
@@ -1998,6 +2040,19 @@ impl<'a> Db<'a> {
         Ok(ids)
     }
 
+    /// Get photo IDs where metadata_dirty = 1 (for efficient background sync)
+    pub fn get_dirty_photo_ids(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM photos WHERE metadata_dirty = 1 ORDER BY id")?;
+        let ids = stmt.query_map([], |row| row.get(0))?.collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
+    /// Clear the metadata_dirty flag for a single photo after successful XMP write
+    pub fn clear_photo_metadata_dirty(&self, photo_id: i64) -> Result<()> {
+        self.conn.execute("UPDATE photos SET metadata_dirty = 0 WHERE id = ?", [photo_id])?;
+        Ok(())
+    }
+
     /// Find a photo by its exact file path
     pub fn find_photo_by_path(&self, file_path: &str) -> Result<Option<Photo>> {
         let normalized = file_path.replace("/", "\\");
@@ -2175,6 +2230,28 @@ impl Database {
     }
     
     /// Get the database file path (public for async initialization)
+    /// Create a backup of the database before running migrations.
+    /// Backup file is named pelagic_backup_v{version}_{timestamp}.db
+    fn backup_database_before_migration(current_version: i64) -> Result<()> {
+        let db_path = Self::get_db_path();
+        if !db_path.exists() {
+            return Ok(());
+        }
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let backup_name = format!("pelagic_backup_v{}_{}.db", current_version, timestamp);
+        let backup_path = db_path.parent()
+            .ok_or_else(|| rusqlite::Error::InvalidParameterName("No parent directory".into()))?
+            .join(&backup_name);
+        log::info!("Backing up database to {} before migration...", backup_path.display());
+        std::fs::copy(&db_path, &backup_path).map_err(|e| {
+            log::error!("Failed to backup database: {}", e);
+            rusqlite::Error::InvalidParameterName(format!("Backup failed: {}", e))
+        })?;
+        let file_size = std::fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
+        log::info!("Database backup complete: {} ({} bytes)", backup_name, file_size);
+        Ok(())
+    }
+
     pub fn get_db_path() -> PathBuf {
         let base = crate::get_storage_base_path();
         base.join("pelagic.db")
@@ -2238,7 +2315,7 @@ impl Database {
             
             CREATE TABLE IF NOT EXISTS dives (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
                 dive_number INTEGER NOT NULL,
                 date TEXT NOT NULL,
                 time TEXT NOT NULL,
@@ -2358,6 +2435,7 @@ impl Database {
                 gps_latitude REAL,
                 gps_longitude REAL,
                 caption TEXT,
+                metadata_dirty INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -2464,7 +2542,7 @@ impl Database {
     }
     
     // Current schema version - increment this when adding new migrations
-    pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+    pub const CURRENT_SCHEMA_VERSION: i64 = 9;
     
     /// Check if migrations are needed without running them
     pub fn needs_migration(conn: &Connection) -> bool {
@@ -2512,6 +2590,9 @@ impl Database {
         log::info!("Running migrations from version {} to {}", current_version, Self::CURRENT_SCHEMA_VERSION);
         progress("Checking database schema...");
         
+        // Back up the database before running any migrations
+        Self::backup_database_before_migration(current_version)?;
+        
         // For databases created before version tracking, check if they need legacy migrations
         // This only runs once - after that, version tracking takes over
         if current_version == 0 {
@@ -2553,6 +2634,18 @@ impl Database {
         if current_version < 7 {
             progress("Adding photo captions...");
             Self::run_migration_v7(conn)?;
+        }
+        
+        // Version 7 -> 8: Add metadata_dirty flag to photos
+        if current_version < 8 {
+            progress("Adding metadata dirty tracking...");
+            Self::run_migration_v8(conn)?;
+        }
+        
+        // Version 8 -> 9: Make trip_id nullable on dives
+        if current_version < 9 {
+            progress("Making trips optional for dives...");
+            Self::run_migration_v9(conn)?;
         }
         
         // Seed default equipment categories if table is empty
@@ -2880,6 +2973,80 @@ impl Database {
         log::info!("Running migration v7: adding caption to photos...");
         conn.execute("ALTER TABLE photos ADD COLUMN caption TEXT", []).ok();
         log::info!("Migration v7 complete");
+        Ok(())
+    }
+    
+    /// Migration v8: Add metadata_dirty flag to photos for efficient background sync
+    fn run_migration_v8(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v8: adding metadata_dirty to photos...");
+        // Default to 1 so existing photos get one initial sync pass
+        conn.execute("ALTER TABLE photos ADD COLUMN metadata_dirty INTEGER NOT NULL DEFAULT 1", []).ok();
+        log::info!("Migration v8 complete");
+        Ok(())
+    }
+
+    /// Migration v9: Make trip_id nullable on dives table
+    /// SQLite doesn't support ALTER COLUMN, so we recreate the table
+    fn run_migration_v9(conn: &Connection) -> Result<()> {
+        log::info!("Running migration v9: making trip_id nullable on dives...");
+        // CRITICAL: Disable foreign keys BEFORE dropping the old table.
+        // Without this, DROP TABLE triggers ON DELETE CASCADE on child tables
+        // (dive_samples, tank_pressures, dive_events, dive_tanks) and
+        // ON DELETE SET NULL on photos.dive_id — destroying data.
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        conn.execute_batch(r#"
+            -- Create new table with nullable trip_id
+            CREATE TABLE dives_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trip_id INTEGER REFERENCES trips(id) ON DELETE SET NULL,
+                dive_number INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                time TEXT NOT NULL,
+                duration_seconds INTEGER NOT NULL,
+                max_depth_m REAL NOT NULL,
+                mean_depth_m REAL NOT NULL DEFAULT 0,
+                water_temp_c REAL,
+                air_temp_c REAL,
+                surface_pressure_bar REAL,
+                otu INTEGER,
+                cns_percent REAL,
+                dive_computer_model TEXT,
+                dive_computer_serial TEXT,
+                location TEXT,
+                ocean TEXT,
+                visibility_m REAL,
+                gear_profile_id INTEGER,
+                buddy TEXT,
+                divemaster TEXT,
+                guide TEXT,
+                instructor TEXT,
+                comments TEXT,
+                is_fresh_water INTEGER NOT NULL DEFAULT 0,
+                is_boat_dive INTEGER NOT NULL DEFAULT 0,
+                is_drift_dive INTEGER NOT NULL DEFAULT 0,
+                is_night_dive INTEGER NOT NULL DEFAULT 0,
+                is_training_dive INTEGER NOT NULL DEFAULT 0,
+                latitude REAL,
+                longitude REAL,
+                dive_site_id INTEGER REFERENCES dive_sites(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            -- Copy all data preserving IDs
+            INSERT INTO dives_new SELECT id, trip_id, dive_number, date, time, duration_seconds,
+                max_depth_m, mean_depth_m, water_temp_c, air_temp_c, surface_pressure_bar,
+                otu, cns_percent, dive_computer_model, dive_computer_serial, location, ocean,
+                visibility_m, gear_profile_id, buddy, divemaster, guide, instructor, comments,
+                is_fresh_water, is_boat_dive, is_drift_dive, is_night_dive, is_training_dive,
+                latitude, longitude, dive_site_id, created_at, updated_at
+            FROM dives;
+            -- Swap tables (safe now - foreign keys are OFF)
+            DROP TABLE dives;
+            ALTER TABLE dives_new RENAME TO dives;
+        "#)?;
+        // Re-enable foreign keys
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        log::info!("Migration v9 complete");
         Ok(())
     }
     
@@ -5466,7 +5633,7 @@ impl Database {
         
         let placeholders: String = photo_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let query = format!(
-            "UPDATE photos SET dive_id = ?1, updated_at = datetime('now') WHERE id IN ({})",
+            "UPDATE photos SET dive_id = ?1, metadata_dirty = 1, updated_at = datetime('now') WHERE id IN ({})",
             placeholders
         );
         

@@ -14,7 +14,7 @@ export interface Trip {
 
 export interface Dive {
   id: number;
-  trip_id: number;
+  trip_id: number | null;
   dive_number: number;
   
   // From dive computer
@@ -253,6 +253,8 @@ export interface PhotoGeneralTag {
 export type ViewMode = 'trips' | 'trip' | 'dive' | 'search';
 
 export type SidebarGroupMode = 'trips' | 'timeline' | 'location' | 'type';
+
+export type TimelineNumberBy = 'day' | 'month' | 'year';
 
 export type ContentLayout = 'default' | 'side-by-side' | 'photo-focus' | 'chart-focus';
 

@@ -152,18 +152,18 @@ fn sync_loop(
     }
 }
 
-/// Run one sync cycle: fetch all photo IDs and sync in batches.
+/// Run one sync cycle: fetch dirty photo IDs and sync in batches.
 /// Returns the number of photos processed.
 fn run_sync_cycle(
     pool: &DbPool,
     last_activity: &AtomicI64,
     shutdown: &AtomicBool,
 ) -> Result<usize, String> {
-    // Get all photo IDs
+    // Get only photos with metadata_dirty = 1
     let photo_ids = {
         let conn = pool.get().map_err(|e| format!("DB pool error: {}", e))?;
         let db = Db::new(&*conn);
-        db.get_all_photo_ids().map_err(|e| format!("Failed to get photo IDs: {}", e))?
+        db.get_dirty_photo_ids().map_err(|e| format!("Failed to get dirty photo IDs: {}", e))?
     };
 
     if photo_ids.is_empty() {

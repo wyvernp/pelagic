@@ -28,6 +28,7 @@ interface DataActions {
   loadPhotosForTrip: (tripId: number) => Promise<void>;
   loadAllDives: () => Promise<void>;
   loadAllDiveSites: () => Promise<void>;
+  loadTriplessDives: () => Promise<void>;
   setTrips: (trips: Trip[]) => void;
   setDives: (dives: Dive[]) => void;
   setPhotos: (photos: Photo[]) => void;
@@ -182,6 +183,15 @@ export const useDataStore = create<DataStore>((set, get) => ({
   setDives: (dives) => set({ dives }),
   setPhotos: (photos) => set({ photos }),
   clearDives: () => set({ dives: [], currentTripId: null }),
+
+  loadTriplessDives: async () => {
+    try {
+      const result = await invoke<Dive[]>('get_tripless_dives');
+      set({ dives: result, currentTripId: null });
+    } catch (error) {
+      logger.error('Failed to load tripless dives:', error);
+    }
+  },
   clearPhotos: () => set({ photos: [], currentDiveId: null }),
   setThumbnailProgress: (progress) => set({ thumbnailProgress: progress }),
 

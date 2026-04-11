@@ -204,17 +204,19 @@ pub fn bulk_update_dives(
     ).map_err(|e| e.to_string())
 }
 
-/// Move a dive to a different trip
+/// Move a dive to a different trip (or remove from trip if new_trip_id is None)
 #[tauri::command]
 pub fn move_dive_to_trip(
     state: State<AppState>,
     dive_id: i64,
-    new_trip_id: i64,
+    new_trip_id: Option<i64>,
 ) -> Result<(), String> {
     // Validate inputs
     let mut v = Validator::new();
     v.validate_id("dive_id", dive_id);
-    v.validate_id("new_trip_id", new_trip_id);
+    if let Some(tid) = new_trip_id {
+        v.validate_id("new_trip_id", tid);
+    }
     if v.has_errors() {
         return Err(v.to_error_string());
     }
@@ -235,6 +237,13 @@ pub fn get_all_dives(state: State<AppState>) -> Result<Vec<Dive>, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
     let db = Db::new(&*conn);
     db.get_all_dives().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_tripless_dives(state: State<AppState>) -> Result<Vec<Dive>, String> {
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.get_tripless_dives().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -299,7 +308,7 @@ pub fn insert_tank_pressures(
 }
 
 #[tauri::command]
-pub fn import_ssrf_file(state: State<AppState>, file_path: String, trip_id: Option<i64>) -> Result<i64, String> {
+pub fn import_ssrf_file(state: State<AppState>, file_path: String, trip_id: Option<i64>) -> Result<Option<i64>, String> {
     let path = Path::new(&file_path);
     
     if !path.exists() {
@@ -314,7 +323,7 @@ pub fn import_ssrf_file(state: State<AppState>, file_path: String, trip_id: Opti
 
 /// Import dive log from any supported format (SSRF, Suunto JSON, FIT)
 #[tauri::command]
-pub fn import_dive_file(state: State<AppState>, file_path: String, trip_id: Option<i64>) -> Result<i64, String> {
+pub fn import_dive_file(state: State<AppState>, file_path: String, trip_id: Option<i64>) -> Result<Option<i64>, String> {
     let path = Path::new(&file_path);
     
     if !path.exists() {
@@ -438,6 +447,7 @@ pub struct BulkDiveSample {
 pub struct BulkImportGroup {
     pub trip_id: Option<i64>,           // Existing trip ID, or None to create new
     pub new_trip_name: Option<String>,  // Name for new trip if trip_id is None
+    pub no_trip: Option<bool>,          // If true, import dives without any trip
     pub date_start: String,
     pub date_end: String,
     pub dives: Vec<BulkDiveData>,
@@ -505,31 +515,42 @@ pub fn bulk_import_dives(
     let mut tanks_imported: i64 = 0;
     let mut created_trip_ids: Vec<i64> = Vec::new();
     
-    // Process all groups - each group becomes a trip
+    // Process all groups - each group becomes a trip (or tripless)
     for group in groups {
         if group.dives.is_empty() {
             continue;
         }
         
-        // Get or create trip
-        let trip_id = match group.trip_id {
-            Some(id) => id,
-            None => {
-                let name = group.new_trip_name.unwrap_or_else(|| {
-                    format!("Import {}", &group.date_start)
-                });
-                let id = db.create_trip(&name, "", &group.date_start, &group.date_end)
-                    .map_err(|e| format!("Failed to create trip: {}", e))?;
-                trips_created += 1;
-                created_trip_ids.push(id);
-                id
+        let no_trip = group.no_trip.unwrap_or(false);
+        
+        // Get or create trip, or None for tripless dives
+        let trip_id: Option<i64> = if no_trip {
+            None
+        } else {
+            match group.trip_id {
+                Some(id) => Some(id),
+                None => {
+                    let name = group.new_trip_name.unwrap_or_else(|| {
+                        format!("Import {}", &group.date_start)
+                    });
+                    let id = db.create_trip(&name, "", &group.date_start, &group.date_end)
+                        .map_err(|e| format!("Failed to create trip: {}", e))?;
+                    trips_created += 1;
+                    created_trip_ids.push(id);
+                    Some(id)
+                }
             }
         };
         
         // Get starting dive number
-        let existing_dives = db.get_dives_for_trip(trip_id)
-            .map_err(|e| format!("Failed to get existing dives: {}", e))?;
-        let mut dive_number = existing_dives.len() as i64 + 1;
+        let mut dive_number = if let Some(tid) = trip_id {
+            let existing_dives = db.get_dives_for_trip(tid)
+                .map_err(|e| format!("Failed to get existing dives: {}", e))?;
+            existing_dives.len() as i64 + 1
+        } else {
+            db.get_next_global_dive_number()
+                .map_err(|e| format!("Failed to get next dive number: {}", e))?
+        };
         
         // Import each dive
         for dive_data in group.dives {
@@ -679,7 +700,7 @@ pub fn parse_dive_file_data(file_name: String, file_data: Vec<u8>) -> Result<Par
 #[tauri::command]
 pub fn create_dive_from_computer(
     state: State<AppState>,
-    trip_id: i64,
+    trip_id: Option<i64>,
     date: String,
     time: String,
     duration_seconds: i64,
@@ -696,7 +717,9 @@ pub fn create_dive_from_computer(
 ) -> Result<i64, String> {
     // Validate inputs
     let mut v = Validator::new();
-    v.validate_id("trip_id", trip_id);
+    if let Some(tid) = trip_id {
+        v.validate_id("trip_id", tid);
+    }
     v.validate_date("date", &date);
     v.validate_time("time", &time);
     v.validate_duration("duration_seconds", duration_seconds);
@@ -716,8 +739,12 @@ pub fn create_dive_from_computer(
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     // Get current dive count for numbering
-    let existing_dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
-    let dive_number = existing_dives.len() as i64 + 1;
+    let dive_number = if let Some(tid) = trip_id {
+        let existing_dives = db.get_dives_for_trip(tid).map_err(|e| e.to_string())?;
+        existing_dives.len() as i64 + 1
+    } else {
+        db.get_next_global_dive_number().map_err(|e| e.to_string())?
+    };
     
     db.create_dive_from_computer(
         trip_id,
@@ -742,7 +769,7 @@ pub fn create_dive_from_computer(
 #[tauri::command]
 pub fn create_manual_dive(
     state: State<AppState>,
-    trip_id: i64,
+    trip_id: Option<i64>,
     date: String,
     time: String,
     duration_seconds: i64,
@@ -771,7 +798,9 @@ pub fn create_manual_dive(
 ) -> Result<i64, String> {
     // Validate inputs
     let mut v = Validator::new();
-    v.validate_id("trip_id", trip_id);
+    if let Some(tid) = trip_id {
+        v.validate_id("trip_id", tid);
+    }
     v.validate_date("date", &date);
     v.validate_time("time", &time);
     v.validate_duration("duration_seconds", duration_seconds);
@@ -797,8 +826,12 @@ pub fn create_manual_dive(
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
     // Get current dive count for numbering
-    let existing_dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
-    let dive_number = existing_dives.len() as i64 + 1;
+    let dive_number = if let Some(tid) = trip_id {
+        let existing_dives = db.get_dives_for_trip(tid).map_err(|e| e.to_string())?;
+        existing_dives.len() as i64 + 1
+    } else {
+        db.get_next_global_dive_number().map_err(|e| e.to_string())?
+    };
     
     db.create_manual_dive(
         trip_id,
@@ -886,16 +919,212 @@ pub fn scan_photos_for_import(
 }
 
 #[tauri::command]
-pub fn import_photos(
-    state: State<AppState>,
+pub async fn import_photos(
+    window: tauri::Window,
+    state: State<'_, AppState>,
     trip_id: i64,
     assignments: Vec<photos::PhotoAssignment>,
     overwrite: Option<bool>,
 ) -> Result<i64, String> {
     let overwrite_flag = overwrite.unwrap_or(false);
-    log::info!("import_photos called with overwrite={}", overwrite_flag);
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    photos::import_photos(&db, trip_id, assignments, overwrite_flag)
+    log::info!("import_photos called: {} photos, overwrite={}", assignments.len(), overwrite_flag);
+    
+    let total = assignments.len();
+    
+    // --- Phase 1: Parallel EXIF scanning ---
+    let chunk_size = 8;
+    let mut scanned: Vec<Option<photos::ScannedPhoto>> = Vec::with_capacity(total);
+    
+    for chunk_start in (0..total).step_by(chunk_size) {
+        let chunk_end = std::cmp::min(chunk_start + chunk_size, total);
+        let mut handles = Vec::new();
+        
+        for i in chunk_start..chunk_end {
+            let path = assignments[i].file_path.clone();
+            handles.push(tokio::task::spawn_blocking(move || {
+                photos::scan_single_file(std::path::Path::new(&path))
+            }));
+        }
+        
+        for handle in handles {
+            let result = handle.await.map_err(|e| format!("Scan task failed: {}", e))?;
+            scanned.push(result);
+            let _ = window.emit("photo-import-progress", serde_json::json!({
+                "current": scanned.len(),
+                "total": total,
+                "phase": "scanning"
+            }));
+        }
+    }
+    
+    // --- Phase 2: Sequential DB inserts in transaction ---
+    // Scoped block so `conn` and `db` are dropped before Phase 3 awaits
+    let (count, thumb_queue) = {
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+        let db = Db::new(&*conn);
+        
+        // Delete existing if overwrite
+        if overwrite_flag {
+            for assignment in &assignments {
+                db.delete_photo_by_path(&assignment.file_path)
+                    .map_err(|e| format!("Failed to delete existing photo: {}", e))?;
+            }
+        }
+        
+        db.begin_transaction().map_err(|e| e.to_string())?;
+        
+        let mut count = 0i64;
+        let mut raw_photo_map: std::collections::HashMap<String, (i64, Option<i64>)> = std::collections::HashMap::new();
+        let mut thumb_queue: Vec<(i64, String)> = Vec::new();
+        
+        // First pass: RAW and JPEG files
+        for (i, (assignment, photo_opt)) in assignments.iter().zip(scanned.iter()).enumerate() {
+            if let Some(photo) = photo_opt {
+                if !photo.is_processed {
+                    let photo_id = db.insert_photo_full(
+                        trip_id,
+                        assignment.dive_id,
+                        &photo.file_path,
+                        &photo.filename,
+                        photo.capture_time.as_deref(),
+                        photo.camera_make.as_deref(),
+                        photo.camera_model.as_deref(),
+                        photo.lens_info.as_deref(),
+                        photo.focal_length_mm,
+                        photo.aperture,
+                        photo.shutter_speed.as_deref(),
+                        photo.iso,
+                        photo.file_size_bytes,
+                        false,
+                        None,
+                        photo.exposure_compensation,
+                        photo.white_balance.as_deref(),
+                        photo.flash_fired,
+                        photo.metering_mode.as_deref(),
+                        photo.gps_latitude,
+                        photo.gps_longitude,
+                    ).map_err(|e| {
+                        let _ = db.rollback_transaction();
+                        format!("Failed to insert photo: {}", e)
+                    })?;
+                    
+                    thumb_queue.push((photo_id, assignment.file_path.clone()));
+                    let base_name = photos::get_base_filename(&photo.filename);
+                    raw_photo_map.insert(base_name, (photo_id, assignment.dive_id));
+                    count += 1;
+                }
+            }
+            
+            if (i + 1) % 50 == 0 || i + 1 == total {
+                let _ = window.emit("photo-import-progress", serde_json::json!({
+                    "current": i + 1,
+                    "total": total,
+                    "phase": "importing"
+                }));
+            }
+        }
+        
+        // Second pass: processed files (TIFF/PNG)
+        for (assignment, photo_opt) in assignments.iter().zip(scanned.iter()) {
+            if let Some(photo) = photo_opt {
+                if photo.is_processed {
+                    let base_name = photos::get_base_filename(&photo.filename);
+                    
+                    let (raw_photo_id, raw_dive_id) = if let Some((id, dive)) = raw_photo_map.get(&base_name) {
+                        (Some(*id), *dive)
+                    } else {
+                        match db.find_photo_by_base_filename(trip_id, &base_name) {
+                            Ok(Some(existing_raw)) => (Some(existing_raw.id), existing_raw.dive_id),
+                            _ => (None, assignment.dive_id)
+                        }
+                    };
+                    
+                    let dive_id = raw_dive_id.or(assignment.dive_id);
+                    
+                    let photo_id = db.insert_photo_full(
+                        trip_id,
+                        dive_id,
+                        &photo.file_path,
+                        &photo.filename,
+                        photo.capture_time.as_deref(),
+                        photo.camera_make.as_deref(),
+                        photo.camera_model.as_deref(),
+                        photo.lens_info.as_deref(),
+                        photo.focal_length_mm,
+                        photo.aperture,
+                        photo.shutter_speed.as_deref(),
+                        photo.iso,
+                        photo.file_size_bytes,
+                        true,
+                        raw_photo_id,
+                        photo.exposure_compensation,
+                        photo.white_balance.as_deref(),
+                        photo.flash_fired,
+                        photo.metering_mode.as_deref(),
+                        photo.gps_latitude,
+                        photo.gps_longitude,
+                    ).map_err(|e| {
+                        let _ = db.rollback_transaction();
+                        format!("Failed to insert photo: {}", e)
+                    })?;
+                    
+                    thumb_queue.push((photo_id, assignment.file_path.clone()));
+                    count += 1;
+                }
+            }
+        }
+        
+        db.commit_transaction().map_err(|e| {
+            format!("Transaction commit error: {}", e)
+        })?;
+        
+        let _ = window.emit("photo-import-progress", serde_json::json!({
+            "current": total,
+            "total": total,
+            "phase": "importing"
+        }));
+        
+        (count, thumb_queue)
+    }; // conn and db dropped here
+    
+    // --- Phase 3: Parallel thumbnail generation ---
+    let thumb_total = thumb_queue.len();
+    let mut thumb_done = 0usize;
+    
+    for chunk_start in (0..thumb_total).step_by(chunk_size) {
+        let chunk_end = std::cmp::min(chunk_start + chunk_size, thumb_total);
+        let mut handles = Vec::new();
+        
+        for item in &thumb_queue[chunk_start..chunk_end] {
+            let photo_id = item.0;
+            let file_path = item.1.clone();
+            handles.push(tokio::task::spawn_blocking(move || {
+                let path = std::path::Path::new(&file_path);
+                let thumb = photos::generate_thumbnail(path, photo_id);
+                (photo_id, thumb)
+            }));
+        }
+        
+        for handle in handles {
+            let (photo_id, thumb_result) = handle.await.map_err(|e| format!("Thumbnail task failed: {}", e))?;
+            if let Some(thumb_path) = thumb_result {
+                // Get a fresh connection for each batch of thumbnail updates
+                let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+                let db = Db::new(&*conn);
+                db.update_photo_thumbnail(photo_id, &thumb_path)
+                    .map_err(|e| format!("Failed to update thumbnail: {}", e))?;
+            }
+            thumb_done += 1;
+            let _ = window.emit("photo-import-progress", serde_json::json!({
+                "current": thumb_done,
+                "total": thumb_total,
+                "phase": "thumbnails"
+            }));
+        }
+    }
+    
+    log::info!("import_photos complete: {} photos imported", count);
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1843,7 +2072,9 @@ pub fn move_photos_to_dive(
     dive_id: Option<i64>,
 ) -> Result<usize, String> {
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    db.move_photos_to_dive(&photo_ids, dive_id).map_err(|e| e.to_string())
+    let result = db.move_photos_to_dive(&photo_ids, dive_id).map_err(|e| e.to_string())?;
+    state.sync_worker.nudge();
+    Ok(result)
 }
 
 // Dive sites commands

@@ -101,11 +101,11 @@ export function useCommunitySync() {
     }
   }, []);
 
-  // Sync a single dive site (call after creating one)
-  const syncDiveSite = useCallback(async (name: string, lat: number, lon: number) => {
-    if (!isEnabledRef.current) return;
+  // Sync a single dive site (call after creating one). Returns community site ID if successful.
+  const syncDiveSite = useCallback(async (name: string, lat: number, lon: number): Promise<string | null> => {
+    if (!isEnabledRef.current) return null;
     try {
-      await invoke('community_submit_dive_site', {
+      const result = await invoke<{ id: string }>('community_submit_dive_site', {
         site: {
           id: null,
           name,
@@ -118,9 +118,11 @@ export function useCommunitySync() {
           submitted_by: null,
         }
       });
-      logger.info(`Community sync: shared site "${name}"`);
+      logger.info(`Community sync: shared site "${name}" (${result?.id})`);
+      return result?.id || null;
     } catch {
       // Duplicate or network — silent
+      return null;
     }
   }, []);
 
@@ -155,31 +157,51 @@ export function useCommunitySync() {
   }, []);
 
   // Sync all species tags for a dive as community observations
-  // Fetches species tags from the dive's photos, then submits each as an observation
-  const syncDiveObservations = useCallback(async (dive: DiveContext, photoIds: number[]) => {
-    if (!isEnabledRef.current) return;
-    if (!dive.dive_site_id) return; // Can't submit without a community site
+  // If communitySiteId is provided, uses it directly; otherwise falls back to geo lookup.
+  const syncDiveObservations = useCallback(async (dive: DiveContext, photoIds: number[], communitySiteId?: string | null) => {
+    if (!isEnabledRef.current) {
+      console.log('[CommunitySync] syncDiveObservations: not enabled, skipping');
+      return;
+    }
+    if (!dive.dive_site_id) {
+      console.log('[CommunitySync] syncDiveObservations: no dive_site_id, skipping');
+      return;
+    }
 
-    // Get the community dive sites to find the matching Supabase site ID
-    // We need to match local dive_site_id to community site by name/coords
+    console.log('[CommunitySync] syncDiveObservations: starting for', photoIds.length, 'photos, dive_site_id:', dive.dive_site_id, 'communitySiteId:', communitySiteId);
+
     try {
-      const localSite = await invoke<{ id: number; name: string; lat: number; lon: number } | null>('get_dive_site', { id: dive.dive_site_id });
-      if (!localSite) return;
+      // Use provided community site ID, or fall back to geo lookup
+      if (!communitySiteId) {
+        const localSite = await invoke<{ id: number; name: string; lat: number; lon: number } | null>('get_dive_site', { id: dive.dive_site_id });
+        if (!localSite) {
+          console.log('[CommunitySync] syncDiveObservations: local site not found for id', dive.dive_site_id);
+          return;
+        }
 
-      // Find matching community site
-      const communitySites = await invoke<Array<{ id: string; name: string; lat: number; lon: number }>>('community_get_nearby_dive_sites', {
-        lat: localSite.lat,
-        lon: localSite.lon,
-        radiusKm: 0.5,
-      });
-      if (communitySites.length === 0) return;
+        console.log('[CommunitySync] syncDiveObservations: local site:', localSite.name, localSite.lat, localSite.lon);
 
-      const communitySiteId = communitySites[0].id;
+        const communitySites = await invoke<Array<{ id: string; name: string; lat: number; lon: number }>>('community_get_nearby_dive_sites', {
+          lat: localSite.lat,
+          lon: localSite.lon,
+          radiusKm: 0.5,
+        });
+        if (communitySites.length === 0) {
+          console.log('[CommunitySync] syncDiveObservations: no community sites found nearby', localSite.lat, localSite.lon);
+          return;
+        }
+
+        communitySiteId = communitySites[0].id;
+        console.log('[CommunitySync] syncDiveObservations: matched community site via geo:', communitySiteId, communitySites[0].name);
+      } else {
+        console.log('[CommunitySync] syncDiveObservations: using provided community site ID:', communitySiteId);
+      }
 
       // Get species tags for these photos
       for (const photoId of photoIds) {
         try {
           const tags = await invoke<SpeciesTag[]>('get_species_tags_for_photo', { photoId });
+          console.log('[CommunitySync] syncDiveObservations: photo', photoId, 'has', tags.length, 'species tags');
           for (const tag of tags) {
             try {
               await invoke('community_submit_observation', {
@@ -195,12 +217,13 @@ export function useCommunitySync() {
                   created_at: null,
                 }
               });
-            } catch {
-              // Duplicate or network — skip
+              console.log('[CommunitySync] syncDiveObservations: submitted observation for', tag.name);
+            } catch (err) {
+              console.log('[CommunitySync] syncDiveObservations: failed to submit observation for', tag.name, err);
             }
           }
-        } catch {
-          // Failed to get tags for photo
+        } catch (err) {
+          console.log('[CommunitySync] syncDiveObservations: failed to get tags for photo', photoId, err);
         }
       }
       logger.info(`Community sync: synced observations for dive ${dive.date}`);

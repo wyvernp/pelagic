@@ -1211,10 +1211,11 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
           const selectedDives = group.dives.filter(d => d.selected);
           
           return {
-            trip_id: group.selectedTripId,
-            new_trip_name: group.selectedTripId === null 
+            trip_id: group.tripMode === 'existing' ? group.selectedTripId : null,
+            new_trip_name: group.tripMode === 'new' 
               ? (group.newTripName || group.defaultTripName) 
               : null,
+            no_trip: group.tripMode === 'none',
             date_start: group.dateStart.toISOString().split('T')[0],
             date_end: group.dateEnd.toISOString().split('T')[0],
             dives: selectedDives.map(importableDive => {

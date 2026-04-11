@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Trip, Dive, Photo, SidebarGroupMode, ContentLayout } from '../types';
+import type { Trip, Dive, Photo, SidebarGroupMode, ContentLayout, TimelineNumberBy } from '../types';
 
 // Context menu state
 export interface ContextMenuState {
@@ -54,6 +54,10 @@ interface UIState {
   isResizing: boolean;
   // Sidebar grouping mode
   sidebarGroupMode: SidebarGroupMode;
+  // Sidebar tab order (draggable tabs)
+  sidebarTabOrder: SidebarGroupMode[];
+  // Timeline numbering mode
+  timelineNumberBy: TimelineNumberBy;
   // Collapse states
   isSidebarCollapsed: boolean;
   isRightPanelCollapsed: boolean;
@@ -75,6 +79,9 @@ interface UIActions {
   saveSidebarWidth: () => void;
   // Sidebar grouping
   setSidebarGroupMode: (mode: SidebarGroupMode) => void;
+  setSidebarTabOrder: (order: SidebarGroupMode[]) => void;
+  // Timeline numbering
+  setTimelineNumberBy: (mode: TimelineNumberBy) => void;
   // Collapse actions
   toggleSidebarCollapsed: () => void;
   toggleRightPanelCollapsed: () => void;
@@ -101,11 +108,45 @@ const getInitialSidebarWidth = (): number => {
 
 const getInitialSidebarGroupMode = (): SidebarGroupMode => {
   if (typeof window === 'undefined') return 'trips';
+  // If tab order is saved, use the leftmost tab as default
+  const tabOrder = localStorage.getItem('pelagic-sidebar-tab-order');
+  if (tabOrder) {
+    try {
+      const order = JSON.parse(tabOrder) as SidebarGroupMode[];
+      if (order.length > 0) return order[0];
+    } catch { /* fall through */ }
+  }
   const saved = localStorage.getItem('pelagic-sidebar-group-mode');
   if (saved && ['trips', 'timeline', 'location', 'type'].includes(saved)) {
     return saved as SidebarGroupMode;
   }
   return 'trips';
+};
+
+const DEFAULT_TAB_ORDER: SidebarGroupMode[] = ['trips', 'timeline', 'location', 'type'];
+
+const getInitialTabOrder = (): SidebarGroupMode[] => {
+  if (typeof window === 'undefined') return DEFAULT_TAB_ORDER;
+  const saved = localStorage.getItem('pelagic-sidebar-tab-order');
+  if (saved) {
+    try {
+      const order = JSON.parse(saved) as SidebarGroupMode[];
+      // Validate all expected modes are present
+      if (DEFAULT_TAB_ORDER.every(m => order.includes(m)) && order.length === DEFAULT_TAB_ORDER.length) {
+        return order;
+      }
+    } catch { /* fall through */ }
+  }
+  return DEFAULT_TAB_ORDER;
+};
+
+const getInitialTimelineNumberBy = (): TimelineNumberBy => {
+  if (typeof window === 'undefined') return 'day';
+  const saved = localStorage.getItem('pelagic-timeline-number-by');
+  if (saved && ['day', 'month', 'year'].includes(saved)) {
+    return saved as TimelineNumberBy;
+  }
+  return 'day';
 };
 
 const getInitialCollapsed = (key: string): boolean => {
@@ -141,6 +182,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   modalContext: {},
   sidebarWidth: getInitialSidebarWidth(),
   sidebarGroupMode: getInitialSidebarGroupMode(),
+  sidebarTabOrder: getInitialTabOrder(),
+  timelineNumberBy: getInitialTimelineNumberBy(),
   isSidebarCollapsed: getInitialCollapsed('pelagic-sidebar-collapsed'),
   isRightPanelCollapsed: getInitialCollapsed('pelagic-right-panel-collapsed'),
   contentLayout: getInitialContentLayout(),
@@ -186,6 +229,16 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setSidebarGroupMode: (mode) => {
     localStorage.setItem('pelagic-sidebar-group-mode', mode);
     set({ sidebarGroupMode: mode });
+  },
+
+  setSidebarTabOrder: (order) => {
+    localStorage.setItem('pelagic-sidebar-tab-order', JSON.stringify(order));
+    set({ sidebarTabOrder: order });
+  },
+
+  setTimelineNumberBy: (mode) => {
+    localStorage.setItem('pelagic-timeline-number-by', mode);
+    set({ timelineNumberBy: mode });
   },
 
   toggleSidebarCollapsed: () => {

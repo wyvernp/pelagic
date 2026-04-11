@@ -404,13 +404,17 @@ function App() {
   }, [setThumbnailProgress, setPhotos]);
 
   // Load dives when trip changes
+  const { loadTriplessDives } = useDataStore();
   useEffect(() => {
     if (selectedTripId) {
       loadDivesForTrip(selectedTripId);
+    } else if (selectedDiveId) {
+      // A tripless dive is selected — load tripless dives so selectedDive resolves
+      loadTriplessDives();
     } else {
       clearDives();
     }
-  }, [selectedTripId, loadDivesForTrip, clearDives]);
+  }, [selectedTripId, selectedDiveId, loadDivesForTrip, clearDives, loadTriplessDives]);
 
   // Load photos when dive changes
   // Note: Trip-level photos are loaded by ContentGrid's "All Photos" section
@@ -1436,17 +1440,19 @@ function App() {
             dive={selectedDive}
             trip={selectedTrip}
             onPhotoUpdated={handlePhotosUpdated}
-            onSpeciesIdentified={() => {
+            onSpeciesIdentified={async () => {
               if (selectedDive && selectedDive.dive_site_id) {
-                // Sync the dive site first (in case it hasn't been uploaded yet)
+                let communitySiteId: string | null = null;
+                // Sync the dive site first and capture its community ID
                 if (selectedDive.location && selectedDive.latitude != null && selectedDive.longitude != null) {
-                  syncDiveSite(selectedDive.location, selectedDive.latitude, selectedDive.longitude);
+                  communitySiteId = await syncDiveSite(selectedDive.location, selectedDive.latitude, selectedDive.longitude);
                 }
-                // Then sync observations
+                // Then sync observations using the known community site ID
                 if (selectedPhoto) {
                   syncDiveObservations(
                     { dive_site_id: selectedDive.dive_site_id, date: selectedDive.date, max_depth_m: selectedDive.max_depth_m },
-                    [selectedPhoto.id]
+                    [selectedPhoto.id],
+                    communitySiteId
                   );
                 }
               }
@@ -1515,13 +1521,19 @@ function App() {
         isOpen={activeModal === 'species'}
         selectedPhotoIds={Array.from(selectedPhotoIds)}
         onClose={closeModal}
-        onTagsAdded={() => {
+        onTagsAdded={async () => {
           logger.debug('Tags added successfully');
           // Auto-sync species observations to community
           if (selectedDive && selectedDive.dive_site_id) {
+            let communitySiteId: string | null = null;
+            // Sync the dive site first and capture its community ID
+            if (selectedDive.location && selectedDive.latitude != null && selectedDive.longitude != null) {
+              communitySiteId = await syncDiveSite(selectedDive.location, selectedDive.latitude, selectedDive.longitude);
+            }
             syncDiveObservations(
               { dive_site_id: selectedDive.dive_site_id, date: selectedDive.date, max_depth_m: selectedDive.max_depth_m },
-              Array.from(selectedPhotoIds)
+              Array.from(selectedPhotoIds),
+              communitySiteId
             );
           }
         }}

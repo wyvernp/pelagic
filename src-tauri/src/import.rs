@@ -97,7 +97,7 @@ pub fn parse_ssrf_content(content: &str) -> Result<ImportResult, String> {
                     b"dive" => {
                         let mut dive = Dive {
                             id: 0,
-                            trip_id: 0,
+                            trip_id: None,
                             dive_number: 0,
                             date: String::new(),
                             time: String::new(),
@@ -456,8 +456,8 @@ fn parse_pressure(s: &str) -> f64 {
 }
 
 /// Import dives from .ssrf file into database
-/// If trip_id is provided, add dives to existing trip; otherwise create a new trip
-pub fn import_to_database(db: &Db, mut result: ImportResult, existing_trip_id: Option<i64>) -> Result<i64, String> {
+/// If trip_id is provided, add dives to existing trip; if None, create tripless dives
+pub fn import_to_database(db: &Db, mut result: ImportResult, existing_trip_id: Option<i64>) -> Result<Option<i64>, String> {
     // Sort dives by date and time before importing
     result.dives.sort_by(|a, b| {
         let date_cmp = a.dive.date.cmp(&b.dive.date);
@@ -468,36 +468,28 @@ pub fn import_to_database(db: &Db, mut result: ImportResult, existing_trip_id: O
         }
     });
     
-    // Use existing trip or create new one
-    let trip_id = match existing_trip_id {
-        Some(id) => id,
-        None => {
-            // Create new trip
-            db.create_trip(
-                &result.trip_name,
-                "",
-                &result.date_start,
-                &result.date_end,
-            ).map_err(|e| format!("Failed to create trip: {}", e))?
-        }
+    let trip_id = existing_trip_id;
+    
+    // Get the starting dive number
+    let mut next_number = if let Some(tid) = trip_id {
+        let existing_dives = db.get_dives_for_trip(tid)
+            .map_err(|e| format!("Failed to get existing dives: {}", e))?;
+        let max_dive_number = existing_dives.iter()
+            .map(|d| d.dive_number)
+            .max()
+            .unwrap_or(0);
+        max_dive_number + 1
+    } else {
+        db.get_next_global_dive_number()
+            .map_err(|e| format!("Failed to get next dive number: {}", e))? as i32
     };
     
-    // Get the highest dive number for this trip to continue numbering
-    let existing_dives = db.get_dives_for_trip(trip_id)
-        .map_err(|e| format!("Failed to get existing dives: {}", e))?;
-    let max_dive_number = existing_dives.iter()
-        .map(|d| d.dive_number)
-        .max()
-        .unwrap_or(0);
-    
     // Insert dives with samples and events (now in chronological order)
-    for (i, imported) in result.dives.into_iter().enumerate() {
+    for (_i, imported) in result.dives.into_iter().enumerate() {
         let mut dive = imported.dive;
         dive.trip_id = trip_id;
-        // Keep original dive number if importing to new trip, otherwise renumber
-        if existing_trip_id.is_some() {
-            dive.dive_number = max_dive_number + (i as i32) + 1;
-        }
+        dive.dive_number = next_number;
+        next_number += 1;
         
         let dive_id = db.insert_dive(&dive)
             .map_err(|e| format!("Failed to insert dive: {}", e))?;
@@ -860,7 +852,7 @@ fn parse_suunto_device_log(device_log: SuuntoDeviceLog) -> Result<ImportResult, 
     
     let dive = Dive {
         id: 0,
-        trip_id: 0,
+        trip_id: None,
         dive_number,
         date,
         time,
@@ -1040,7 +1032,7 @@ fn parse_suunto_dives_format(suunto_dives: Vec<SuuntoDive>) -> Result<ImportResu
         
         let dive = Dive {
             id: 0,
-            trip_id: 0,
+            trip_id: None,
             dive_number: suunto_dive.dive_number.unwrap_or(dive_number_counter),
             date,
             time,
@@ -1728,7 +1720,7 @@ fn parse_fit_records(records: Vec<FitDataRecord>) -> Result<ImportResult, String
 fn create_empty_dive(dive_number: i32) -> Dive {
     Dive {
         id: 0,
-        trip_id: 0,
+        trip_id: None,
         dive_number,
         date: String::new(),
         time: String::new(),
@@ -2122,7 +2114,7 @@ pub fn parse_uddf_content(content: &str) -> Result<ImportResult, String> {
                     "dive" => {
                         let dive = Dive {
                             id: 0,
-                            trip_id: 0,
+                            trip_id: None,
                             dive_number: 0,
                             date: String::new(),
                             time: String::new(),

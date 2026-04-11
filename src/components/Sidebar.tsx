@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { format, getYear, getMonth } from 'date-fns';
 import { invoke } from '@tauri-apps/api/core';
 import { modKey } from '../utils/platform';
@@ -13,7 +13,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import type { Trip, Dive, DiveSite, SidebarGroupMode } from '../types';
+import type { Trip, Dive, DiveSite, SidebarGroupMode, TimelineNumberBy } from '../types';
 import { useSettings } from './SettingsModal';
 import { formatDiveName } from '../utils/diveNames';
 import { useUIStore } from '../stores/uiStore';
@@ -65,6 +65,7 @@ function DiveItem({
   onDiveClick,
   onDiveRightClick,
   onToggleDiveSelection,
+  overrideNumber,
 }: {
   dive: Dive;
   selectedDiveId: number | null;
@@ -72,10 +73,12 @@ function DiveItem({
   selectedDiveIds?: Set<number>;
   settings: { diveNamePrefix: string };
   onDiveClick: (diveId: number, e: React.MouseEvent) => void;
-  onDiveRightClick: (diveId: number, tripId: number, e: React.MouseEvent) => void;
+  onDiveRightClick: (diveId: number, tripId: number | null, e: React.MouseEvent) => void;
   onToggleDiveSelection?: (diveId: number) => void;
+  overrideNumber?: number;
 }) {
   const isSelected = selectedDiveIds?.has(dive.id) ?? false;
+  const displayNumber = overrideNumber ?? dive.dive_number;
   return (
     <button
       className={`dive-button ${selectedDiveId === dive.id ? 'selected' : ''} ${bulkEditMode ? 'bulk-edit-mode' : ''} ${isSelected ? 'bulk-selected' : ''}`}
@@ -98,7 +101,7 @@ function DiveItem({
       )}
       <div className="dive-text">
         <span className={`dive-number ${!settings.diveNamePrefix ? 'number-only' : ''}`}>
-          {formatDiveName(settings.diveNamePrefix, dive.dive_number)}
+          {formatDiveName(settings.diveNamePrefix, displayNumber)}
           {dive.location && <span className="dive-location"> {dive.location}</span>}
         </span>
       </div>
@@ -115,9 +118,10 @@ function DraggableDiveItem(props: {
   selectedDiveIds?: Set<number>;
   settings: { diveNamePrefix: string };
   onDiveClick: (diveId: number, e: React.MouseEvent) => void;
-  onDiveRightClick: (diveId: number, tripId: number, e: React.MouseEvent) => void;
+  onDiveRightClick: (diveId: number, tripId: number | null, e: React.MouseEvent) => void;
   onToggleDiveSelection?: (diveId: number) => void;
   isDragEnabled: boolean;
+  overrideNumber?: number;
 }) {
   const { isDragEnabled, ...diveItemProps } = props;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -217,7 +221,7 @@ export function Sidebar({
   onToggleCollapse,
 }: SidebarProps) {
   const settings = useSettings();
-  const { sidebarGroupMode, setSidebarGroupMode } = useUIStore();
+  const { sidebarGroupMode, setSidebarGroupMode, sidebarTabOrder, setSidebarTabOrder, timelineNumberBy, setTimelineNumberBy } = useUIStore();
   const { allDives, allDiveSites, loadAllDives, loadAllDiveSites } = useDataStore();
   
   // Track expanded groups for non-trip modes
@@ -249,36 +253,57 @@ export function Sidebar({
   const divesByTripId = useMemo(() => {
     const map = new Map<number, Dive[]>();
     for (const dive of dives) {
-      const existing = map.get(dive.trip_id) || [];
-      existing.push(dive);
-      map.set(dive.trip_id, existing);
+      if (dive.trip_id != null) {
+        const existing = map.get(dive.trip_id) || [];
+        existing.push(dive);
+        map.set(dive.trip_id, existing);
+      }
     }
     return map;
   }, [dives]);
 
+  // Tripless dives (for the "Individual Dives" section in trip mode)
+  const [triplessDives, setTriplessDives] = useState<Dive[]>([]);
+  const [triplessDivesExpanded, setTriplessDivesExpanded] = useState(false);
+
+  useEffect(() => {
+    if (sidebarGroupMode === 'trips') {
+      invoke<Dive[]>('get_tripless_dives').then(setTriplessDives).catch(() => setTriplessDives([]));
+    }
+  }, [sidebarGroupMode, dives]); // re-fetch when dives change
+
   // Timeline grouping: Year -> Month -> Dives
   const timelineGroups = useMemo(() => {
     if (sidebarGroupMode !== 'timeline' || !allDives) return null;
-    const groups = new Map<number, Map<number, Dive[]>>();
+    // Build 3-level hierarchy: Year → Month → Day → Dives
+    const groups = new Map<number, Map<number, Map<number, Dive[]>>>();
     for (const dive of allDives) {
       const d = new Date(dive.date);
       const year = getYear(d);
       const month = getMonth(d);
+      const day = d.getDate();
       if (!groups.has(year)) groups.set(year, new Map());
       const yearMap = groups.get(year)!;
-      if (!yearMap.has(month)) yearMap.set(month, []);
-      yearMap.get(month)!.push(dive);
+      if (!yearMap.has(month)) yearMap.set(month, new Map());
+      const monthMap = yearMap.get(month)!;
+      if (!monthMap.has(day)) monthMap.set(day, []);
+      monthMap.get(day)!.push(dive);
     }
-    // Sort years descending
+    // Sort years descending, months descending, days descending, dives ascending within leaf
     return Array.from(groups.entries())
       .sort(([a], [b]) => b - a)
       .map(([year, months]) => ({
         year,
         months: Array.from(months.entries())
           .sort(([a], [b]) => b - a)
-          .map(([month, monthDives]) => ({
+          .map(([month, days]) => ({
             month,
-            dives: monthDives.sort((a, b) => b.date.localeCompare(a.date)),
+            days: Array.from(days.entries())
+              .sort(([a], [b]) => b - a)
+              .map(([day, dayDives]) => ({
+                day,
+                dives: dayDives.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
+              })),
           })),
       }));
   }, [sidebarGroupMode, allDives]);
@@ -342,7 +367,7 @@ export function Sidebar({
       // For non-trip modes, we need to also select the trip
       if (sidebarGroupMode !== 'trips' && allDives) {
         const dive = allDives.find(d => d.id === diveId);
-        if (dive) {
+        if (dive && dive.trip_id != null) {
           onSelectTrip(dive.trip_id);
         }
       }
@@ -350,10 +375,10 @@ export function Sidebar({
     }
   };
 
-  const handleDiveRightClick = (diveId: number, tripId: number, e: React.MouseEvent) => {
+  const handleDiveRightClick = (diveId: number, tripId: number | null, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    onDiveContextMenu?.(diveId, tripId, e.clientX, e.clientY);
+    onDiveContextMenu?.(diveId, tripId ?? 0, e.clientX, e.clientY);
   };
 
   const handleTripRightClick = (tripId: number, e: React.MouseEvent) => {
@@ -398,7 +423,9 @@ export function Sidebar({
     try {
       await invoke('move_dive_to_trip', { diveId: dive.id, newTripId: targetTripId });
       // Invalidate caches for both source and target trips
-      invalidateTripCache(dive.trip_id);
+      if (dive.trip_id != null) {
+        invalidateTripCache(dive.trip_id);
+      }
       invalidateTripCache(targetTripId);
       // Reload dives for the currently selected trip
       if (selectedTripId) {
@@ -410,6 +437,80 @@ export function Sidebar({
       logger.error('Failed to move dive:', error);
     }
   }, [invalidateTripCache, loadDivesForTrip, selectedTripId]);
+
+  // Tab reorder via pointer events (HTML5 drag unreliable in Tauri)
+  const dragTabRef = useRef<SidebarGroupMode | null>(null);
+  const [draggingTab, setDraggingTab] = useState<SidebarGroupMode | null>(null);
+  const dragStartX = useRef(0);
+
+  const handleTabPointerDown = (e: React.PointerEvent, mode: SidebarGroupMode) => {
+    dragStartX.current = e.clientX;
+    dragTabRef.current = mode;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handleTabPointerMove = (e: React.PointerEvent, _currentMode: SidebarGroupMode) => {
+    if (!dragTabRef.current) return;
+    // Require 4px movement to start drag
+    if (!draggingTab && Math.abs(e.clientX - dragStartX.current) < 4) return;
+    if (!draggingTab) setDraggingTab(dragTabRef.current);
+
+    // Find which tab we're hovering over
+    const tabsContainer = (e.target as HTMLElement).closest('.sidebar-tabs');
+    if (!tabsContainer) return;
+    const tabs = Array.from(tabsContainer.querySelectorAll('.sidebar-tab'));
+    for (let i = 0; i < tabs.length; i++) {
+      const rect = tabs[i].getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right) {
+        const targetMode = sidebarTabOrder[i];
+        if (targetMode && targetMode !== dragTabRef.current) {
+          const newOrder = [...sidebarTabOrder];
+          const dragIdx = newOrder.indexOf(dragTabRef.current!);
+          const targetIdx = newOrder.indexOf(targetMode);
+          if (dragIdx !== -1 && targetIdx !== -1) {
+            newOrder.splice(dragIdx, 1);
+            newOrder.splice(targetIdx, 0, dragTabRef.current!);
+            setSidebarTabOrder(newOrder);
+          }
+        }
+        break;
+      }
+    }
+  };
+
+  const handleTabPointerUp = (e: React.PointerEvent) => {
+    if (dragTabRef.current && !draggingTab) {
+      // Was a click, not a drag — handled by onClick
+    }
+    dragTabRef.current = null;
+    setDraggingTab(null);
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  // Compute timeline numbers dynamically
+  const timelineNumberMap = useMemo(() => {
+    if (sidebarGroupMode !== 'timeline' || !allDives) return new Map<number, number>();
+    const map = new Map<number, number>();
+    // Sort all dives chronologically (ascending) for numbering
+    const sorted = [...allDives].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+    
+    const counters = new Map<string, number>();
+    for (const dive of sorted) {
+      const d = new Date(dive.date);
+      let key: string;
+      if (timelineNumberBy === 'day') {
+        key = dive.date; // YYYY-MM-DD
+      } else if (timelineNumberBy === 'month') {
+        key = `${getYear(d)}-${getMonth(d)}`;
+      } else {
+        key = String(getYear(d));
+      }
+      const count = (counters.get(key) ?? 0) + 1;
+      counters.set(key, count);
+      map.set(dive.id, count);
+    }
+    return map;
+  }, [sidebarGroupMode, allDives, timelineNumberBy]);
 
   // Collapsed sidebar view
   if (isCollapsed) {
@@ -457,15 +558,21 @@ export function Sidebar({
               </svg>
             </button>
           )}
-          <select
-            className="sidebar-group-select"
-            value={sidebarGroupMode}
-            onChange={(e) => setSidebarGroupMode(e.target.value as SidebarGroupMode)}
-          >
-            {Object.entries(GROUP_MODE_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
+          <div className="sidebar-tabs">
+            {sidebarTabOrder.map((mode) => (
+              <button
+                key={mode}
+                className={`sidebar-tab ${sidebarGroupMode === mode ? 'active' : ''} ${draggingTab === mode ? 'dragging' : ''}`}
+                onClick={() => { if (!draggingTab) setSidebarGroupMode(mode); }}
+                onPointerDown={(e) => handleTabPointerDown(e, mode)}
+                onPointerMove={(e) => handleTabPointerMove(e, mode)}
+                onPointerUp={handleTabPointerUp}
+                title={`${GROUP_MODE_LABELS[mode]} (drag to reorder)`}
+              >
+                {GROUP_MODE_LABELS[mode]}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
         {sidebarGroupMode === 'trips' && (
           <button className="sidebar-add-btn" title="New Trip" onClick={onAddTrip}>
@@ -474,17 +581,30 @@ export function Sidebar({
             </svg>
           </button>
         )}
+        {sidebarGroupMode === 'timeline' && (
+          <select
+            className="sidebar-number-by-select"
+            value={timelineNumberBy}
+            onChange={(e) => setTimelineNumberBy(e.target.value as TimelineNumberBy)}
+            title="Number dives by"
+          >
+            <option value="day">By Day</option>
+            <option value="month">By Month</option>
+            <option value="year">By Year</option>
+          </select>
+        )}
       </div>
       
       <div className="sidebar-content">
         {/* Trip grouping (default) */}
         {sidebarGroupMode === 'trips' && (
-          trips.length === 0 ? (
+          trips.length === 0 && triplessDives.length === 0 ? (
             <div className="sidebar-empty">
               <p>No trips yet</p>
               <p className="text-muted">Import a dive log to get started</p>
             </div>
           ) : (
+            <>
             <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
               <ul className="trip-list">
                 {trips.map((trip) => {
@@ -578,6 +698,32 @@ export function Sidebar({
                 )}
               </DragOverlay>
             </DndContext>
+
+            {/* Individual Dives (tripless) */}
+            {triplessDives.length > 0 && (
+              <ul className="trip-list" style={{ marginTop: 0 }}>
+                <li className="trip-item">
+                  <GroupHeader
+                    label="Individual Dives"
+                    icon={<svg className="trip-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h2l2-2h4l2 2h2v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4z"/></svg>}
+                    isExpanded={triplessDivesExpanded}
+                    isSelected={false}
+                    count={triplessDives.length}
+                    onClick={() => setTriplessDivesExpanded(!triplessDivesExpanded)}
+                  />
+                  {triplessDivesExpanded && (
+                    <ul className="dive-list">
+                      {triplessDives.map((dive) => (
+                        <li key={dive.id}>
+                          <DiveItem dive={dive} {...diveItemProps} />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              </ul>
+            )}
+            </>
           )
         )}
 
@@ -592,7 +738,33 @@ export function Sidebar({
               {timelineGroups?.map(({ year, months }) => {
                 const yearKey = `y-${year}`;
                 const isYearExpanded = expandedGroups.has(yearKey);
-                const totalDives = months.reduce((sum, m) => sum + m.dives.length, 0);
+                const totalDives = months.reduce((sum, m) => sum + m.days.reduce((s, d) => s + d.dives.length, 0), 0);
+
+                // "By Year" mode: Year → Dives (flat)
+                if (timelineNumberBy === 'year') {
+                  const allYearDives = months.flatMap(m => m.days.flatMap(d => d.dives));
+                  allYearDives.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+                  return (
+                    <li key={yearKey} className="trip-item">
+                      <GroupHeader
+                        label={String(year)}
+                        icon={<svg className="trip-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>}
+                        isExpanded={isYearExpanded}
+                        isSelected={false}
+                        count={totalDives}
+                        onClick={() => toggleGroup(yearKey)}
+                      />
+                      {isYearExpanded && (
+                        <ul className="dive-list">
+                          {allYearDives.map((dive) => (
+                            <li key={dive.id}><DiveItem dive={dive} {...diveItemProps} overrideNumber={timelineNumberMap.get(dive.id)} /></li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                }
+
                 return (
                   <li key={yearKey} className="trip-item">
                     <GroupHeader
@@ -605,25 +777,75 @@ export function Sidebar({
                     />
                     {isYearExpanded && (
                       <ul className="dive-list" style={{ paddingLeft: 16 }}>
-                        {months.map(({ month, dives: monthDives }) => {
+                        {months.map(({ month, days }) => {
                           const monthKey = `m-${year}-${month}`;
                           const isMonthExpanded = expandedGroups.has(monthKey);
+                          const monthDiveCount = days.reduce((s, d) => s + d.dives.length, 0);
+
+                          // "By Month" mode: Year → Month → Dives (flat within month)
+                          if (timelineNumberBy === 'month') {
+                            const allMonthDives = days.flatMap(d => d.dives);
+                            allMonthDives.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+                            return (
+                              <li key={monthKey} className="trip-item">
+                                <GroupHeader
+                                  label={MONTH_NAMES[month]}
+                                  sublabel={`${monthDiveCount} dive${monthDiveCount !== 1 ? 's' : ''}`}
+                                  icon={<svg className="trip-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>}
+                                  isExpanded={isMonthExpanded}
+                                  isSelected={false}
+                                  count={monthDiveCount}
+                                  onClick={() => toggleGroup(monthKey)}
+                                />
+                                {isMonthExpanded && (
+                                  <ul className="dive-list">
+                                    {allMonthDives.map((dive) => (
+                                      <li key={dive.id}><DiveItem dive={dive} {...diveItemProps} overrideNumber={timelineNumberMap.get(dive.id)} /></li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </li>
+                            );
+                          }
+
+                          // "By Day" mode: Year → Month → Day → Dives
                           return (
                             <li key={monthKey} className="trip-item">
                               <GroupHeader
                                 label={MONTH_NAMES[month]}
-                                sublabel={`${monthDives.length} dive${monthDives.length !== 1 ? 's' : ''}`}
+                                sublabel={`${monthDiveCount} dive${monthDiveCount !== 1 ? 's' : ''}`}
                                 icon={<svg className="trip-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>}
                                 isExpanded={isMonthExpanded}
                                 isSelected={false}
-                                count={monthDives.length}
+                                count={monthDiveCount}
                                 onClick={() => toggleGroup(monthKey)}
                               />
                               {isMonthExpanded && (
-                                <ul className="dive-list">
-                                  {monthDives.map((dive) => (
-                                    <li key={dive.id}><DiveItem dive={dive} {...diveItemProps} /></li>
-                                  ))}
+                                <ul className="dive-list" style={{ paddingLeft: 16 }}>
+                                  {days.map(({ day, dives: dayDives }) => {
+                                    const dayKey = `d-${year}-${month}-${day}`;
+                                    const isDayExpanded = expandedGroups.has(dayKey);
+                                    return (
+                                      <li key={dayKey} className="trip-item">
+                                        <GroupHeader
+                                          label={`${MONTH_NAMES[month].slice(0, 3)} ${day}`}
+                                          sublabel={`${dayDives.length} dive${dayDives.length !== 1 ? 's' : ''}`}
+                                          icon={<svg className="trip-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z"/></svg>}
+                                          isExpanded={isDayExpanded}
+                                          isSelected={false}
+                                          count={dayDives.length}
+                                          onClick={() => toggleGroup(dayKey)}
+                                        />
+                                        {isDayExpanded && (
+                                          <ul className="dive-list">
+                                            {dayDives.map((dive) => (
+                                              <li key={dive.id}><DiveItem dive={dive} {...diveItemProps} overrideNumber={timelineNumberMap.get(dive.id)} /></li>
+                                            ))}
+                                          </ul>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
                                 </ul>
                               )}
                             </li>

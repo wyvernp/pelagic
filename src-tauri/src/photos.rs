@@ -210,6 +210,14 @@ fn read_exif_with_rexif(path: &Path) -> ExifData {
     
     let mut data = ExifData::default();
     
+    // Collect date tags separately to apply correct priority after the loop.
+    // DNG files often have DateTime (IFD0) = conversion date, while
+    // DateTimeOriginal (EXIF sub-IFD) = actual capture date.
+    // rexif iterates IFD0 first, so DateTime would win with first-wins logic.
+    let mut date_time_original: Option<String> = None;
+    let mut date_time_digitized: Option<String> = None;
+    let mut date_time: Option<String> = None;
+    
     for entry in &entries {
         // Log exposure-related tags for debugging
         match entry.tag {
@@ -217,13 +225,26 @@ fn read_exif_with_rexif(path: &Path) -> ExifData {
             ExifTag::ShutterSpeedValue | ExifTag::ISOSpeedRatings | ExifTag::FocalLength => {
                 log::info!("  {:?}: {}", entry.tag, entry.value_more_readable);
             }
+            ExifTag::DateTimeOriginal | ExifTag::DateTime | ExifTag::DateTimeDigitized => {
+                log::info!("  {:?}: {}", entry.tag, entry.value_more_readable);
+            }
             _ => {}
         }
         
         match entry.tag {
-            ExifTag::DateTimeOriginal | ExifTag::DateTime => {
-                if data.capture_time.is_none() {
-                    data.capture_time = parse_exif_datetime(&entry.value_more_readable);
+            ExifTag::DateTimeOriginal => {
+                if date_time_original.is_none() {
+                    date_time_original = parse_exif_datetime(&entry.value_more_readable);
+                }
+            }
+            ExifTag::DateTimeDigitized => {
+                if date_time_digitized.is_none() {
+                    date_time_digitized = parse_exif_datetime(&entry.value_more_readable);
+                }
+            }
+            ExifTag::DateTime => {
+                if date_time.is_none() {
+                    date_time = parse_exif_datetime(&entry.value_more_readable);
                 }
             }
             ExifTag::Make => {
@@ -338,6 +359,21 @@ fn read_exif_with_rexif(path: &Path) -> ExifData {
             }
             _ => {}
         }
+    }
+    
+    // Apply date priority: DateTimeOriginal > DateTimeDigitized > DateTime
+    // This is critical for DNG files where DateTime = conversion date
+    let has_original = date_time_original.is_some();
+    let has_digitized = date_time_digitized.is_some();
+    let has_datetime = date_time.is_some();
+    data.capture_time = date_time_original
+        .or(date_time_digitized)
+        .or(date_time);
+    
+    if data.capture_time.is_some() {
+        log::info!("rexif date priority: original={}, digitized={}, datetime={} → using {:?}",
+            has_original, has_digitized, has_datetime,
+            data.capture_time);
     }
     
     data
@@ -641,12 +677,25 @@ fn read_exif_from_orf(path: &Path) -> Option<ExifData> {
         log::info!("rexif found {} entries in patched ORF", exif.entries.len());
         
         let mut result = ExifData::default();
+        let mut orf_date_time_original: Option<String> = None;
+        let mut orf_date_time_digitized: Option<String> = None;
+        let mut orf_date_time: Option<String> = None;
         
         for entry in &exif.entries {
             match entry.tag {
-                ExifTag::DateTimeOriginal | ExifTag::DateTime => {
-                    if result.capture_time.is_none() {
-                        result.capture_time = parse_exif_datetime(&entry.value_more_readable);
+                ExifTag::DateTimeOriginal => {
+                    if orf_date_time_original.is_none() {
+                        orf_date_time_original = parse_exif_datetime(&entry.value_more_readable);
+                    }
+                }
+                ExifTag::DateTimeDigitized => {
+                    if orf_date_time_digitized.is_none() {
+                        orf_date_time_digitized = parse_exif_datetime(&entry.value_more_readable);
+                    }
+                }
+                ExifTag::DateTime => {
+                    if orf_date_time.is_none() {
+                        orf_date_time = parse_exif_datetime(&entry.value_more_readable);
                     }
                 }
                 ExifTag::Make => {
@@ -692,6 +741,11 @@ fn read_exif_from_orf(path: &Path) -> Option<ExifData> {
                 _ => {}
             }
         }
+        
+        // Apply date priority: DateTimeOriginal > DateTimeDigitized > DateTime
+        result.capture_time = orf_date_time_original
+            .or(orf_date_time_digitized)
+            .or(orf_date_time);
         
         if result.capture_time.is_some() || result.aperture.is_some() || result.iso.is_some() {
             return Some(result);
@@ -1077,8 +1131,20 @@ fn create_photo_group(photos: Vec<ScannedPhoto>) -> PhotoGroup {
     }
 }
 
-/// Match photo groups to dives using relative ordering
-/// This doesn't rely on absolute timestamps, just the order of groups matching order of dives
+/// Parse a dive's date + time fields into a NaiveDateTime
+fn parse_dive_datetime(dive: &Dive) -> Option<NaiveDateTime> {
+    // Dive stores date as "2025-09-11" and time as "08:30:00" (or similar)
+    let datetime_str = format!("{}T{}", dive.date, dive.time);
+    NaiveDateTime::parse_from_str(&datetime_str, "%Y-%m-%dT%H:%M:%S").ok()
+        .or_else(|| NaiveDateTime::parse_from_str(&datetime_str, "%Y-%m-%dT%H:%M").ok())
+}
+
+/// Match photo groups to dives using date-aware matching.
+///
+/// Strategy (applied in order):
+/// 1. **Time overlap**: group's time range falls within dive start → dive end (with tolerance)
+/// 2. **Same-day match**: group and dive share the same calendar date, matched in chronological order
+/// 3. **Relative fallback**: remaining unmatched groups → remaining unmatched dives by order
 pub fn match_groups_to_dives(
     mut groups: Vec<PhotoGroup>,
     dives: &[Dive],
@@ -1091,12 +1157,116 @@ pub fn match_groups_to_dives(
     let mut sorted_dives: Vec<&Dive> = dives.iter().collect();
     sorted_dives.sort_by_key(|d| d.dive_number);
     
-    // Simple 1:1 matching based on order
-    // First group of photos -> First dive, etc.
-    for (i, group) in groups.iter_mut().enumerate() {
-        if i < sorted_dives.len() {
-            group.suggested_dive_id = Some(sorted_dives[i].id);
-            group.suggested_dive_number = Some(sorted_dives[i].dive_number);
+    // Pre-parse dive datetimes
+    let dive_times: Vec<Option<(NaiveDateTime, NaiveDateTime)>> = sorted_dives.iter().map(|d| {
+        parse_dive_datetime(d).map(|start| {
+            let end = start + Duration::seconds(d.duration_seconds as i64);
+            (start, end)
+        })
+    }).collect();
+    
+    // Track which groups and dives have been matched
+    let mut matched_groups: Vec<bool> = vec![false; groups.len()];
+    let mut matched_dives: Vec<bool> = vec![false; sorted_dives.len()];
+    
+    // --- Pass 1: Time overlap matching ---
+    // A photo group matches a dive if the group's start_time falls within
+    // [dive_start - 30min, dive_end + 60min] (tolerance for camera clock drift)
+    let before_tolerance = Duration::minutes(30);
+    let after_tolerance = Duration::minutes(60);
+    
+    for (gi, group) in groups.iter_mut().enumerate() {
+        let group_start = group.start_time.as_ref()
+            .and_then(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S").ok());
+        
+        if let Some(g_start) = group_start {
+            // Find the best matching dive by time overlap
+            let mut best_dive_idx: Option<usize> = None;
+            let mut best_distance = i64::MAX;
+            
+            for (di, dive_time) in dive_times.iter().enumerate() {
+                if matched_dives[di] { continue; }
+                
+                if let Some((d_start, d_end)) = dive_time {
+                    let window_start = *d_start - before_tolerance;
+                    let window_end = *d_end + after_tolerance;
+                    
+                    if g_start >= window_start && g_start <= window_end {
+                        // Within window — prefer the dive whose start is closest
+                        let distance = (g_start - *d_start).num_seconds().abs();
+                        if distance < best_distance {
+                            best_distance = distance;
+                            best_dive_idx = Some(di);
+                        }
+                    }
+                }
+            }
+            
+            if let Some(di) = best_dive_idx {
+                group.suggested_dive_id = Some(sorted_dives[di].id);
+                group.suggested_dive_number = Some(sorted_dives[di].dive_number);
+                matched_groups[gi] = true;
+                matched_dives[di] = true;
+                log::info!("Photo group {} time-overlap matched to dive {} ({})",
+                    gi + 1, sorted_dives[di].dive_number, sorted_dives[di].date);
+            }
+        }
+    }
+    
+    // --- Pass 2: Same-day matching ---
+    // For unmatched groups, find dives on the same calendar date.
+    // Within a day, match in chronological order.
+    for (gi, group) in groups.iter_mut().enumerate() {
+        if matched_groups[gi] { continue; }
+        
+        let group_date = group.start_time.as_ref()
+            .and_then(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S").ok())
+            .map(|dt| dt.date());
+        
+        if let Some(g_date) = group_date {
+            // Find the first unmatched dive on the same date
+            let mut best_dive_idx: Option<usize> = None;
+            
+            for (di, _dive) in sorted_dives.iter().enumerate() {
+                if matched_dives[di] { continue; }
+                
+                if let Some((d_start, _)) = dive_times[di] {
+                    if d_start.date() == g_date {
+                        // Take the first (earliest) unmatched dive on this date
+                        best_dive_idx = Some(di);
+                        break;
+                    }
+                }
+            }
+            
+            if let Some(di) = best_dive_idx {
+                group.suggested_dive_id = Some(sorted_dives[di].id);
+                group.suggested_dive_number = Some(sorted_dives[di].dive_number);
+                matched_groups[gi] = true;
+                matched_dives[di] = true;
+                log::info!("Photo group {} same-day matched to dive {} ({})",
+                    gi + 1, sorted_dives[di].dive_number, sorted_dives[di].date);
+            }
+        }
+    }
+    
+    // --- Pass 3: Relative ordering fallback ---
+    // Any remaining unmatched groups get matched to remaining unmatched dives in order.
+    let remaining_dives: Vec<usize> = matched_dives.iter().enumerate()
+        .filter(|(_, matched)| !**matched)
+        .map(|(i, _)| i)
+        .collect();
+    let mut rd_iter = remaining_dives.iter();
+    
+    for (gi, group) in groups.iter_mut().enumerate() {
+        if matched_groups[gi] { continue; }
+        
+        if let Some(&di) = rd_iter.next() {
+            group.suggested_dive_id = Some(sorted_dives[di].id);
+            group.suggested_dive_number = Some(sorted_dives[di].dive_number);
+            matched_groups[gi] = true;
+            log::info!("Photo group {} fallback-matched to dive {} ({})",
+                gi + 1, sorted_dives[di].dive_number, sorted_dives[di].date);
         }
     }
     
@@ -1254,8 +1424,9 @@ pub fn find_embedded_jpeg(data: &[u8]) -> Option<&[u8]> {
     }
 }
 
-/// Import photos to the database with the given assignments
-/// If overwrite is true, existing photos with the same file_path will be deleted first
+/// Import photos to the database with the given assignments (synchronous fallback)
+/// The main import path is now the async `commands::import_photos` which parallelizes scanning and thumbnails.
+#[allow(dead_code)]
 pub fn import_photos(
     db: &Db,
     trip_id: i64,
@@ -1383,7 +1554,7 @@ pub fn import_photos(
 }
 
 /// Get base filename without extension (for matching RAW to processed)
-fn get_base_filename(filename: &str) -> String {
+pub fn get_base_filename(filename: &str) -> String {
     Path::new(filename)
         .file_stem()
         .and_then(|s| s.to_str())

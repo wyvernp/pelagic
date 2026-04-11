@@ -1248,8 +1248,16 @@ pub fn write_xmp_sidecar_for_photo(db: &Db, photo_id: i64) {
         Ok(())
     })();
 
-    if let Err(e) = result {
-        log::warn!("XMP metadata writeback failed: {}", e);
+    match result {
+        Ok(()) => {
+            // Clear dirty flag after successful write
+            if let Err(e) = db.clear_photo_metadata_dirty(photo_id) {
+                log::warn!("Failed to clear metadata_dirty for photo {}: {}", photo_id, e);
+            }
+        }
+        Err(e) => {
+            log::warn!("XMP metadata writeback failed: {}", e);
+        }
     }
 }
 
