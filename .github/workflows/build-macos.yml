@@ -90,7 +90,7 @@ jobs:
           cd -
           
           # Sign the tarball with the Tauri updater key
-          npm run tauri signer sign -- "$UPDATER_DIR/Pelagic.app.tar.gz"
+          npm run tauri signer sign -- --private-key "$TAURI_SIGNING_PRIVATE_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$UPDATER_DIR/Pelagic.app.tar.gz"
           
           ls -lh "$UPDATER_DIR/Pelagic.app.tar.gz" "$UPDATER_DIR/Pelagic.app.tar.gz.sig"
 
