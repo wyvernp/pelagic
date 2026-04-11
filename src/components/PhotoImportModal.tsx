@@ -9,7 +9,7 @@ import './PhotoImportModal.css';
 
 interface PhotoImportModalProps {
   isOpen: boolean;
-  tripId: number;
+  tripId?: number;
   dives: Dive[];
   photoPaths: string[];
   onClose: () => void;
@@ -47,7 +47,7 @@ export function PhotoImportModal({
     try {
       const result = await invoke<PhotoImportPreview>('scan_photos_for_import', {
         paths: photoPaths,
-        tripId,
+        tripId: tripId ?? null,
         gapMinutes,
       });
       setPreview(result);
@@ -121,8 +121,8 @@ export function PhotoImportModal({
         });
       });
       
-      const count = await invoke<number>('import_photos', {
-        tripId,
+      const result = await invoke<{ count: number; trip_id: number }>('import_photos', {
+        tripId: tripId ?? null,
         assignments: photoAssignments,
         overwrite: overwriteExisting,
       });
@@ -130,7 +130,7 @@ export function PhotoImportModal({
       // Nudge the background metadata sync to write XMP to imported files
       invoke('nudge_metadata_sync').catch(() => {});
       
-      alert(`Successfully imported ${count} photos!`);
+      alert(`Successfully imported ${result.count} photos!`);
       onImportComplete();
       onClose();
     } catch (err) {

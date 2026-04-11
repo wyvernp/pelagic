@@ -442,11 +442,6 @@ function App() {
 
   // Handler functions
   const handleImportPhotos = useCallback(async () => {
-    if (!selectedTripId) {
-      alert('Please select a trip first before importing photos.');
-      return;
-    }
-
     try {
       const selected = await open({
         multiple: true,
@@ -466,7 +461,7 @@ function App() {
       logger.error('Failed to select photos:', error);
       alert('Failed to select photos: ' + error);
     }
-  }, [selectedTripId, openModal, updateModalContext]);
+  }, [openModal, updateModalContext]);
 
   const handlePhotoImportComplete = useCallback(async () => {
     // Invalidate caches since new photos were added
@@ -1497,16 +1492,14 @@ function App() {
           onSubmit={handleAddDiveSubmit}
         />
       )}
-      {selectedTripId && (
-        <PhotoImportModal
-          isOpen={activeModal === 'photoImport'}
-          tripId={selectedTripId}
-          dives={dives}
-          photoPaths={modalContext.photoImportPaths ?? []}
-          onClose={closeModal}
-          onImportComplete={handlePhotoImportComplete}
-        />
-      )}
+      <PhotoImportModal
+        isOpen={activeModal === 'photoImport'}
+        tripId={selectedTripId ?? undefined}
+        dives={selectedTripId ? dives : []}
+        photoPaths={modalContext.photoImportPaths ?? []}
+        onClose={closeModal}
+        onImportComplete={handlePhotoImportComplete}
+      />
       {viewerPhoto && activeModal === 'photoViewer' && (
         <PhotoViewer
           photo={viewerPhoto}

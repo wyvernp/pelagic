@@ -908,24 +908,113 @@ pub fn get_all_photos_for_trip(state: State<AppState>, trip_id: i64) -> Result<V
 pub fn scan_photos_for_import(
     state: State<AppState>,
     paths: Vec<String>,
-    trip_id: i64,
+    trip_id: Option<i64>,
     gap_minutes: Option<i64>,
 ) -> Result<photos::PhotoImportPreview, String> {
-    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
-    let dives = db.get_dives_for_trip(trip_id).map_err(|e| e.to_string())?;
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    let dives = if let Some(tid) = trip_id {
+        db.get_dives_for_trip(tid).map_err(|e| e.to_string())?
+    } else {
+        Vec::new()
+    };
     
     let gap = gap_minutes.unwrap_or(60); // Default 60 min gap between groups
     photos::create_import_preview(&paths, &dives, gap)
+}
+
+/// Result from import_photos, includes resolved trip_id for auto-created trips
+#[derive(Debug, serde::Serialize)]
+pub struct ImportResult {
+    pub count: i64,
+    pub trip_id: i64,
+}
+
+/// Resolve an existing trip or create one from photo dates.
+/// Priority: explicit trip_id > matching existing trip by date overlap > auto-create.
+fn resolve_or_create_trip(
+    db: &Db,
+    trip_id: Option<i64>,
+    photo_dates: &[Option<String>], // capture_time values from scanned photos
+) -> Result<i64, String> {
+    // 1. Explicit trip_id
+    if let Some(tid) = trip_id {
+        return Ok(tid);
+    }
+    
+    // 2. Extract date range from photos
+    let mut earliest: Option<chrono::NaiveDate> = None;
+    let mut latest: Option<chrono::NaiveDate> = None;
+    
+    for dt_str in photo_dates.iter().flatten() {
+        // capture_time is ISO format like "2025-09-16T10:30:00"
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%dT%H:%M:%S") {
+            let d = ndt.date();
+            earliest = Some(earliest.map_or(d, |e: chrono::NaiveDate| e.min(d)));
+            latest = Some(latest.map_or(d, |l: chrono::NaiveDate| l.max(d)));
+        } else if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(dt_str, "%Y-%m-%d %H:%M:%S") {
+            let d = ndt.date();
+            earliest = Some(earliest.map_or(d, |e: chrono::NaiveDate| e.min(d)));
+            latest = Some(latest.map_or(d, |l: chrono::NaiveDate| l.max(d)));
+        } else if let Ok(d) = chrono::NaiveDate::parse_from_str(dt_str, "%Y-%m-%d") {
+            earliest = Some(earliest.map_or(d, |e: chrono::NaiveDate| e.min(d)));
+            latest = Some(latest.map_or(d, |l: chrono::NaiveDate| l.max(d)));
+        }
+    }
+    
+    let photo_start = earliest.ok_or_else(|| "No photo dates found — cannot determine trip. Please select a trip manually.".to_string())?;
+    let photo_end = latest.unwrap_or(photo_start);
+    
+    let photo_start_str = photo_start.format("%Y-%m-%d").to_string();
+    let photo_end_str = photo_end.format("%Y-%m-%d").to_string();
+    
+    // 3. Find existing trip with date overlap
+    let trips = db.get_all_trips().map_err(|e| e.to_string())?;
+    let mut best_trip: Option<(i64, i64)> = None; // (trip_id, overlap_days)
+    
+    for trip in &trips {
+        if let (Ok(ts), Ok(te)) = (
+            chrono::NaiveDate::parse_from_str(&trip.date_start, "%Y-%m-%d"),
+            chrono::NaiveDate::parse_from_str(&trip.date_end, "%Y-%m-%d"),
+        ) {
+            let overlap_start = ts.max(photo_start);
+            let overlap_end = te.min(photo_end);
+            let overlap_days = (overlap_end - overlap_start).num_days() + 1;
+            if overlap_days > 0 {
+                if best_trip.map_or(true, |(_, best)| overlap_days > best) {
+                    best_trip = Some((trip.id, overlap_days));
+                }
+            }
+        }
+    }
+    
+    if let Some((tid, _)) = best_trip {
+        log::info!("resolve_or_create_trip: matched existing trip {}", tid);
+        return Ok(tid);
+    }
+    
+    // 4. Auto-create trip
+    let trip_name = if photo_start == photo_end {
+        format!("Photos {}", photo_start_str)
+    } else {
+        format!("Photos {} to {}", photo_start_str, photo_end_str)
+    };
+    
+    log::info!("resolve_or_create_trip: creating trip '{}' ({} to {})", trip_name, photo_start_str, photo_end_str);
+    let new_id = db.create_trip(&trip_name, "", &photo_start_str, &photo_end_str)
+        .map_err(|e| format!("Failed to create trip: {}", e))?;
+    
+    Ok(new_id)
 }
 
 #[tauri::command]
 pub async fn import_photos(
     window: tauri::Window,
     state: State<'_, AppState>,
-    trip_id: i64,
+    trip_id: Option<i64>,
     assignments: Vec<photos::PhotoAssignment>,
     overwrite: Option<bool>,
-) -> Result<i64, String> {
+) -> Result<ImportResult, String> {
     let overwrite_flag = overwrite.unwrap_or(false);
     log::info!("import_photos called: {} photos, overwrite={}", assignments.len(), overwrite_flag);
     
@@ -957,6 +1046,17 @@ pub async fn import_photos(
         }
     }
     
+    // --- Resolve trip: explicit > date-match > auto-create ---
+    let resolved_trip_id = {
+        let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+        let db = Db::new(&*conn);
+        let photo_dates: Vec<Option<String>> = scanned.iter()
+            .filter_map(|s| s.as_ref())
+            .map(|p| p.capture_time.clone())
+            .collect();
+        resolve_or_create_trip(&db, trip_id, &photo_dates)?
+    };
+    
     // --- Phase 2: Sequential DB inserts in transaction ---
     // Scoped block so `conn` and `db` are dropped before Phase 3 awaits
     let (count, thumb_queue) = {
@@ -982,7 +1082,7 @@ pub async fn import_photos(
             if let Some(photo) = photo_opt {
                 if !photo.is_processed {
                     let photo_id = db.insert_photo_full(
-                        trip_id,
+                        resolved_trip_id,
                         assignment.dive_id,
                         &photo.file_path,
                         &photo.filename,
@@ -1033,7 +1133,7 @@ pub async fn import_photos(
                     let (raw_photo_id, raw_dive_id) = if let Some((id, dive)) = raw_photo_map.get(&base_name) {
                         (Some(*id), *dive)
                     } else {
-                        match db.find_photo_by_base_filename(trip_id, &base_name) {
+                        match db.find_photo_by_base_filename(resolved_trip_id, &base_name) {
                             Ok(Some(existing_raw)) => (Some(existing_raw.id), existing_raw.dive_id),
                             _ => (None, assignment.dive_id)
                         }
@@ -1042,7 +1142,7 @@ pub async fn import_photos(
                     let dive_id = raw_dive_id.or(assignment.dive_id);
                     
                     let photo_id = db.insert_photo_full(
-                        trip_id,
+                        resolved_trip_id,
                         dive_id,
                         &photo.file_path,
                         &photo.filename,
@@ -1123,8 +1223,8 @@ pub async fn import_photos(
         }
     }
     
-    log::info!("import_photos complete: {} photos imported", count);
-    Ok(count)
+    log::info!("import_photos complete: {} photos imported to trip {}", count, resolved_trip_id);
+    Ok(ImportResult { count, trip_id: resolved_trip_id })
 }
 
 #[tauri::command]

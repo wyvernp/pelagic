@@ -1285,18 +1285,26 @@ pub fn create_import_preview(
     // Group by time
     let (mut groups, photos_without_time) = group_photos_by_time(photos, gap_minutes);
     
-    // Match to dives
-    groups = match_groups_to_dives(groups, dives);
+    // Match to dives (only if we have dives)
+    if !dives.is_empty() {
+        groups = match_groups_to_dives(groups, dives);
+    }
     
-    // Find unmatched (groups beyond number of dives)
+    // Find unmatched (groups beyond number of dives) — only when dives exist
     let dive_count = dives.len();
-    let unmatched_photos: Vec<ScannedPhoto> = groups.iter()
-        .skip(dive_count)
-        .flat_map(|g| g.photos.clone())
-        .collect();
+    let unmatched_photos: Vec<ScannedPhoto> = if dive_count > 0 {
+        groups.iter()
+            .skip(dive_count)
+            .flat_map(|g| g.photos.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     
-    // Keep only matched groups
-    groups.truncate(dive_count);
+    // Keep only matched groups (when we have dives)
+    if dive_count > 0 {
+        groups.truncate(dive_count);
+    }
     
     Ok(PhotoImportPreview {
         groups,
