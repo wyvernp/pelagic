@@ -105,7 +105,7 @@ function convertDive(dcDive: DCDive, tripId: number, diveNumber: number): Omit<D
     trip_id: tripId,
     dive_number: diveNumber,
     date: dcDive.when.toISOString().split('T')[0],
-    time: dcDive.when.toTimeString().split(' ')[0],
+    time: dcDive.when.toISOString().split('T')[1].split('.')[0],
     duration_seconds: dcDive.duration.seconds,
     max_depth_m: dcDive.maxDepth.mm / 1000,
     mean_depth_m: dcDive.meanDepth ? dcDive.meanDepth.mm / 1000 : dcDive.maxDepth.mm / 2000,
