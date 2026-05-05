@@ -329,6 +329,16 @@ export function DiveImportReviewModal({
     });
   };
   
+  const handleToggleAllDives = (groupId: string, selected: boolean) => {
+    setGroups(prev => prev.map(g => {
+      if (g.id !== groupId) return g;
+      return {
+        ...g,
+        dives: g.dives.map(d => ({ ...d, selected })),
+      };
+    }));
+  };
+
   const handleToggleDive = (groupId: string, diveId: string) => {
     setGroups(prev => prev.map(g => {
       if (g.id !== groupId) return g;
@@ -473,7 +483,18 @@ export function DiveImportReviewModal({
                 <table className="dive-table">
                   <thead>
                     <tr>
-                      <th className="col-select"></th>
+                      <th className="col-select">
+                        <input
+                          type="checkbox"
+                          checked={group.dives.length > 0 && group.dives.every(d => d.selected)}
+                          ref={el => {
+                            if (el) el.indeterminate = group.dives.some(d => d.selected) && !group.dives.every(d => d.selected);
+                          }}
+                          onChange={(e) => handleToggleAllDives(group.id, e.target.checked)}
+                          disabled={isImporting || group.status !== 'pending'}
+                          title="Select / deselect all dives in this group"
+                        />
+                      </th>
                       <th className="col-date">Date</th>
                       <th className="col-time">Time</th>
                       <th className="col-duration">Duration</th>

@@ -67,13 +67,15 @@ jobs:
 
       - name: Clean intermediate build artifacts
         run: |
-          # Remove per-arch build dirs to reclaim space before DMG/updater creation
-          rm -rf src-tauri/target/aarch64-apple-darwin/release/build
-          rm -rf src-tauri/target/aarch64-apple-darwin/release/deps
-          rm -rf src-tauri/target/aarch64-apple-darwin/release/incremental
-          rm -rf src-tauri/target/x86_64-apple-darwin/release/build
-          rm -rf src-tauri/target/x86_64-apple-darwin/release/deps
-          rm -rf src-tauri/target/x86_64-apple-darwin/release/incremental
+          echo "=== Before cleanup ==="
+          df -h
+          # The per-arch target dirs are no longer needed after the universal build
+          rm -rf src-tauri/target/aarch64-apple-darwin
+          rm -rf src-tauri/target/x86_64-apple-darwin
+          # Clean Cargo registry sources and git checkouts (unpacked source, not needed post-build)
+          rm -rf ~/.cargo/registry/src
+          rm -rf ~/.cargo/git/checkouts
+          echo "=== After cleanup ==="
           df -h
 
       - name: Create updater artifacts

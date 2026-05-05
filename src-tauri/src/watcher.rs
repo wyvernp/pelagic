@@ -144,14 +144,12 @@ impl FileWatcher {
             }
         };
 
-        // Watch from the grandparent (2 levels up) so sibling directories are covered.
-        // e.g., if photo is in D:\Photos\Trip\IMG.CR3, watch D:\Photos\ recursively,
-        // catching D:\Photos\processed\, D:\Photos\output\, etc.
-        let watch_root = parent_dir
-            .parent()
-            .and_then(|gp| gp.parent())
-            .map(|ggp| ggp.to_path_buf())
-            .unwrap_or_else(|| parent_dir.clone());
+        // Watch the photo's parent directory recursively. Since RecursiveMode::Recursive
+        // covers all subdirectories, this catches saves to subfolders like `Processed/`
+        // or `output/` that live inside the same folder as the raw files.
+        // e.g., if photos are in C:\Pictures\Trip\, we watch that folder and automatically
+        // pick up saves to C:\Pictures\Trip\Processed\, C:\Pictures\Trip\output\, etc.
+        let watch_root = parent_dir.clone();
 
         let base_filename = path
             .file_stem()
