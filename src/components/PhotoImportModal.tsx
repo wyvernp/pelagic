@@ -12,6 +12,7 @@ interface PhotoImportModalProps {
   tripId?: number;
   dives: Dive[];
   photoPaths: string[];
+  targetDiveId?: number;
   onClose: () => void;
   onImportComplete: () => void;
 }
@@ -21,6 +22,7 @@ export function PhotoImportModal({
   tripId,
   dives,
   photoPaths,
+  targetDiveId,
   onClose,
   onImportComplete,
 }: PhotoImportModalProps) {
@@ -52,10 +54,10 @@ export function PhotoImportModal({
       });
       setPreview(result);
       
-      // Initialize assignments from suggestions
+      // Initialize assignments from suggestions (or targetDiveId if provided)
       const initialAssignments = new Map<number, number | null>();
       result.groups.forEach((group, index) => {
-        initialAssignments.set(index, group.suggested_dive_id ?? null);
+        initialAssignments.set(index, targetDiveId ?? group.suggested_dive_id ?? null);
       });
       setAssignments(initialAssignments);
     } catch (err) {

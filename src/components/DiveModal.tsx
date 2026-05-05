@@ -32,9 +32,10 @@ interface DiveModalProps {
   onClose: () => void;
   onSubmit: (diveId: number, data: DiveFormData) => void;
   onDelete?: (diveId: number) => void;
+  onImportPhotos?: (dive: Dive) => void;
 }
 
-export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveModalProps) {
+export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete, onImportPhotos }: DiveModalProps) {
   const settings = useSettings();
   const [location, setLocation] = useState('');
   const [ocean, setOcean] = useState('');
@@ -580,6 +581,11 @@ export function DiveModal({ isOpen, dive, onClose, onSubmit, onDelete }: DiveMod
               </button>
             )}
             <div className="modal-footer-right">
+              {onImportPhotos && dive && (
+                <button type="button" className="btn btn-secondary" onClick={() => onImportPhotos(dive)}>
+                  Import Photos
+                </button>
+              )}
               <button type="button" className="btn btn-secondary" onClick={onClose}>
                 Cancel
               </button>
