@@ -137,6 +137,18 @@
   opacity: 0.8;
 }
 
+.photo-group.photo-group-excluded {
+  opacity: 0.45;
+}
+
+.group-select-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  accent-color: var(--accent-primary);
+}
+
 .photo-group.no-time {
   border-color: #ff9800;
   border-style: dashed;

@@ -463,28 +463,6 @@ function App() {
     }
   }, [openModal, updateModalContext]);
 
-  const handleImportPhotosForDive = useCallback(async (dive: NonNullable<typeof modalContext.editingDive>) => {
-    if (!dive) return;
-    try {
-      const selected = await open({
-        multiple: true,
-        directory: true,
-        filters: [{
-          name: 'Images',
-          extensions: ['jpg', 'jpeg', 'png', 'tiff', 'tif', 'raw', 'cr2', 'cr3', 'nef', 'arw', 'dng']
-        }]
-      });
-      if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        updateModalContext({ photoImportPaths: paths, photoImportTargetDiveId: dive.id });
-        openModal('photoImport');
-      }
-    } catch (error) {
-      logger.error('Failed to select photos:', error);
-      alert('Failed to select photos: ' + error);
-    }
-  }, [openModal, updateModalContext]);
-
   const handlePhotoImportComplete = useCallback(async () => {
     // Invalidate caches since new photos were added
     if (selectedTripId) {
@@ -1502,7 +1480,6 @@ function App() {
         onClose={closeModal}
         onSubmit={handleDiveSubmit}
         onDelete={handleDeleteDive}
-        onImportPhotos={handleImportPhotosForDive}
       />
       {modalContext.addDiveTripId && (
         <AddDiveModal
@@ -1520,7 +1497,6 @@ function App() {
         tripId={selectedTripId ?? undefined}
         dives={selectedTripId ? dives : []}
         photoPaths={modalContext.photoImportPaths ?? []}
-        targetDiveId={modalContext.photoImportTargetDiveId ?? undefined}
         onClose={closeModal}
         onImportComplete={handlePhotoImportComplete}
       />

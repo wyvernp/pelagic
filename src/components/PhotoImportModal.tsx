@@ -12,7 +12,6 @@ interface PhotoImportModalProps {
   tripId?: number;
   dives: Dive[];
   photoPaths: string[];
-  targetDiveId?: number;
   onClose: () => void;
   onImportComplete: () => void;
 }
@@ -22,7 +21,6 @@ export function PhotoImportModal({
   tripId,
   dives,
   photoPaths,
-  targetDiveId,
   onClose,
   onImportComplete,
 }: PhotoImportModalProps) {
@@ -35,6 +33,7 @@ export function PhotoImportModal({
   const [error, setError] = useState<string | null>(null);
   const [overwriteExisting, setOverwriteExisting] = useState(false);
   const [importProgress, setImportProgress] = useState<{current: number, total: number, phase: string} | null>(null);
+  const [selectedGroups, setSelectedGroups] = useState<Set<number>>(new Set());
 
   // Scan photos when modal opens
   useEffect(() => {
@@ -54,12 +53,15 @@ export function PhotoImportModal({
       });
       setPreview(result);
       
-      // Initialize assignments from suggestions (or targetDiveId if provided)
+      // Initialize assignments from suggestions
       const initialAssignments = new Map<number, number | null>();
+      const initialSelected = new Set<number>();
       result.groups.forEach((group, index) => {
-        initialAssignments.set(index, targetDiveId ?? group.suggested_dive_id ?? null);
+        initialAssignments.set(index, group.suggested_dive_id ?? null);
+        initialSelected.add(index);
       });
       setAssignments(initialAssignments);
+      setSelectedGroups(initialSelected);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -96,8 +98,9 @@ export function PhotoImportModal({
       // Build assignment list
       const photoAssignments: PhotoAssignment[] = [];
       
-      // Add photos from matched groups
+      // Add photos from selected groups
       preview.groups.forEach((group, index) => {
+        if (!selectedGroups.has(index)) return;
         const diveId = assignments.get(index);
         group.photos.forEach(photo => {
           photoAssignments.push({
@@ -176,7 +179,7 @@ export function PhotoImportModal({
   };
 
   const totalPhotos = preview
-    ? preview.groups.reduce((sum, g) => sum + g.photos.length, 0) +
+    ? preview.groups.reduce((sum, g, i) => selectedGroups.has(i) ? sum + g.photos.length : sum, 0) +
       preview.unmatched_photos.length +
       preview.photos_without_time.length
     : 0;
@@ -267,6 +270,14 @@ export function PhotoImportModal({
                     formatTime={formatTime}
                     formatDate={formatDate}
                     diveNamePrefix={settings.diveNamePrefix}
+                    isSelected={selectedGroups.has(index)}
+                    onToggleSelected={(checked) => {
+                      setSelectedGroups(prev => {
+                        const next = new Set(prev);
+                        if (checked) next.add(index); else next.delete(index);
+                        return next;
+                      });
+                    }}
                   />
                 ))}
 
@@ -358,6 +369,8 @@ interface PhotoGroupCardProps {
   formatTime: (time?: string) => string;
   formatDate: (time?: string) => string;
   diveNamePrefix: string;
+  isSelected: boolean;
+  onToggleSelected: (checked: boolean) => void;
 }
 
 function PhotoGroupCard({
@@ -369,6 +382,8 @@ function PhotoGroupCard({
   formatTime,
   formatDate,
   diveNamePrefix,
+  isSelected,
+  onToggleSelected,
 }: PhotoGroupCardProps) {
   const timeRange = group.start_time && group.end_time
     ? `${formatTime(group.start_time)} - ${formatTime(group.end_time)}`
@@ -377,9 +392,16 @@ function PhotoGroupCard({
   const date = formatDate(group.start_time);
 
   return (
-    <div className="photo-group">
+    <div className={`photo-group${isSelected ? '' : ' photo-group-excluded'}`}>
       <div className="group-header">
         <div className="group-info">
+          <input
+            type="checkbox"
+            className="group-select-checkbox"
+            checked={isSelected}
+            onChange={(e) => onToggleSelected(e.target.checked)}
+            title={isSelected ? 'Exclude this group' : 'Include this group'}
+          />
           <span className="group-title">Group {groupIndex + 1}</span>
           <span className="group-time">{date} {timeRange}</span>
           <span className="group-count">{group.photos.length} photos</span>

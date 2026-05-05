@@ -41,7 +41,6 @@ export interface ModalContext {
   editingDive?: Dive | null;
   addDiveTripId?: number | null;
   photoImportPaths?: string[];
-  photoImportTargetDiveId?: number | null;
   viewerPhotoId?: number | null;
   shareType?: 'dive' | 'trip' | 'photo';
   sharePhotoId?: number | null;
