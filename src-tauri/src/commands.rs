@@ -919,8 +919,17 @@ pub fn scan_photos_for_import(
         Vec::new()
     };
     
-    let gap = gap_minutes.unwrap_or(60); // Default 60 min gap between groups
-    photos::create_import_preview(&paths, &dives, gap)
+    let gap = gap_minutes.unwrap_or(60);
+    let mut preview = photos::create_import_preview(&paths, &dives, gap)?;
+
+    // Mark groups where every photo is already in the database
+    for group in &mut preview.groups {
+        if !group.photos.is_empty() {
+            group.all_imported = group.photos.iter().all(|p| db.photo_exists_by_path(&p.file_path));
+        }
+    }
+
+    Ok(preview)
 }
 
 /// Result from import_photos, includes resolved trip_id for auto-created trips

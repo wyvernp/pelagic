@@ -300,6 +300,7 @@ export interface PhotoGroup {
   duration_minutes?: number;
   suggested_dive_id?: number;
   suggested_dive_number?: number;
+  all_imported: boolean;
 }
 
 export interface PhotoImportPreview {

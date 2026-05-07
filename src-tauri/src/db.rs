@@ -2053,6 +2053,16 @@ impl<'a> Db<'a> {
         Ok(())
     }
 
+    /// Check whether a photo path already exists in the database
+    pub fn photo_exists_by_path(&self, file_path: &str) -> bool {
+        let normalized = file_path.replace("/", "\\");
+        self.conn.query_row(
+            "SELECT 1 FROM photos WHERE file_path = ? OR file_path = ? COLLATE NOCASE LIMIT 1",
+            params![file_path, normalized],
+            |_| Ok(()),
+        ).is_ok()
+    }
+
     /// Find a photo by its exact file path
     pub fn find_photo_by_path(&self, file_path: &str) -> Result<Option<Photo>> {
         let normalized = file_path.replace("/", "\\");

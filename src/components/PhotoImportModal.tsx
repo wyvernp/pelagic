@@ -53,12 +53,12 @@ export function PhotoImportModal({
       });
       setPreview(result);
       
-      // Initialize assignments from suggestions
+      // Initialize assignments from suggestions; skip already-imported groups by default
       const initialAssignments = new Map<number, number | null>();
       const initialSelected = new Set<number>();
       result.groups.forEach((group, index) => {
         initialAssignments.set(index, group.suggested_dive_id ?? null);
-        initialSelected.add(index);
+        if (!group.all_imported) initialSelected.add(index);
       });
       setAssignments(initialAssignments);
       setSelectedGroups(initialSelected);
@@ -403,6 +403,9 @@ function PhotoGroupCard({
             title={isSelected ? 'Exclude this group' : 'Include this group'}
           />
           <span className="group-title">Group {groupIndex + 1}</span>
+          {group.all_imported && (
+            <span className="group-badge-imported">already imported</span>
+          )}
           <span className="group-time">{date} {timeRange}</span>
           <span className="group-count">{group.photos.length} photos</span>
           {group.duration_minutes !== undefined && group.duration_minutes > 0 && (

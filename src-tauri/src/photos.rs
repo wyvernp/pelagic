@@ -40,6 +40,7 @@ pub struct PhotoGroup {
     pub duration_minutes: Option<i64>,
     pub suggested_dive_id: Option<i64>,
     pub suggested_dive_number: Option<i32>,
+    pub all_imported: bool,
 }
 
 /// Preview of how photos will be matched to dives
@@ -1128,6 +1129,7 @@ fn create_photo_group(photos: Vec<ScannedPhoto>) -> PhotoGroup {
         duration_minutes,
         suggested_dive_id: None,
         suggested_dive_number: None,
+        all_imported: false,
     }
 }
 

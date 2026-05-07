@@ -149,6 +149,16 @@
   accent-color: var(--accent-primary);
 }
 
+.group-badge-imported {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+
 .photo-group.no-time {
   border-color: #ff9800;
   border-style: dashed;

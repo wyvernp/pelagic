@@ -147,9 +147,20 @@ export function DiveImportReviewModal({
   // Dives are already ImportableDive format - use directly
   // Regroup when dives or gap changes
   useEffect(() => {
-    const newGroups = groupDivesByTimeGap(dives, gapHours);
+    const newGroups = groupDivesByTimeGap(dives, gapHours).map(group => {
+      // Auto-select an existing trip whose date range overlaps this group
+      const groupStartDate = group.dateStart.toISOString().slice(0, 10);
+      const groupEndDate = group.dateEnd.toISOString().slice(0, 10);
+      const matchingTrip = existingTrips.find(
+        trip => trip.date_start <= groupEndDate && trip.date_end >= groupStartDate
+      );
+      if (matchingTrip) {
+        return { ...group, tripMode: 'existing' as const, selectedTripId: matchingTrip.id };
+      }
+      return group;
+    });
     setGroups(newGroups);
-  }, [dives, gapHours]);
+  }, [dives, gapHours, existingTrips]);
   
   if (!isOpen) return null;
   

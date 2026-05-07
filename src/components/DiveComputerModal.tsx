@@ -830,11 +830,9 @@ export function DiveComputerModal({ isOpen, onClose, tripId, onDivesImported, on
 
       // Convert DiveFiles to the format expected by the modal
       const convertedDives: DownloadedDive[] = diveFiles.map((diveFile) => {
-        return {
-          // Parse the Suunto dive file into a Dive structure
-          ...parseSuuntoDiveFile(diveFile),
-          selected: true
-        };
+        const dive = parseSuuntoDiveFile(diveFile);
+        const isDup = isDuplicateDive(dive);
+        return { ...dive, selected: !isDup, isDuplicate: isDup };
       });
 
       logger.debug(`✅ Converted ${convertedDives.length} dives for display`);
