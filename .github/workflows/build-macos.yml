@@ -16,23 +16,29 @@ jobs:
         run: |
           echo "=== Before cleanup ==="
           df -h
-          # Remove iOS/tvOS/watchOS/visionOS simulators and platforms
+          # Remove all Xcode device + simulator platforms (we only need macOS tooling)
           sudo rm -rf /Library/Developer/CoreSimulator
           sudo rm -rf ~/Library/Developer/Xcode/iOS\ DeviceSupport
           sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/iPhoneOS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/iPhoneSimulator.platform
           sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/AppleTVOS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/AppleTVSimulator.platform
           sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/WatchOS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/WatchSimulator.platform
           sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/XROS.platform
+          sudo rm -rf /Applications/Xcode_*.app/Contents/Developer/Platforms/XRSimulator.platform
           # Remove Android SDK
           sudo rm -rf /Users/runner/Library/Android
           sudo rm -rf /usr/local/lib/android
-          # Remove .NET, Go, Haskell, CodeQL
+          # Remove .NET, Go, Haskell
           sudo rm -rf /usr/local/share/dotnet
           sudo rm -rf /usr/local/go
           sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          # Remove Homebrew cache
+          # Remove all hostedtoolcache (setup-node/setup-python will re-download what they need)
+          sudo rm -rf /opt/hostedtoolcache
+          # Remove Homebrew cache and large unused packages
           sudo rm -rf ~/Library/Caches/Homebrew
+          brew cleanup -s 2>/dev/null || true
           # Remove large unused tools
           sudo rm -rf /usr/local/share/powershell
           sudo rm -rf /usr/local/share/chromium
@@ -57,7 +63,10 @@ jobs:
           rustup target add x86_64-apple-darwin
 
       - name: Install JS dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # Cache is no longer needed after install
+          npm cache clean --force
 
       - name: Build app bundle
         env:
@@ -69,10 +78,14 @@ jobs:
         run: |
           echo "=== Before cleanup ==="
           df -h
-          # The per-arch target dirs are no longer needed after the universal build
+          # Per-arch target dirs are no longer needed after the universal build
           rm -rf src-tauri/target/aarch64-apple-darwin
           rm -rf src-tauri/target/x86_64-apple-darwin
-          # Clean Cargo registry sources and git checkouts (unpacked source, not needed post-build)
+          # Clean intermediate dirs from the universal target (keep bundle/ which has the .app)
+          rm -rf src-tauri/target/universal-apple-darwin/release/build
+          rm -rf src-tauri/target/universal-apple-darwin/release/deps
+          rm -rf src-tauri/target/universal-apple-darwin/release/incremental
+          # Cargo registry sources and git checkouts are no longer needed post-build
           rm -rf ~/.cargo/registry/src
           rm -rf ~/.cargo/git/checkouts
           echo "=== After cleanup ==="
