@@ -542,15 +542,9 @@ pub fn bulk_import_dives(
             }
         };
         
-        // Get starting dive number
-        let mut dive_number = if let Some(tid) = trip_id {
-            let existing_dives = db.get_dives_for_trip(tid)
-                .map_err(|e| format!("Failed to get existing dives: {}", e))?;
-            existing_dives.len() as i64 + 1
-        } else {
-            db.get_next_global_dive_number()
-                .map_err(|e| format!("Failed to get next dive number: {}", e))?
-        };
+        // Get starting dive number using universal sequence across all dives
+        let mut dive_number = db.get_next_global_dive_number()
+            .map_err(|e| format!("Failed to get next dive number: {}", e))?;
         
         // Import each dive
         for dive_data in group.dives {
@@ -738,14 +732,9 @@ pub fn create_dive_from_computer(
 
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
-    // Get current dive count for numbering
-    let dive_number = if let Some(tid) = trip_id {
-        let existing_dives = db.get_dives_for_trip(tid).map_err(|e| e.to_string())?;
-        existing_dives.len() as i64 + 1
-    } else {
-        db.get_next_global_dive_number().map_err(|e| e.to_string())?
-    };
-    
+    // Get next dive number using universal sequence across all dives
+    let dive_number = db.get_next_global_dive_number().map_err(|e| e.to_string())?;
+
     db.create_dive_from_computer(
         trip_id,
         dive_number,
@@ -825,14 +814,9 @@ pub fn create_manual_dive(
 
     let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?; let db = Db::new(&*conn);
     
-    // Get current dive count for numbering
-    let dive_number = if let Some(tid) = trip_id {
-        let existing_dives = db.get_dives_for_trip(tid).map_err(|e| e.to_string())?;
-        existing_dives.len() as i64 + 1
-    } else {
-        db.get_next_global_dive_number().map_err(|e| e.to_string())?
-    };
-    
+    // Get next dive number using universal sequence across all dives
+    let dive_number = db.get_next_global_dive_number().map_err(|e| e.to_string())?;
+
     db.create_manual_dive(
         trip_id,
         dive_number,
