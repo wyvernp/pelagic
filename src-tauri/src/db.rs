@@ -470,7 +470,7 @@ impl<'a> Db<'a> {
         Ok(dives)
     }
 
-    /// Get the next available global dive number (for tripless dives)
+    /// Get the next available universal dive number across all dives
     pub fn get_next_global_dive_number(&self) -> Result<i64> {
         let max: i64 = self.conn.query_row(
             "SELECT COALESCE(MAX(dive_number), 0) FROM dives",

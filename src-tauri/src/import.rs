@@ -470,19 +470,9 @@ pub fn import_to_database(db: &Db, mut result: ImportResult, existing_trip_id: O
     
     let trip_id = existing_trip_id;
     
-    // Get the starting dive number
-    let mut next_number = if let Some(tid) = trip_id {
-        let existing_dives = db.get_dives_for_trip(tid)
-            .map_err(|e| format!("Failed to get existing dives: {}", e))?;
-        let max_dive_number = existing_dives.iter()
-            .map(|d| d.dive_number)
-            .max()
-            .unwrap_or(0);
-        max_dive_number + 1
-    } else {
-        db.get_next_global_dive_number()
-            .map_err(|e| format!("Failed to get next dive number: {}", e))? as i32
-    };
+    // Get starting dive number using universal sequence across all dives
+    let mut next_number = db.get_next_global_dive_number()
+        .map_err(|e| format!("Failed to get next dive number: {}", e))? as i32;
     
     // Insert dives with samples and events (now in chronological order)
     for (_i, imported) in result.dives.into_iter().enumerate() {
