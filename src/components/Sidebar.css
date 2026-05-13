@@ -364,6 +364,141 @@
   text-decoration: underline;
 }
 
+/* List view */
+.list-view {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Column widths driven by CSS variables set on .list-view wrapper */
+.list-view-header,
+.list-dive-row {
+  display: grid;
+  grid-template-columns:
+    var(--list-col-0, 30px)
+    var(--list-col-1, 150px)
+    var(--list-col-2, 50px)
+    var(--list-col-3, 56px);
+  gap: 4px;
+  padding: 4px 12px;
+  align-items: center;
+}
+
+/* Column header */
+.list-view-header {
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 4px;
+}
+
+.list-header-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  user-select: none;
+}
+
+.list-header-cell span {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Resize handle — sits on the right edge of each header cell */
+.list-col-resize-handle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+  border-radius: 3px;
+}
+
+.list-col-resize-handle:hover,
+.list-col-resize-handle:active {
+  background: var(--accent-primary);
+  opacity: 0.6;
+}
+
+/* Column cells */
+.list-col-num {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  padding-right: 3px;
+}
+
+.list-col-date {
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-col-depth {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.list-col-duration {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Dive rows */
+.list-dive-row {
+  width: 100%;
+  text-align: left;
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+  cursor: pointer;
+}
+
+.list-dive-row:hover {
+  background: var(--bg-dark);
+}
+
+.list-dive-row.selected {
+  background: var(--bg-medium);
+}
+
+.list-dive-row.bulk-selected {
+  background: var(--bg-medium);
+}
+
+/* Subtle left-edge indicator for dives that belong to a trip */
+.list-dive-row.trip-dive {
+  box-shadow: inset 2px 0 0 var(--border-color);
+}
+
+.list-dive-row.trip-dive:hover {
+  box-shadow: inset 2px 0 0 var(--accent-primary);
+}
+
+.list-dive-row.trip-dive.selected {
+  box-shadow: inset 2px 0 0 var(--accent-primary);
+}
+
+/* Nested dive list — flush with parent, no indentation */
+.list-dive-list {
+  list-style: none;
+  margin-bottom: 2px;
+}
+
 /* Drag and drop */
 .trip-item.drop-target {
   background: rgba(var(--accent-rgb), 0.1);
