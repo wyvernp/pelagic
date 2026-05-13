@@ -479,7 +479,24 @@ impl<'a> Db<'a> {
         )?;
         Ok(max as i64 + 1)
     }
-    
+
+    pub fn reset_dive_numbering(&self, start_number: i64) -> Result<i64> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM dives ORDER BY date ASC, time ASC, created_at ASC"
+        )?;
+        let ids: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let count = ids.len() as i64;
+        for (i, id) in ids.into_iter().enumerate() {
+            self.conn.execute(
+                "UPDATE dives SET dive_number = ?, updated_at = datetime('now') WHERE id = ?",
+                params![start_number + i as i64, id],
+            )?;
+        }
+        Ok(count)
+    }
+
     pub fn update_dive(&self, id: i64, location: Option<&str>, ocean: Option<&str>, visibility_m: Option<f64>,
         buddy: Option<&str>, divemaster: Option<&str>, guide: Option<&str>, instructor: Option<&str>,
         comments: Option<&str>, latitude: Option<f64>, longitude: Option<f64>, dive_site_id: Option<i64>,

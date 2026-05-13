@@ -3840,3 +3840,13 @@ pub async fn community_search(
 ) -> Result<community::CommunitySearchResults, String> {
     community::community_search(&query).await
 }
+
+#[tauri::command]
+pub fn reset_dive_numbering(state: State<AppState>, start_number: i64) -> Result<i64, String> {
+    if start_number < 1 {
+        return Err("Start number must be at least 1".to_string());
+    }
+    let conn = state.db.get().map_err(|e| format!("Database error: {}", e))?;
+    let db = Db::new(&*conn);
+    db.reset_dive_numbering(start_number).map_err(|e| e.to_string())
+}

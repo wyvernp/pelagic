@@ -254,6 +254,48 @@
   border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
+/* Dive numbering controls */
+.dive-numbering-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.setting-input-narrow {
+  width: 72px;
+  min-width: 0;
+  text-align: center;
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.setting-input-narrow::-webkit-outer-spin-button,
+.setting-input-narrow::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.dive-numbering-confirm {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 6px;
+}
+
+.dive-numbering-confirm-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 0 0 10px 0;
+}
+
+.dive-numbering-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* Editor controls with dropdown and browse button */
 .setting-editor-controls {
   display: flex;
