@@ -512,6 +512,11 @@ export function Sidebar({
           onSelectTrip(dive.trip_id);
         }
       }
+      // Clear trip context when clicking a tripless dive so the data loading
+      // effect fetches tripless dives instead of the previously selected trip's dives
+      if (triplessDives.some(d => d.id === diveId)) {
+        onSelectTrip(null);
+      }
       onSelectDive(diveId);
     }
   };
