@@ -446,9 +446,9 @@ export function Sidebar({
       }
     }
     for (const dives of tripDiveMap.values()) {
-      dives.sort((a, b) => a.dive_number - b.dive_number);
+      dives.sort((a, b) => b.dive_number - a.dive_number);
     }
-    flatDives.sort((a, b) => a.dive_number - b.dive_number);
+    flatDives.sort((a, b) => b.dive_number - a.dive_number);
     return { tripDiveMap, flatDives };
   }, [sidebarGroupMode, allDives]);
 
