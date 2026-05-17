@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Trip, Dive, Photo, SidebarGroupMode, ContentLayout, TimelineNumberBy } from '../types';
+import type { Trip, Dive, Photo, PhotoArchiveScope, SidebarGroupMode, ContentLayout, TimelineNumberBy } from '../types';
 
 // Context menu state
 export interface ContextMenuState {
@@ -33,6 +33,7 @@ export type ModalName =
   | 'photoViewer'
   | 'setupWizard'
   | 'shareCard'
+  | 'photoArchive'
   | 'community';
 
 // Context that modals might need
@@ -44,6 +45,8 @@ export interface ModalContext {
   viewerPhotoId?: number | null;
   shareType?: 'dive' | 'trip' | 'photo';
   sharePhotoId?: number | null;
+  archiveScope?: PhotoArchiveScope | null;
+  archiveTitle?: string | null;
   communitySiteId?: string | null;
 }
 

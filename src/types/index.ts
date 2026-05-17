@@ -211,6 +211,78 @@ export interface Photo {
   updated_at: string;
 }
 
+export interface PhotoArchiveScope {
+  scopeType: 'trip' | 'dive' | 'selection';
+  scopeId?: number | null;
+  photoIds?: number[];
+}
+
+export interface ArchiveDestinationValidation {
+  root_path: string;
+  exists: boolean;
+  is_directory: boolean;
+  writable: boolean;
+  available: boolean;
+  destination_kind: 'local' | 'removable' | 'network' | 'cloud_sync' | 'unknown' | string;
+  free_space_bytes?: number | null;
+  warning?: string | null;
+}
+
+export interface PhotoArchivePreviewFile {
+  photo_id: number;
+  filename: string;
+  source_path: string;
+  target_path?: string | null;
+  file_size_bytes: number;
+  status: 'ready' | 'already_archived' | 'missing' | string;
+  warning?: string | null;
+}
+
+export interface PhotoArchivePreview {
+  scope_type: string;
+  scope_id?: number | null;
+  total_raw_count: number;
+  online_raw_count: number;
+  already_archived_count: number;
+  missing_count: number;
+  total_raw_bytes: number;
+  estimated_proxy_bytes?: number | null;
+  destination: ArchiveDestinationValidation;
+  files: PhotoArchivePreviewFile[];
+  warnings: string[];
+}
+
+export interface PhotoArchiveProgress {
+  current: number;
+  total: number;
+  phase: string;
+  filename?: string | null;
+}
+
+export interface PhotoArchiveResult {
+  job_id?: number | null;
+  archived_count: number;
+  skipped_count: number;
+  failed_count: number;
+  bytes_archived: number;
+  proxy_bytes: number;
+  bytes_saved: number;
+  errors: string[];
+}
+
+export interface PhotoArchiveState {
+  photo_id: number;
+  raw_archive_status: 'online' | 'archived' | 'missing' | 'proxy_only' | string;
+  raw_original_path?: string | null;
+  raw_archive_path?: string | null;
+  raw_archive_destination_id?: number | null;
+  display_proxy_path?: string | null;
+  display_proxy_size_bytes?: number | null;
+  raw_sha256?: string | null;
+  archive_available: boolean;
+  destination_root?: string | null;
+}
+
 export interface DiveStats {
   photo_count: number;
   species_count: number;

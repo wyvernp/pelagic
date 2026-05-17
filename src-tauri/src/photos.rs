@@ -1291,25 +1291,29 @@ pub fn create_import_preview(
     if !dives.is_empty() {
         groups = match_groups_to_dives(groups, dives);
     }
-    
-    // Find unmatched (groups beyond number of dives) — only when dives exist
-    let dive_count = dives.len();
-    let unmatched_photos: Vec<ScannedPhoto> = if dive_count > 0 {
-        groups.iter()
-            .skip(dive_count)
-            .flat_map(|g| g.photos.clone())
-            .collect()
+
+    // Partition groups based on whether they actually matched a dive.
+    // Groups with `suggested_dive_id` are kept as group cards; the rest
+    // become "Extra Photos (No Matching Dive)". This avoids order-based
+    // truncation discarding a group that legitimately matched a dive when
+    // an earlier (unmatched) group exists (e.g. pre-dive boat/lunch shots).
+    let (matched_groups, unmatched_photos): (Vec<PhotoGroup>, Vec<ScannedPhoto>) = if !dives.is_empty() {
+        let mut matched: Vec<PhotoGroup> = Vec::new();
+        let mut unmatched: Vec<ScannedPhoto> = Vec::new();
+        for g in groups.into_iter() {
+            if g.suggested_dive_id.is_some() {
+                matched.push(g);
+            } else {
+                unmatched.extend(g.photos);
+            }
+        }
+        (matched, unmatched)
     } else {
-        Vec::new()
+        (groups, Vec::new())
     };
-    
-    // Keep only matched groups (when we have dives)
-    if dive_count > 0 {
-        groups.truncate(dive_count);
-    }
-    
+
     Ok(PhotoImportPreview {
-        groups,
+        groups: matched_groups,
         unmatched_photos,
         photos_without_time,
     })

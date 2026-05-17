@@ -40,9 +40,11 @@ import { MigrationScreen, type MigrationProgress } from './components/MigrationS
 import { SetupWizardModal } from './components/SetupWizardModal';
 import { ShareCardModal } from './components/ShareCardModal';
 import { CommunityModal } from './components/CommunityModal';
+import { DeletePhotosConfirmModal } from './components/DeletePhotosConfirmModal';
+import { PhotoArchiveModal } from './components/PhotoArchiveModal';
 import { useCommunitySync } from './hooks/useCommunitySync';
 import { modKey } from './utils/platform';
-import type { Photo } from './types';
+import type { Photo, PhotoArchiveScope } from './types';
 
 // Check if we're in dev mode
 const isDev = import.meta.env.DEV;
@@ -129,6 +131,9 @@ function App() {
 
   // Migration state - tracks if database migration is in progress
   const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
+
+  // Pending photo delete dialog state
+  const [pendingDeleteDialog, setPendingDeleteDialog] = useState<{ photoIds: number[]; message: string } | null>(null);
 
   // Listen for migration events from the backend
   useEffect(() => {
@@ -534,35 +539,31 @@ function App() {
 
   const handleDeletePhotos = useCallback(async () => {
     if (selectedPhotoIds.size === 0) return;
-
     const count = selectedPhotoIds.size;
-    const confirmed = await confirmDialog(
-      'Delete Photos',
-      `Are you sure you want to delete ${count} photo${count !== 1 ? 's' : ''}?\n\nThis will remove the photos from the database but will NOT delete the original files from disk.`,
-      { okLabel: 'Delete', kind: 'warning' }
-    );
+    const message = `Are you sure you want to delete ${count} photo${count !== 1 ? 's' : ''}?\n\nThis will remove the photos from the database.`;
+    setPendingDeleteDialog({ photoIds: Array.from(selectedPhotoIds), message });
+  }, [selectedPhotoIds]);
 
-    if (confirmed) {
-      try {
-        await invoke('delete_photos', { photoIds: Array.from(selectedPhotoIds) });
-        clearPhotoSelection();
-        selectPhoto(null);
-        // Invalidate caches since photos were deleted
-        if (selectedTripId) {
-          invalidateTripCache(selectedTripId);
-        }
-        if (selectedDiveId) {
-          invalidateDiveCache(selectedDiveId);
-          await loadPhotosForDive(selectedDiveId);
-        } else if (selectedTripId) {
-          await loadPhotosForTrip(selectedTripId);
-        }
-      } catch (error) {
-        logger.error('Failed to delete photos:', error);
-        alert('Failed to delete photos: ' + error);
+  const executeDeletePhotos = useCallback(async (photoIds: number[], deleteFromDisk: boolean) => {
+    try {
+      await invoke('delete_photos', { photoIds, deleteFromDisk });
+      clearPhotoSelection();
+      selectPhoto(null);
+      // Invalidate caches since photos were deleted
+      if (selectedTripId) {
+        invalidateTripCache(selectedTripId);
       }
+      if (selectedDiveId) {
+        invalidateDiveCache(selectedDiveId);
+        await loadPhotosForDive(selectedDiveId);
+      } else if (selectedTripId) {
+        await loadPhotosForTrip(selectedTripId);
+      }
+    } catch (error) {
+      logger.error('Failed to delete photos:', error);
+      alert('Failed to delete photos: ' + error);
     }
-  }, [selectedPhotoIds, clearPhotoSelection, selectPhoto, selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
+  }, [clearPhotoSelection, selectPhoto, selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
 
   const handleOpenPhoto = useCallback((photoId: number) => {
     updateModalContext({ viewerPhotoId: photoId });
@@ -1014,13 +1015,13 @@ function App() {
   const handleContextMenuDeletePhoto = useCallback(async (photo: Photo) => {
     // Check for RAW/processed pair
     let photoIdsToDelete = [photo.id];
-    let confirmMessage = `Are you sure you want to delete this photo?\n\nThis will remove the photo from the database but will NOT delete the original file from disk.`;
+    let confirmMessage = `Are you sure you want to delete this photo?\n\nThis will remove the photo from the database.`;
     
     // If this is a processed photo, check for RAW version
     if (photo.raw_photo_id) {
       const rawPhoto: Photo | null = await invoke('get_raw_version', { photoId: photo.id });
       if (rawPhoto) {
-        confirmMessage = `This photo has a linked RAW version.\n\nDelete both the processed and RAW versions?\n\nThis will remove both photos from the database but will NOT delete the original files from disk.`;
+        confirmMessage = `This photo has a linked RAW version.\n\nDelete both the processed and RAW versions?\n\nThis will remove both photos from the database.`;
         photoIdsToDelete = [photo.id, rawPhoto.id];
       }
     }
@@ -1029,38 +1030,14 @@ function App() {
     if (!photo.is_processed && photo.raw_photo_id === null) {
       const processedPhoto: Photo | null = await invoke('get_processed_version', { photoId: photo.id });
       if (processedPhoto) {
-        confirmMessage = `This RAW photo has a linked processed version.\n\nDelete both the RAW and processed versions?\n\nThis will remove both photos from the database but will NOT delete the original files from disk.`;
+        confirmMessage = `This RAW photo has a linked processed version.\n\nDelete both the RAW and processed versions?\n\nThis will remove both photos from the database.`;
         photoIdsToDelete = [photo.id, processedPhoto.id];
       }
     }
 
-    const confirmed = await confirmDialog(
-      'Delete Photo',
-      confirmMessage,
-      { okLabel: 'Delete', kind: 'warning' }
-    );
-
-    if (confirmed) {
-      hideContextMenu();
-      try {
-        await invoke('delete_photos', { photoIds: photoIdsToDelete });
-        clearPhotoSelection();
-        selectPhoto(null);
-        if (selectedTripId) {
-          invalidateTripCache(selectedTripId);
-        }
-        if (selectedDiveId) {
-          invalidateDiveCache(selectedDiveId);
-          await loadPhotosForDive(selectedDiveId);
-        } else if (selectedTripId) {
-          await loadPhotosForTrip(selectedTripId);
-        }
-      } catch (error) {
-        logger.error('Failed to delete photo:', error);
-        alert('Failed to delete photo: ' + error);
-      }
-    }
-  }, [hideContextMenu, clearPhotoSelection, selectPhoto, selectedDiveId, selectedTripId, loadPhotosForDive, loadPhotosForTrip, invalidateTripCache, invalidateDiveCache]);
+    hideContextMenu();
+    setPendingDeleteDialog({ photoIds: photoIdsToDelete, message: confirmMessage });
+  }, [hideContextMenu]);
 
   const handleContextMenuMovePhoto = useCallback(async (photo: Photo, targetDiveId: number | null) => {
     // Check for RAW/processed pair
@@ -1121,6 +1098,24 @@ function App() {
     openModal('generalTag');
   }, [hideContextMenu, setPhotoSelection, openModal]);
 
+  const handleArchiveScope = useCallback((archiveScope: PhotoArchiveScope, archiveTitle: string) => {
+    hideContextMenu();
+    updateModalContext({ archiveScope, archiveTitle });
+    openModal('photoArchive');
+  }, [hideContextMenu, openModal, updateModalContext]);
+
+  const handleArchiveComplete = useCallback(async () => {
+    if (selectedTripId) {
+      invalidateTripCache(selectedTripId);
+    }
+    if (selectedDiveId) {
+      invalidateDiveCache(selectedDiveId);
+      await loadPhotosForDive(selectedDiveId);
+    } else if (selectedTripId) {
+      await loadPhotosForTrip(selectedTripId);
+    }
+  }, [invalidateDiveCache, invalidateTripCache, loadPhotosForDive, loadPhotosForTrip, selectedDiveId, selectedTripId]);
+
   // Build context menu items based on current context menu state
   const contextMenuItems = useMemo((): ContextMenuItem[] => {
     if (!contextMenu.isOpen || !contextMenu.targetId) return [];
@@ -1138,6 +1133,18 @@ function App() {
             </svg>
           ),
           onClick: () => handleContextMenuEditDive(contextMenu.targetId!),
+        },
+        {
+          label: 'Archive RAWs',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.01 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.49-.17-.93-.46-1.27zM6.24 5h11.52l.81 1H5.44l.8-1zM19 19H5V8h14v11zm-8-9h2v3h3l-4 4-4-4h3z"/>
+            </svg>
+          ),
+          onClick: () => handleArchiveScope(
+            { scopeType: 'dive', scopeId: contextMenu.targetId! },
+            'Archive Dive RAWs'
+          ),
         },
         {
           label: 'Share to Social',
@@ -1194,6 +1201,18 @@ function App() {
             </svg>
           ),
           onClick: () => handleContextMenuEditTrip(contextMenu.targetId!),
+        },
+        {
+          label: 'Archive RAWs',
+          icon: (
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.01 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.49-.17-.93-.46-1.27zM6.24 5h11.52l.81 1H5.44l.8-1zM19 19H5V8h14v11zm-8-9h2v3h3l-4 4-4-4h3z"/>
+            </svg>
+          ),
+          onClick: () => handleArchiveScope(
+            { scopeType: 'trip', scopeId: contextMenu.targetId! },
+            'Archive Trip RAWs'
+          ),
         },
         {
           label: 'Share to Social',
@@ -1330,7 +1349,7 @@ function App() {
     }
 
     return [];
-  }, [contextMenu, trips, dives, geminiApiKey, handleContextMenuEditDive, handleContextMenuDeleteDive, handleMoveDiveToTrip, handleContextMenuEditTrip, handleContextMenuDeleteTrip, handleContextMenuAIIdentify, handleContextMenuTagSpecies, handleContextMenuTagGeneral, handleContextMenuEditPhoto, handleContextMenuMovePhoto, handleContextMenuDeletePhoto, hideContextMenu, openModal, updateModalContext]);
+  }, [contextMenu, trips, dives, geminiApiKey, handleArchiveScope, handleContextMenuEditDive, handleContextMenuDeleteDive, handleMoveDiveToTrip, handleContextMenuEditTrip, handleContextMenuDeleteTrip, handleContextMenuAIIdentify, handleContextMenuTagSpecies, handleContextMenuTagGeneral, handleContextMenuEditPhoto, handleContextMenuMovePhoto, handleContextMenuDeletePhoto, hideContextMenu, openModal, updateModalContext]);
 
   // Block default context menu on blank space
   const handleAppContextMenu = useCallback((e: React.MouseEvent) => {
@@ -1500,6 +1519,13 @@ function App() {
         onClose={closeModal}
         onImportComplete={handlePhotoImportComplete}
       />
+      <PhotoArchiveModal
+        isOpen={activeModal === 'photoArchive'}
+        scope={modalContext.archiveScope}
+        title={modalContext.archiveTitle ?? undefined}
+        onClose={closeModal}
+        onArchiveComplete={handleArchiveComplete}
+      />
       {viewerPhoto && activeModal === 'photoViewer' && (
         <PhotoViewer
           photo={viewerPhoto}
@@ -1624,6 +1650,16 @@ function App() {
         y={contextMenu.y}
         items={contextMenuItems}
         onClose={hideContextMenu}
+      />
+      <DeletePhotosConfirmModal
+        isOpen={pendingDeleteDialog !== null}
+        message={pendingDeleteDialog?.message ?? ''}
+        onConfirm={(deleteFromDisk) => {
+          const ids = pendingDeleteDialog?.photoIds ?? [];
+          setPendingDeleteDialog(null);
+          executeDeletePhotos(ids, deleteFromDisk);
+        }}
+        onCancel={() => setPendingDeleteDialog(null)}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 [package]
 name = "pelagic"
-version = "0.3.41"
+version = "0.3.42"
 description = "Dive photo manager for organizing underwater photography"
 authors = ["you"]
 license = "MIT"
@@ -60,6 +60,7 @@ dirs = "5"
 
 # Base64 encoding
 base64 = "0.22"
+sha2 = "0.10"
 rexif = "0.7.5"
 
 # Temporary files

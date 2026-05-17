@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../utils/logger';
-import type { Photo } from '../types';
+import type { Photo, PhotoArchiveState } from '../types';
 import { ImageLoader } from './ImageLoader';
 import { useSettings } from './SettingsModal';
 import './PhotoViewer.css';
@@ -31,6 +31,7 @@ export function PhotoViewer({
   const [processedPhoto, setProcessedPhoto] = useState<Photo | null>(null);
   const [rawPhoto, setRawPhoto] = useState<Photo>(photo);
   const [hasProcessedVersion, setHasProcessedVersion] = useState(false);
+  const [archiveState, setArchiveState] = useState<PhotoArchiveState | null>(null);
   
   // Zoom state
   const [zoom, setZoom] = useState(1);
@@ -79,11 +80,15 @@ export function PhotoViewer({
         
         // The RAW is always the passed-in photo (since we filter processed from the grid)
         setRawPhoto(photo);
+
+        const archive = await invoke<PhotoArchiveState | null>('get_photo_archive_state', { photoId: photo.id });
+        setArchiveState(archive);
       } catch (error) {
         logger.error('Failed to load photo versions:', error);
         setDisplayPhoto(photo);
         setRawPhoto(photo);
         setHasProcessedVersion(false);
+        setArchiveState(null);
       }
     };
     loadVersions();
@@ -117,13 +122,18 @@ export function PhotoViewer({
       const filePath = viewMode === 'processed' && processedPhoto 
         ? processedPhoto.file_path 
         : rawPhoto.file_path;
+
+      if (filePath === rawPhoto.file_path && archiveState?.raw_archive_status === 'archived') {
+        alert('This RAW is archived. Restore it before opening it in an external editor.');
+        return;
+      }
       
       const editorPath = settings.defaultImageEditor || undefined;
       await invoke('open_in_editor', { filePath, editorPath, photoId: rawPhoto.id });
     } catch (error) {
       logger.error('Failed to open in editor:', error);
     }
-  }, [rawPhoto, processedPhoto, viewMode, settings.defaultImageEditor]);
+  }, [rawPhoto, processedPhoto, viewMode, settings.defaultImageEditor, archiveState]);
 
   // Pan handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -283,18 +293,23 @@ export function PhotoViewer({
 
   // Determine which photo(s) to display based on view mode
   const getDisplayPhotos = (): { left: Photo; right?: Photo; leftLabel?: string; rightLabel?: string } => {
+    const rawDisplayPhoto = archiveState?.raw_archive_status === 'archived' && archiveState.display_proxy_path
+      ? { ...rawPhoto, file_path: archiveState.display_proxy_path }
+      : rawPhoto;
+    const resolvedDisplayPhoto = displayPhoto.id === rawPhoto.id ? rawDisplayPhoto : displayPhoto;
+
     switch (viewMode) {
       case 'raw':
-        return { left: rawPhoto, leftLabel: 'RAW' };
+        return { left: rawDisplayPhoto, leftLabel: archiveState?.raw_archive_status === 'archived' ? 'RAW Proxy' : 'RAW' };
       case 'processed':
-        return { left: processedPhoto || displayPhoto, leftLabel: 'Processed' };
+        return { left: processedPhoto || resolvedDisplayPhoto, leftLabel: 'Processed' };
       case 'side-by-side':
         if (processedPhoto) {
-          return { left: rawPhoto, right: processedPhoto, leftLabel: 'RAW', rightLabel: 'Processed' };
+          return { left: rawDisplayPhoto, right: processedPhoto, leftLabel: archiveState?.raw_archive_status === 'archived' ? 'RAW Proxy' : 'RAW', rightLabel: 'Processed' };
         }
-        return { left: displayPhoto };
+        return { left: resolvedDisplayPhoto };
       default: // 'display' - shows processed if available, otherwise RAW
-        return { left: displayPhoto };
+        return { left: resolvedDisplayPhoto };
     }
   };
 
@@ -436,6 +451,9 @@ export function PhotoViewer({
             {rawPhoto.filename}
             {hasProcessedVersion && leftPhoto.is_processed && (
               <span className="processed-indicator"> (showing processed)</span>
+            )}
+            {!leftPhoto.is_processed && archiveState?.raw_archive_status === 'archived' && (
+              <span className="processed-indicator"> (RAW archived)</span>
             )}
           </span>
           <div className="photo-viewer-metadata">
