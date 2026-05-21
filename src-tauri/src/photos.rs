@@ -60,22 +60,35 @@ pub struct PhotoAssignment {
 
 /// Scan a directory or list of files for photos and extract metadata
 pub fn scan_photos(paths: &[String]) -> Result<Vec<ScannedPhoto>, String> {
+    scan_photos_filtered(paths, None)
+}
+
+/// Same as `scan_photos` but skips any paths already present in `skip_paths`
+/// (upper-cased for case-insensitive comparison on Windows).
+pub fn scan_photos_filtered(
+    paths: &[String],
+    skip_paths: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<ScannedPhoto>, String> {
     let mut photos = Vec::new();
-    
+
     for path_str in paths {
         let path = Path::new(path_str);
-        
+
         if path.is_dir() {
-            // Scan directory for image files
-            scan_directory(path, &mut photos)?;
+            scan_directory_filtered(path, &mut photos, skip_paths)?;
         } else if path.is_file() {
-            // Single file
+            if let Some(skip) = skip_paths {
+                if skip.contains(&path_str.to_uppercase()) {
+                    log::debug!("Skipping already-imported photo: {}", path_str);
+                    continue;
+                }
+            }
             if let Some(photo) = scan_single_file(path) {
                 photos.push(photo);
             }
         }
     }
-    
+
     // Sort by capture time
     photos.sort_by(|a, b| {
         match (&a.capture_time, &b.capture_time) {
@@ -85,28 +98,43 @@ pub fn scan_photos(paths: &[String]) -> Result<Vec<ScannedPhoto>, String> {
             (None, None) => a.filename.cmp(&b.filename),
         }
     });
-    
+
     Ok(photos)
 }
 
 fn scan_directory(dir: &Path, photos: &mut Vec<ScannedPhoto>) -> Result<(), String> {
+    scan_directory_filtered(dir, photos, None)
+}
+
+fn scan_directory_filtered(
+    dir: &Path,
+    photos: &mut Vec<ScannedPhoto>,
+    skip_paths: Option<&std::collections::HashSet<String>>,
+) -> Result<(), String> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| format!("Failed to read directory: {}", e))?;
-    
+
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
         let path = entry.path();
-        
+
         if path.is_dir() {
-            // Recursively scan subdirectories
-            scan_directory(&path, photos)?;
+            scan_directory_filtered(&path, photos, skip_paths)?;
         } else if is_image_file(&path) {
+            if let Some(skip) = skip_paths {
+                if let Some(p) = path.to_str() {
+                    if skip.contains(&p.to_uppercase()) {
+                        log::debug!("Skipping already-imported photo: {}", p);
+                        continue;
+                    }
+                }
+            }
             if let Some(photo) = scan_single_file(&path) {
                 photos.push(photo);
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -1281,12 +1309,22 @@ pub fn create_import_preview(
     dives: &[Dive],
     gap_minutes: i64,
 ) -> Result<PhotoImportPreview, String> {
-    // Scan all photos
-    let photos = scan_photos(paths)?;
-    
+    create_import_preview_filtered(paths, dives, gap_minutes, None)
+}
+
+/// Same as `create_import_preview` but skips already-imported paths.
+pub fn create_import_preview_filtered(
+    paths: &[String],
+    dives: &[Dive],
+    gap_minutes: i64,
+    skip_paths: Option<&std::collections::HashSet<String>>,
+) -> Result<PhotoImportPreview, String> {
+    // Scan all photos, skipping already-imported ones
+    let photos = scan_photos_filtered(paths, skip_paths)?;
+
     // Group by time
     let (mut groups, photos_without_time) = group_photos_by_time(photos, gap_minutes);
-    
+
     // Match to dives (only if we have dives)
     if !dives.is_empty() {
         groups = match_groups_to_dives(groups, dives);

@@ -2063,6 +2063,21 @@ impl<'a> Db<'a> {
         ).is_ok()
     }
 
+    /// Fetch all photo file paths from the database as a set (for fast bulk existence checks).
+    pub fn get_all_photo_paths(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self.conn.prepare("SELECT file_path FROM photos")?;
+        let paths = stmt.query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        // Store both original and backslash-normalised form so lookups are O(1)
+        let mut set = std::collections::HashSet::with_capacity(paths.len() * 2);
+        for p in paths {
+            let normalised = p.replace("/", "\\");
+            set.insert(normalised.to_uppercase());
+            set.insert(p.to_uppercase());
+        }
+        Ok(set)
+    }
+
     /// Find a photo by its exact file path
     pub fn find_photo_by_path(&self, file_path: &str) -> Result<Option<Photo>> {
         let normalized = file_path.replace("/", "\\");

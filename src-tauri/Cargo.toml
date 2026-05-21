@@ -1,6 +1,6 @@
 [package]
 name = "pelagic"
-version = "0.3.42"
+version = "0.3.43"
 description = "Dive photo manager for organizing underwater photography"
 authors = ["you"]
 license = "MIT"

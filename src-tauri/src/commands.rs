@@ -918,16 +918,25 @@ pub fn scan_photos_for_import(
     } else {
         Vec::new()
     };
-    
-    let gap = gap_minutes.unwrap_or(60);
-    let mut preview = photos::create_import_preview(&paths, &dives, gap)?;
 
-    // Mark groups where every photo is already in the database
+    // Build set of already-imported paths once so we can skip EXIF scanning for them.
+    let existing_paths = db.get_all_photo_paths().map_err(|e| e.to_string())?;
+    log::info!("scan_photos_for_import: {} paths already in DB, will skip EXIF for those", existing_paths.len());
+
+    let gap = gap_minutes.unwrap_or(60);
+    let mut preview = photos::create_import_preview_filtered(&paths, &dives, gap, Some(&existing_paths))?;
+
+    // Mark groups where every photo is already in the database.
+    // (These groups contain photos that were not skipped because the overwrite
+    //  checkbox may be used — they are shown greyed-out in the UI.)
     for group in &mut preview.groups {
         if !group.photos.is_empty() {
-            group.all_imported = group.photos.iter().all(|p| db.photo_exists_by_path(&p.file_path));
+            group.all_imported = group.photos.iter().all(|p| existing_paths.contains(&p.file_path.to_uppercase()));
         }
     }
+
+    // unmatched_photos can't contain already-imported items because those were
+    // filtered out before scanning, so no additional retain() needed here.
 
     Ok(preview)
 }
