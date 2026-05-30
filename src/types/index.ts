@@ -324,7 +324,7 @@ export interface PhotoGeneralTag {
 
 export type ViewMode = 'trips' | 'trip' | 'dive' | 'search';
 
-export type SidebarGroupMode = 'trips' | 'timeline' | 'location' | 'type';
+export type SidebarGroupMode = 'trips' | 'timeline' | 'location' | 'type' | 'list';
 
 export type TimelineNumberBy = 'day' | 'month' | 'year';
 

@@ -109,6 +109,8 @@ const getInitialSidebarWidth = (): number => {
   return saved ? parseInt(saved, 10) : 280;
 };
 
+const ALL_SIDEBAR_MODES: SidebarGroupMode[] = ['trips', 'timeline', 'location', 'type', 'list'];
+
 const getInitialSidebarGroupMode = (): SidebarGroupMode => {
   if (typeof window === 'undefined') return 'trips';
   // If tab order is saved, use the leftmost tab as default
@@ -120,13 +122,13 @@ const getInitialSidebarGroupMode = (): SidebarGroupMode => {
     } catch { /* fall through */ }
   }
   const saved = localStorage.getItem('pelagic-sidebar-group-mode');
-  if (saved && ['trips', 'timeline', 'location', 'type'].includes(saved)) {
+  if (saved && (ALL_SIDEBAR_MODES as string[]).includes(saved)) {
     return saved as SidebarGroupMode;
   }
   return 'trips';
 };
 
-const DEFAULT_TAB_ORDER: SidebarGroupMode[] = ['trips', 'timeline', 'location', 'type'];
+const DEFAULT_TAB_ORDER: SidebarGroupMode[] = ['trips', 'timeline', 'location', 'type', 'list'];
 
 const getInitialTabOrder = (): SidebarGroupMode[] => {
   if (typeof window === 'undefined') return DEFAULT_TAB_ORDER;
@@ -134,9 +136,15 @@ const getInitialTabOrder = (): SidebarGroupMode[] => {
   if (saved) {
     try {
       const order = JSON.parse(saved) as SidebarGroupMode[];
-      // Validate all expected modes are present
+      // Fully valid: all current modes present
       if (DEFAULT_TAB_ORDER.every(m => order.includes(m)) && order.length === DEFAULT_TAB_ORDER.length) {
         return order;
+      }
+      // Migration: saved order has all old modes but is missing new ones — append them in default order
+      const missingModes = DEFAULT_TAB_ORDER.filter(m => !order.includes(m));
+      const validModes = order.filter(m => (ALL_SIDEBAR_MODES as string[]).includes(m));
+      if (validModes.length > 0 && missingModes.length > 0) {
+        return [...validModes, ...missingModes] as SidebarGroupMode[];
       }
     } catch { /* fall through */ }
   }

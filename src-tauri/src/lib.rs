@@ -363,6 +363,8 @@ pub fn run() {
             commands::community_get_site_contributor_info,
             commands::community_get_distinct_species,
             commands::community_search,
+            // Dive numbering commands
+            commands::reset_dive_numbering,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

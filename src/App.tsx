@@ -762,6 +762,16 @@ function App() {
     }
   }, [closeModal, handleSelectDive, selectedTripId, loadDivesForTrip, invalidateTripCache, invalidateDiveCache]);
 
+  // When the settings modal closes, force-refresh the list view if it is active
+  // so any changes (or even a no-op close) always show up-to-date dive data.
+  const handleSettingsClose = useCallback(() => {
+    closeModal();
+    if (useUIStore.getState().sidebarGroupMode === 'list') {
+      useDataStore.setState({ allDives: null });
+      useDataStore.getState().loadAllDives();
+    }
+  }, [closeModal]);
+
   const handleEnterBulkEditMode = useCallback(() => {
     enterBulkEditMode();
   }, [enterBulkEditMode]);
@@ -1591,7 +1601,7 @@ function App() {
       />
       <SettingsModal
         isOpen={activeModal === 'settings'}
-        onClose={closeModal}
+        onClose={handleSettingsClose}
       />
       <WelcomeModal
         isOpen={activeModal === 'welcome'}

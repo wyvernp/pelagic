@@ -31,7 +31,32 @@ const GROUP_MODE_LABELS: Record<SidebarGroupMode, string> = {
   timeline: 'Timeline',
   location: 'Location',
   type: 'Dive Type',
+  list: 'List',
 };
+
+// Unit formatting — metric by default, structured for future unit preference support
+function formatDepth(metres: number): string {
+  return `${Math.round(metres)}m`;
+}
+
+function formatDuration(seconds: number): string {
+  const mins = Math.round(seconds / 60);
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}:${m.toString().padStart(2, '0')}`;
+  }
+  return String(mins);
+}
+
+function formatListDate(date: string, time: string): string {
+  const d = new Date(date);
+  const day = String(d.getDate()).padStart(2, '0');
+  const mon = MONTH_NAMES[d.getMonth()].slice(0, 3);
+  const year = d.getFullYear();
+  const hhmm = time.slice(0, 5);
+  return `${day} ${mon} ${year} ${hhmm}`;
+}
 
 interface SidebarProps {
   trips: Trip[];
@@ -201,6 +226,51 @@ function GroupHeader({
   );
 }
 
+// Row component for list view
+function ListDiveRow({
+  dive,
+  selectedDiveId,
+  bulkEditMode,
+  selectedDiveIds,
+  onDiveClick,
+  onDiveRightClick,
+  onToggleDiveSelection,
+  isTripDive,
+}: {
+  dive: Dive;
+  selectedDiveId: number | null;
+  bulkEditMode?: boolean;
+  selectedDiveIds?: Set<number>;
+  onDiveClick: (diveId: number, e: React.MouseEvent) => void;
+  onDiveRightClick: (diveId: number, tripId: number | null, e: React.MouseEvent) => void;
+  onToggleDiveSelection?: (diveId: number) => void;
+  isTripDive?: boolean;
+}) {
+  const isSelected = selectedDiveIds?.has(dive.id) ?? false;
+  return (
+    <button
+      className={`list-dive-row ${selectedDiveId === dive.id ? 'selected' : ''} ${isSelected ? 'bulk-selected' : ''} ${isTripDive ? 'trip-dive' : ''}`}
+      onClick={(e) => onDiveClick(dive.id, e)}
+      onContextMenu={(e) => onDiveRightClick(dive.id, dive.trip_id, e)}
+    >
+      {bulkEditMode ? (
+        <input
+          type="checkbox"
+          className="dive-checkbox list-col-num"
+          checked={isSelected}
+          onChange={() => onToggleDiveSelection?.(dive.id)}
+          onClick={(e) => e.stopPropagation()}
+        />
+      ) : (
+        <span className="list-col-num">{isTripDive ? `- ${dive.dive_number}` : dive.dive_number}</span>
+      )}
+      <span className="list-col-date">{formatListDate(dive.date, dive.time)}</span>
+      <span className="list-col-depth">{formatDepth(dive.max_depth_m)}</span>
+      <span className="list-col-duration">{formatDuration(dive.duration_seconds)}</span>
+    </button>
+  );
+}
+
 export function Sidebar({
   trips,
   dives,
@@ -227,9 +297,12 @@ export function Sidebar({
   // Track expanded groups for non-trip modes
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  // Load all dives when switching to non-trip grouping
+  // Load all dives when switching to non-trip grouping; force refresh for list view
   useEffect(() => {
     if (sidebarGroupMode !== 'trips') {
+      if (sidebarGroupMode === 'list') {
+        useDataStore.setState({ allDives: null });
+      }
       loadAllDives();
       if (sidebarGroupMode === 'location') {
         loadAllDiveSites();
@@ -358,6 +431,74 @@ export function Sidebar({
       }));
   }, [sidebarGroupMode, allDives]);
 
+  // List view grouping: trips (sorted by dive_number) + flat tripless dives
+  const listGroups = useMemo(() => {
+    if (sidebarGroupMode !== 'list' || !allDives) return null;
+    const tripDiveMap = new Map<number, Dive[]>();
+    const flatDives: Dive[] = [];
+    for (const dive of allDives) {
+      if (dive.trip_id != null) {
+        const arr = tripDiveMap.get(dive.trip_id) ?? [];
+        arr.push(dive);
+        tripDiveMap.set(dive.trip_id, arr);
+      } else {
+        flatDives.push(dive);
+      }
+    }
+    for (const dives of tripDiveMap.values()) {
+      dives.sort((a, b) => b.dive_number - a.dive_number);
+    }
+    flatDives.sort((a, b) => b.dive_number - a.dive_number);
+    return { tripDiveMap, flatDives };
+  }, [sidebarGroupMode, allDives]);
+
+  // List view column widths — persisted to localStorage, all columns resizable
+  const LIST_COL_STORAGE_KEY = 'pelagic-list-view-col-widths';
+  const DEFAULT_COL_WIDTHS: [number, number, number, number] = [30, 150, 50, 56];
+  const MIN_COL_WIDTHS: [number, number, number, number] = [20, 80, 36, 36];
+
+  const [colWidths, setColWidths] = useState<[number, number, number, number]>(() => {
+    try {
+      const saved = localStorage.getItem(LIST_COL_STORAGE_KEY);
+      if (saved) {
+        const p = JSON.parse(saved);
+        if (Array.isArray(p) && p.length === 4 && p.every((w: unknown) => typeof w === 'number' && w > 0)) {
+          return p as [number, number, number, number];
+        }
+      }
+    } catch { /* use default */ }
+    return DEFAULT_COL_WIDTHS;
+  });
+
+  const colWidthsRef = useRef(colWidths);
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+
+  const resizeDragRef = useRef<{ colIdx: number; startX: number; startWidth: number } | null>(null);
+
+  const handleColResizeStart = useCallback((e: React.PointerEvent, colIdx: number) => {
+    e.preventDefault();
+    resizeDragRef.current = { colIdx, startX: e.clientX, startWidth: colWidthsRef.current[colIdx] };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
+
+  const handleColResizeMove = useCallback((e: React.PointerEvent) => {
+    if (!resizeDragRef.current) return;
+    const { colIdx, startX, startWidth } = resizeDragRef.current;
+    const newWidth = Math.max(MIN_COL_WIDTHS[colIdx], startWidth + (e.clientX - startX));
+    setColWidths(prev => {
+      const next = [...prev] as [number, number, number, number];
+      next[colIdx] = newWidth;
+      return next;
+    });
+  }, []);
+
+  const handleColResizeEnd = useCallback((e: React.PointerEvent) => {
+    if (!resizeDragRef.current) return;
+    resizeDragRef.current = null;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    localStorage.setItem(LIST_COL_STORAGE_KEY, JSON.stringify(colWidthsRef.current));
+  }, []);
+
   const handleDiveClick = (diveId: number, e: React.MouseEvent) => {
     if (bulkEditMode && onToggleDiveSelection) {
       e.preventDefault();
@@ -370,6 +511,11 @@ export function Sidebar({
         if (dive && dive.trip_id != null) {
           onSelectTrip(dive.trip_id);
         }
+      }
+      // Clear trip context when clicking a tripless dive so the data loading
+      // effect fetches tripless dives instead of the previously selected trip's dives
+      if (triplessDives.some(d => d.id === diveId)) {
+        onSelectTrip(null);
       }
       onSelectDive(diveId);
     }
@@ -892,6 +1038,109 @@ export function Sidebar({
                 );
               })}
             </ul>
+          )
+        )}
+
+        {/* List view */}
+        {sidebarGroupMode === 'list' && (
+          !allDives ? (
+            <div className="sidebar-empty"><p className="text-muted">Loading dives...</p></div>
+          ) : allDives.length === 0 ? (
+            <div className="sidebar-empty"><p>No dives yet</p></div>
+          ) : (
+            <div
+              className="list-view"
+              style={{
+                '--list-col-0': `${colWidths[0]}px`,
+                '--list-col-1': `${colWidths[1]}px`,
+                '--list-col-2': `${colWidths[2]}px`,
+                '--list-col-3': `${colWidths[3]}px`,
+              } as React.CSSProperties}
+            >
+              <div className="list-view-header">
+                {(['#', 'Date', 'Depth', 'Duration'] as const).map((label, i) => (
+                  <div key={i} className="list-header-cell">
+                    <span>{label}</span>
+                    <div
+                      className="list-col-resize-handle"
+                      onPointerDown={(e) => handleColResizeStart(e, i)}
+                      onPointerMove={handleColResizeMove}
+                      onPointerUp={handleColResizeEnd}
+                    />
+                  </div>
+                ))}
+              </div>
+              <ul className="trip-list">
+                {trips
+                  .filter(t => listGroups?.tripDiveMap.has(t.id))
+                  .map(trip => {
+                    const tripDives = listGroups!.tripDiveMap.get(trip.id)!;
+                    const groupKey = `list-trip-${trip.id}`;
+                    const isExpanded = expandedGroups.has(groupKey);
+                    return (
+                      <li key={trip.id} className="trip-item">
+                        <button
+                          className={`trip-button ${isExpanded ? 'expanded' : ''} ${selectedTripId === trip.id && !selectedDiveId ? 'selected' : ''}`}
+                          onClick={() => toggleGroup(groupKey)}
+                          onDoubleClick={() => onEditTrip(trip)}
+                          onContextMenu={(e) => handleTripRightClick(trip.id, e)}
+                          title="Click to expand, double-click to edit, right-click for options"
+                        >
+                          <svg
+                            className={`trip-chevron ${isExpanded ? 'rotated' : ''}`}
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            width="16"
+                            height="16"
+                          >
+                            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+                          </svg>
+                          <svg className="trip-icon" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+                          </svg>
+                          <div className="trip-info">
+                            <span className="trip-name">{trip.name} | dives: {tripDives.length}</span>
+                            <span className="trip-date">
+                              {format(new Date(trip.date_start), 'MMM d')} - {format(new Date(trip.date_end), 'd, yyyy')}
+                            </span>
+                          </div>
+                        </button>
+                        {isExpanded && (
+                          <ul className="list-dive-list">
+                            {tripDives.map(dive => (
+                              <li key={dive.id}>
+                                <ListDiveRow
+                                  dive={dive}
+                                  selectedDiveId={selectedDiveId}
+                                  bulkEditMode={bulkEditMode}
+                                  selectedDiveIds={selectedDiveIds}
+                                  onDiveClick={handleDiveClick}
+                                  onDiveRightClick={handleDiveRightClick}
+                                  onToggleDiveSelection={onToggleDiveSelection}
+                                  isTripDive
+                                />
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                {listGroups?.flatDives.map(dive => (
+                  <li key={dive.id}>
+                    <ListDiveRow
+                      dive={dive}
+                      selectedDiveId={selectedDiveId}
+                      bulkEditMode={bulkEditMode}
+                      selectedDiveIds={selectedDiveIds}
+                      onDiveClick={handleDiveClick}
+                      onDiveRightClick={handleDiveRightClick}
+                      onToggleDiveSelection={onToggleDiveSelection}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
           )
         )}
 

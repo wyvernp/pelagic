@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { logger } from '../utils/logger';
 import { useUIStore } from '../stores/uiStore';
+import { useDataStore } from '../stores/dataStore';
 import type { ImageEditor } from '../types';
 import './SettingsModal.css';
 
@@ -66,8 +67,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [communityError, setCommunityError] = useState<string | null>(null);
   const [communityStats, setCommunityStats] = useState<{ total_sites: number; total_observations: number; total_species: number } | null>(null);
   const [showPrivacyConsent, setShowPrivacyConsent] = useState(false);
-  
+  const [diveNumberingStart, setDiveNumberingStart] = useState<string>('1');
+  const [showDiveNumberingConfirm, setShowDiveNumberingConfirm] = useState(false);
+  const [resettingDiveNumbers, setResettingDiveNumbers] = useState(false);
+  const [diveNumberingResult, setDiveNumberingResult] = useState<string | null>(null);
+
   const resetTour = useUIStore((state) => state.resetTour);
+  const invalidateAllCaches = useDataStore((state) => state.invalidateAllCaches);
 
   const openExternalUrl = async (url: string) => {
     try {
@@ -214,6 +220,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setRescanResult(`✗ Error: ${error}`);
     } finally {
       setRescanning(false);
+    }
+  };
+
+  const handleResetDiveNumbering = async () => {
+    const startNum = parseInt(diveNumberingStart, 10);
+    setResettingDiveNumbers(true);
+    setDiveNumberingResult(null);
+    try {
+      const count = await invoke<number>('reset_dive_numbering', { startNumber: startNum });
+      invalidateAllCaches();
+      setDiveNumberingResult(`✓ Renumbered ${count} dives starting from ${startNum}`);
+    } catch (error) {
+      logger.error('Failed to reset dive numbering:', error);
+      setDiveNumberingResult(`✗ Error: ${error}`);
+    } finally {
+      setResettingDiveNumbers(false);
+      setShowDiveNumberingConfirm(false);
     }
   };
 
@@ -516,6 +539,73 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <div className="setting-hint">
               Preview: <strong>{formatDivePreview(settings.diveNamePrefix, 1)}</strong>, <strong>{formatDivePreview(settings.diveNamePrefix, 2)}</strong>, etc.
             </div>
+          </div>
+
+          <div className="settings-section">
+            <h3 className="settings-section-title">Dive Numbering</h3>
+
+            <div className="setting-row">
+              <label className="setting-label">
+                <span className="setting-name">Reset dive numbering</span>
+                <span className="setting-desc">Select your start numbering</span>
+              </label>
+              <div className="dive-numbering-controls">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className="setting-input setting-input-narrow"
+                  maxLength={5}
+                  value={diveNumberingStart}
+                  onChange={(e) => setDiveNumberingStart(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  disabled={resettingDiveNumbers}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    const val = parseInt(diveNumberingStart, 10);
+                    if (diveNumberingStart === '' || isNaN(val) || val < 1 || val > 99999) {
+                      setDiveNumberingResult('✗ Please enter a value between 1 and 99,999');
+                      return;
+                    }
+                    setShowDiveNumberingConfirm(true);
+                    setDiveNumberingResult(null);
+                  }}
+                  disabled={resettingDiveNumbers}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {showDiveNumberingConfirm && (
+              <div className="dive-numbering-confirm">
+                <p className="dive-numbering-confirm-text">
+                  This action is permanent and cannot be reversed. Please confirm to proceed.
+                </p>
+                <div className="dive-numbering-confirm-actions">
+                  <button
+                    className="btn btn-danger"
+                    onClick={handleResetDiveNumbering}
+                    disabled={resettingDiveNumbers}
+                  >
+                    {resettingDiveNumbers ? 'Processing...' : 'Proceed'}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowDiveNumberingConfirm(false)}
+                    disabled={resettingDiveNumbers}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {diveNumberingResult && (
+              <div className={`rescan-result ${diveNumberingResult.startsWith('✓') ? 'success' : 'error'}`}>
+                {diveNumberingResult}
+              </div>
+            )}
           </div>
 
           <div className="settings-section">
